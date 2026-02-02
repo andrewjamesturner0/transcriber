@@ -1,0 +1,42 @@
+appId: com.whisper-transcriber.app
+productName: Whisper Transcriber
+directories:
+  output: dist
+
+extraResources:
+  - from: models/
+    to: models/
+    filter:
+      - "**/*"
+
+win:
+  target:
+    - zip
+    - nsis
+  extraResources:
+    - from: bin/win/
+      to: bin/win/
+      filter:
+        - "**/*"
+
+nsis:
+  oneClick: true
+  allowToChangeInstallationDirectory: false
+
+linux:
+  target: AppImage
+  category: AudioVideo
+  extraResources:
+    - from: bin/linux/
+      to: bin/linux/
+      filter:
+        - "**/*"
+
+mac:
+  target: dmg
+  category: public.app-category.utilities
+  extraResources:
+    - from: bin/mac/
+      to: bin/mac/
+      filter:
+        - "**/*"

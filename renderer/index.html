@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Whisper Transcriber</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Whisper Transcriber</h1>
+    <p class="subtitle">Local audio transcription — your files never leave your computer.</p>
+
+    <div class="file-section">
+      <button id="btn-select">Select Audio File</button>
+      <span id="file-name" class="file-name">No file selected</span>
+    </div>
+
+    <button id="btn-transcribe" disabled>Transcribe</button>
+
+    <div id="status" class="status" hidden></div>
+
+    <textarea id="transcript" placeholder="Transcript will appear here..." readonly></textarea>
+
+    <button id="btn-save" disabled>Save Transcript</button>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

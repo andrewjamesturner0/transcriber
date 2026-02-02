@@ -1,0 +1,123 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.container {
+  width: 100%;
+  max-width: 600px;
+  padding: 2rem;
+}
+
+h1 {
+  font-size: 1.6rem;
+  margin-bottom: 0.25rem;
+  color: #ffffff;
+}
+
+.subtitle {
+  font-size: 0.85rem;
+  color: #888;
+  margin-bottom: 1.5rem;
+}
+
+.file-section {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.file-name {
+  font-size: 0.85rem;
+  color: #aaa;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button {
+  background: #4361ee;
+  color: #fff;
+  border: none;
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+button:hover:not(:disabled) {
+  background: #3a56d4;
+}
+
+button:disabled {
+  background: #333;
+  color: #666;
+  cursor: not-allowed;
+}
+
+#btn-transcribe {
+  width: 100%;
+  padding: 0.8rem;
+  font-size: 1rem;
+  margin-bottom: 1rem;
+}
+
+.status {
+  text-align: center;
+  padding: 0.5rem;
+  margin-bottom: 0.75rem;
+  color: #90caf9;
+  font-size: 0.85rem;
+}
+
+textarea {
+  width: 100%;
+  height: 220px;
+  background: #16213e;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 0.75rem;
+  font-size: 0.9rem;
+  resize: vertical;
+  margin-bottom: 1rem;
+  font-family: inherit;
+}
+
+textarea:focus {
+  outline: none;
+  border-color: #4361ee;
+}
+
+#btn-save {
+  width: 100%;
+}
+
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #90caf9;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 0.4rem;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
