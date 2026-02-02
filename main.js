@@ -3,6 +3,21 @@ const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
+const https = require('https');
+
+const HF_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
+
+const MODELS = [
+  { id: 'tiny.en',    fileName: 'ggml-tiny.en.bin',    label: 'Tiny (English)',       size: '75 MB' },
+  { id: 'tiny',       fileName: 'ggml-tiny.bin',       label: 'Tiny (Multilingual)',  size: '75 MB' },
+  { id: 'base.en',    fileName: 'ggml-base.en.bin',    label: 'Base (English)',       size: '142 MB' },
+  { id: 'base',       fileName: 'ggml-base.bin',       label: 'Base (Multilingual)',  size: '142 MB' },
+  { id: 'small.en',   fileName: 'ggml-small.en.bin',   label: 'Small (English)',      size: '466 MB' },
+  { id: 'small',      fileName: 'ggml-small.bin',      label: 'Small (Multilingual)', size: '466 MB' },
+  { id: 'medium.en',  fileName: 'ggml-medium.en.bin',  label: 'Medium (English)',     size: '1.5 GB' },
+  { id: 'medium',     fileName: 'ggml-medium.bin',     label: 'Medium (Multilingual)',size: '1.5 GB' },
+  { id: 'large-v3',   fileName: 'ggml-large-v3.bin',   label: 'Large v3 (Multilingual)', size: '3.1 GB' },
+];
 
 function getResourcePath(relativePath) {
   if (app.isPackaged) {
@@ -27,8 +42,14 @@ function getFfmpegBinary() {
   return getResourcePath(path.join('bin', getPlatformDir(), name));
 }
 
-function getModelPath() {
-  return getResourcePath(path.join('models', 'ggml-tiny.en.bin'));
+function getModelsDir() {
+  return getResourcePath('models');
+}
+
+function getModelPath(modelId) {
+  const model = MODELS.find((m) => m.id === modelId);
+  if (!model) throw new Error(`Unknown model: ${modelId}`);
+  return path.join(getModelsDir(), model.fileName);
 }
 
 let mainWindow;
@@ -66,10 +87,64 @@ ipcMain.handle('select-file', async () => {
   return result.filePaths[0];
 });
 
-ipcMain.handle('transcribe', async (event, filePath) => {
+ipcMain.handle('get-models', async () => {
+  const dir = getModelsDir();
+  return MODELS.map((m) => ({
+    ...m,
+    downloaded: fs.existsSync(path.join(dir, m.fileName)),
+  }));
+});
+
+ipcMain.handle('download-model', async (event, modelId) => {
+  const model = MODELS.find((m) => m.id === modelId);
+  if (!model) throw new Error(`Unknown model: ${modelId}`);
+
+  const dest = path.join(getModelsDir(), model.fileName);
+  if (fs.existsSync(dest)) return true;
+
+  fs.mkdirSync(getModelsDir(), { recursive: true });
+  const url = `${HF_BASE}/${model.fileName}`;
+  const tmpDest = dest + '.download';
+
+  await new Promise((resolve, reject) => {
+    const download = (downloadUrl) => {
+      https.get(downloadUrl, (res) => {
+        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+          return download(res.headers.location);
+        }
+        if (res.statusCode !== 200) {
+          return reject(new Error(`Download failed: HTTP ${res.statusCode}`));
+        }
+        const total = parseInt(res.headers['content-length'], 10) || 0;
+        let received = 0;
+        const file = fs.createWriteStream(tmpDest);
+        res.on('data', (chunk) => {
+          received += chunk.length;
+          if (total > 0) {
+            event.sender.send('download-progress', {
+              modelId,
+              percent: Math.round((received / total) * 100),
+              received,
+              total,
+            });
+          }
+        });
+        res.pipe(file);
+        file.on('finish', () => { file.close(resolve); });
+        file.on('error', (err) => { fs.unlinkSync(tmpDest); reject(err); });
+      }).on('error', reject);
+    };
+    download(url);
+  });
+
+  fs.renameSync(tmpDest, dest);
+  return true;
+});
+
+ipcMain.handle('transcribe', async (event, filePath, modelId) => {
   const ffmpeg = getFfmpegBinary();
   const whisper = getWhisperBinary();
-  const model = getModelPath();
+  const model = getModelPath(modelId || 'tiny.en');
 
   // Validate binaries exist
   for (const [name, p] of [['whisper-cli', whisper], ['ffmpeg', ffmpeg], ['model', model]]) {

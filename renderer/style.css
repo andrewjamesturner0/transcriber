@@ -32,6 +32,44 @@ h1 {
   margin-bottom: 1.5rem;
 }
 
+.model-section {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.model-section label {
+  font-size: 0.9rem;
+  color: #ccc;
+  white-space: nowrap;
+}
+
+.model-section select {
+  flex: 1;
+  background: #16213e;
+  color: #e0e0e0;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+  font-size: 0.85rem;
+  font-family: inherit;
+}
+
+.model-section select:focus {
+  outline: none;
+  border-color: #4361ee;
+}
+
+.model-section select option.not-downloaded {
+  color: #888;
+}
+
+#btn-download {
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+}
+
 .file-section {
   display: flex;
   align-items: center;

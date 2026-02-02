@@ -48,3 +48,4 @@ Windows binaries come from whisper.cpp GitHub releases (pre-built). Linux binari
 - whisper-cli natively handles wav, mp3, flac, ogg; ffmpeg covers m4a, webm, wma, aac and ensures 16kHz mono
 - Thread count: `Math.min(os.cpus() - 1, 8)`
 - `.build-whisper/` is the whisper.cpp source/build tree (gitignored, only for Linux builds)
+- **Model picker**: `MODELS` array in `main.js` defines all available models (tiny through large-v3). The `get-models` IPC checks which are downloaded. The `download-model` IPC streams from Hugging Face with progress events. Models are stored in `models/` directory.
