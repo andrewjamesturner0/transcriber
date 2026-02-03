@@ -53,6 +53,106 @@ bash scripts/setup.sh   # one-time: builds whisper.cpp, downloads model + ffmpeg
 npm start                # launches the Electron app
 ```
 
+### Windows native build
+
+Build and run the app directly on Windows without cross-compiling from Linux.
+
+#### Prerequisites
+
+1. **Node.js** >= 18 — [Download](https://nodejs.org/)
+2. **Git for Windows** — [Download](https://git-scm.com/download/win)
+3. **Visual Studio Build Tools** (for compiling whisper.cpp):
+   - Download [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+   - During installation, select **"Desktop development with C++"** workload
+   - This includes MSVC compiler, Windows SDK, and CMake
+4. **CMake** (if not using Visual Studio's bundled version) — [Download](https://cmake.org/download/)
+
+Optional for GPU acceleration:
+- **CUDA Toolkit** — [Download](https://developer.nvidia.com/cuda-downloads) (for NVIDIA GPU support)
+
+#### Setup steps
+
+Open **PowerShell** or **Git Bash** and run:
+
+```powershell
+# Clone and install dependencies
+git clone <repo-url>
+cd transciption
+npm install
+
+# Create directories
+mkdir -p bin\win
+mkdir -p models
+```
+
+#### Option A: Use pre-built binaries (recommended)
+
+Download pre-built whisper.cpp and ffmpeg binaries:
+
+```powershell
+# Download whisper.cpp release (adjust version as needed)
+$WHISPER_VERSION = "v1.7.5"
+Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
+Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
+Copy-Item whisper-temp\* bin\win\ -Recurse -Force
+Remove-Item whisper.zip, whisper-temp -Recurse -Force
+
+# Download ffmpeg
+Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
+Copy-Item ffmpeg-temp\ffmpeg-*\bin\ffmpeg.exe bin\win\
+Remove-Item ffmpeg.zip, ffmpeg-temp -Recurse -Force
+
+# Download the default model
+Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" -OutFile models\ggml-tiny.en.bin
+```
+
+#### Option B: Build whisper.cpp from source
+
+For custom builds or GPU support:
+
+```powershell
+# Clone whisper.cpp
+git clone https://github.com/ggml-org/whisper.cpp.git .build-whisper
+cd .build-whisper
+
+# Configure with CMake (CPU only)
+cmake -B build -DBUILD_SHARED_LIBS=ON
+
+# Or configure with CUDA support (requires CUDA Toolkit)
+# cmake -B build -DBUILD_SHARED_LIBS=ON -DGGML_CUDA=ON
+
+# Build
+cmake --build build --config Release
+
+# Copy binaries to bin/win/
+cd ..
+Copy-Item .build-whisper\build\bin\Release\whisper-cli.exe bin\win\
+Copy-Item .build-whisper\build\bin\Release\*.dll bin\win\
+
+# Still need ffmpeg and model (see Option A for download commands)
+```
+
+#### Run in development mode
+
+```powershell
+npm start
+```
+
+#### Package for distribution
+
+```powershell
+npm run package
+```
+
+This creates both outputs in `dist\`:
+- `Whisper Transcriber Setup <version>.exe` — NSIS installer (recommended for distribution)
+- `Whisper Transcriber-<version>-win.zip` — portable zip
+
+The NSIS installer provides the standard Windows experience: installs to Program Files, creates Start Menu shortcuts, and registers an uninstaller in Add/Remove Programs.
+
+> **Note:** NSIS builds require native Windows. The cross-compile build script (`scripts/build.sh`) only produces the zip target since NSIS doesn't work under WSL.
+
 ## Build Script Reference
 
 ```
@@ -79,7 +179,8 @@ The script runs these steps in order:
 
 | Target | Output | How to run |
 |--------|--------|------------|
-| Windows | `dist/Whisper Transcriber-<version>-win.zip` | Extract zip, run `Whisper Transcriber.exe` |
+| Windows (native) | `dist/Whisper Transcriber Setup <version>.exe` | Run installer, then launch from Start Menu |
+| Windows (cross-compile) | `dist/Whisper Transcriber-<version>-win.zip` | Extract zip, run `Whisper Transcriber.exe` |
 | Linux | `dist/Whisper Transcriber-<version>.AppImage` | `chmod +x` and run directly |
 
 ## npm Scripts
