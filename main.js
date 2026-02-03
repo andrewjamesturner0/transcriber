@@ -14,6 +14,7 @@ const MODELS = [
   { id: 'base',       fileName: 'ggml-base.bin',       label: 'Base (Multilingual)',  size: '142 MB' },
   { id: 'small.en',   fileName: 'ggml-small.en.bin',   label: 'Small (English)',      size: '466 MB' },
   { id: 'small',      fileName: 'ggml-small.bin',      label: 'Small (Multilingual)', size: '466 MB' },
+  { id: 'small.en-tdrz', fileName: 'ggml-small.en-tdrz.bin', label: 'Small (English) + Speaker ID', size: '488 MB', tdrz: true, hfRepo: 'akashmjn/tinydiarize-whisper.cpp' },
   { id: 'medium.en',  fileName: 'ggml-medium.en.bin',  label: 'Medium (English)',     size: '1.5 GB' },
   { id: 'medium',     fileName: 'ggml-medium.bin',     label: 'Medium (Multilingual)',size: '1.5 GB' },
   { id: 'large-v3',   fileName: 'ggml-large-v3.bin',   label: 'Large v3 (Multilingual)', size: '3.1 GB' },
@@ -103,7 +104,10 @@ ipcMain.handle('download-model', async (event, modelId) => {
   if (fs.existsSync(dest)) return true;
 
   fs.mkdirSync(getModelsDir(), { recursive: true });
-  const url = `${HF_BASE}/${model.fileName}`;
+  const baseUrl = model.hfRepo
+    ? `https://huggingface.co/${model.hfRepo}/resolve/main`
+    : HF_BASE;
+  const url = `${baseUrl}/${model.fileName}`;
   const tmpDest = dest + '.download';
 
   await new Promise((resolve, reject) => {
@@ -144,10 +148,11 @@ ipcMain.handle('download-model', async (event, modelId) => {
 ipcMain.handle('transcribe', async (event, filePath, modelId) => {
   const ffmpeg = getFfmpegBinary();
   const whisper = getWhisperBinary();
-  const model = getModelPath(modelId || 'tiny.en');
+  const modelConfig = MODELS.find((m) => m.id === (modelId || 'tiny.en'));
+  const modelPath = getModelPath(modelId || 'tiny.en');
 
   // Validate binaries exist
-  for (const [name, p] of [['whisper-cli', whisper], ['ffmpeg', ffmpeg], ['model', model]]) {
+  for (const [name, p] of [['whisper-cli', whisper], ['ffmpeg', ffmpeg], ['model', modelPath]]) {
     if (!fs.existsSync(p)) {
       throw new Error(`${name} not found at ${p}. Run "npm run setup" first.`);
     }
@@ -163,12 +168,20 @@ ipcMain.handle('transcribe', async (event, filePath, modelId) => {
     // Step 2: Run whisper
     event.sender.send('transcribe-status', 'Transcribing (this may take a while)...');
     const threads = Math.max(1, Math.min(os.cpus().length - 1, 8));
-    const output = await runProcess(whisper, [
-      '-m', model,
+    const args = [
+      '-m', modelPath,
       '-f', tmpWav,
       '-t', String(threads),
-      '--no-timestamps',
-    ]);
+    ];
+
+    // TinyDiarize models require timestamps and the --tinydiarize flag
+    if (modelConfig && modelConfig.tdrz) {
+      args.push('--tinydiarize');
+    } else {
+      args.push('--no-timestamps');
+    }
+
+    const output = await runProcess(whisper, args);
 
     return output.trim();
   } finally {

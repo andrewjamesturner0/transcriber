@@ -85,7 +85,7 @@ btnTranscribe.addEventListener('click', async () => {
 
   try {
     const text = await window.api.transcribe(selectedFile, modelSelect.value);
-    transcriptEl.value = text;
+    transcriptEl.value = formatDiarizedOutput(text);
     btnSave.disabled = false;
     setStatus('');
   } catch (err) {
@@ -115,6 +115,23 @@ function setStatus(msg) {
     statusEl.hidden = true;
     statusEl.textContent = '';
   }
+}
+
+// --- Diarization formatting ---
+
+function formatDiarizedOutput(text) {
+  // Check if diarization markers are present
+  if (!text.includes('[SPEAKER_TURN]')) {
+    return text;
+  }
+
+  // Replace [SPEAKER_TURN] markers with visual separators
+  // The marker indicates a speaker change, not a specific speaker identity
+  return text
+    .split('[SPEAKER_TURN]')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join('\n\n--- Speaker Change ---\n\n');
 }
 
 // --- Init ---
