@@ -1,5 +1,6 @@
 appId: com.whisper-transcriber.app
 productName: Whisper Transcriber
+icon: assets/icon-512.png
 directories:
   output: dist
 
@@ -8,6 +9,8 @@ extraResources:
     to: models/
     filter:
       - "**/*"
+  - from: THIRD-PARTY-LICENSES.json
+    to: THIRD-PARTY-LICENSES.json
 
 win:
   target:

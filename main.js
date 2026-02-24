@@ -58,8 +58,9 @@ let mainWindow;
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 700,
-    height: 600,
+    height: 800,
     resizable: true,
+    icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -86,6 +87,18 @@ ipcMain.handle('select-file', async () => {
   });
   if (result.canceled) return null;
   return result.filePaths[0];
+});
+
+ipcMain.handle('select-files', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Select Audio Files',
+    filters: [
+      { name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac'] },
+    ],
+    properties: ['openFile', 'multiSelections'],
+  });
+  if (result.canceled) return [];
+  return result.filePaths;
 });
 
 ipcMain.handle('get-models', async () => {
@@ -188,6 +201,12 @@ ipcMain.handle('transcribe', async (event, filePath, modelId) => {
     // Clean up temp file
     try { fs.unlinkSync(tmpWav); } catch (_) {}
   }
+});
+
+ipcMain.handle('get-licenses', async () => {
+  const licensePath = getResourcePath('THIRD-PARTY-LICENSES.json');
+  const data = fs.readFileSync(licensePath, 'utf-8');
+  return JSON.parse(data);
 });
 
 ipcMain.handle('save-transcript', async (event, text) => {
