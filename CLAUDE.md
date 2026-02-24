@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Electron desktop app wrapping [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for local audio-to-text transcription. No cloud services — all processing on-device. Windows is the primary target.
+Transcriber — Electron desktop app wrapping [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for local audio-to-text transcription. No cloud services — all processing on-device. Licensed under GPLv3. Windows is the primary target.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions, project structure, and architecture details.
 
