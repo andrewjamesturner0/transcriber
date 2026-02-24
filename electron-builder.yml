@@ -1,5 +1,5 @@
-appId: com.whisper-transcriber.app
-productName: Whisper Transcriber
+appId: com.transcriber.app
+productName: Transcriber
 icon: assets/icon-512.png
 directories:
   output: dist

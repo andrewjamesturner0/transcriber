@@ -1,5 +1,5 @@
 {
-  "name": "whisper-transcriber",
+  "name": "transcriber",
   "version": "0.1.0",
   "description": "Local audio transcription powered by whisper.cpp",
   "main": "main.js",
