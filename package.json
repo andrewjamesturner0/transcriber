@@ -2,6 +2,7 @@
   "name": "transcriber",
   "version": "0.1.0",
   "description": "Local audio transcription powered by whisper.cpp",
+  "license": "GPL-3.0-only",
   "main": "main.js",
   "scripts": {
     "start": "electron .",

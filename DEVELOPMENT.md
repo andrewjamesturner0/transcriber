@@ -14,7 +14,7 @@
 ## Quick Start (Linux)
 
 ```bash
-git clone <repo-url> && cd whisper-transcriber
+git clone <repo-url> && cd transcriber
 npm install
 bash scripts/setup.sh   # builds whisper.cpp, downloads model + ffmpeg into bin/linux/ and models/
 npm start                # launches the Electron app
@@ -27,7 +27,7 @@ npm start                # launches the Electron app
 Downloads pre-built Windows binaries for whisper.cpp and ffmpeg:
 
 ```bash
-bash scripts/build.sh                # produces dist/Whisper Transcriber-*-win.zip
+bash scripts/build.sh                # produces dist/Transcriber-*-win.zip
 ```
 
 ### Linux target
@@ -35,7 +35,7 @@ bash scripts/build.sh                # produces dist/Whisper Transcriber-*-win.z
 Compiles whisper.cpp from source and downloads a static ffmpeg:
 
 ```bash
-bash scripts/build.sh --target linux  # produces dist/Whisper Transcriber-*.AppImage
+bash scripts/build.sh --target linux  # produces dist/Transcriber-*.AppImage
 ```
 
 ### Both targets
@@ -86,7 +86,7 @@ Optional for GPU acceleration:
 
 ```powershell
 git clone <repo-url>
-cd whisper-transcriber
+cd transcriber
 npm install
 
 mkdir -p bin\win
@@ -139,7 +139,7 @@ npm start              # development mode
 npm run package        # produces dist/ with installer and zip
 ```
 
-The NSIS installer (`Whisper Transcriber Setup <version>.exe`) provides the standard Windows experience: installs to Program Files, creates Start Menu shortcuts, and registers an uninstaller. The zip is a portable alternative.
+The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Windows experience: installs to Program Files, creates Start Menu shortcuts, and registers an uninstaller. The zip is a portable alternative.
 
 > **Note:** NSIS builds require native Windows. The cross-compile build script only produces the zip target.
 

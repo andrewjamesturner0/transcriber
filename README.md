@@ -1,8 +1,8 @@
-# Whisper Transcriber
+# Transcriber
 
 Private, on-device audio transcription. Your files never leave your computer.
 
-Whisper Transcriber is a desktop app that converts audio to text using [whisper.cpp](https://github.com/ggml-org/whisper.cpp). No cloud services, no accounts, no internet required for transcription.
+Transcriber is a desktop app that converts audio to text using [whisper.cpp](https://github.com/ggml-org/whisper.cpp). No cloud services, no accounts, no internet required for transcription.
 
 ## Features
 
@@ -19,7 +19,7 @@ Grab the latest release for your platform:
 
 | Platform | Format |
 |----------|--------|
-| Windows | `.zip` — extract and run `Whisper Transcriber.exe` |
+| Windows | `.zip` — extract and run `Transcriber.exe` |
 | Linux | `.AppImage` — `chmod +x` and run directly |
 
 The app ships with the Tiny English model (75 MB). You can download larger models from within the app for better accuracy.
@@ -56,6 +56,10 @@ The app uses FFmpeg to convert your audio to the format whisper.cpp expects, the
 ## Credits
 
 Built with [whisper.cpp](https://github.com/ggml-org/whisper.cpp), [FFmpeg](https://ffmpeg.org/), and [Electron](https://www.electronjs.org/). See the in-app license viewer for full open source attributions.
+
+## License
+
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
 
 ## Development
 
