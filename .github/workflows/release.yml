@@ -1,0 +1,144 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    # Dep-fetching steps mirror scripts/build.sh setup_win — keep in sync.
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Create directories
+        run: |
+          mkdir -p bin/win
+          mkdir -p models
+
+      - name: Download whisper.cpp binaries
+        shell: pwsh
+        run: |
+          $WHISPER_VERSION = "v1.8.3"
+          Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
+          Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
+          Copy-Item whisper-temp\* bin\win\ -Recurse -Force
+          Remove-Item whisper.zip, whisper-temp -Recurse -Force
+
+      - name: Download FFmpeg
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
+          $ffmpegExe = Get-ChildItem -Path ffmpeg-temp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
+          Copy-Item $ffmpegExe.FullName bin\win\
+          Remove-Item ffmpeg.zip, ffmpeg-temp -Recurse -Force
+
+      - name: Download default model
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" -OutFile models\ggml-tiny.en.bin
+
+      - name: Build
+        run: npx electron-builder --win zip nsis
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-builds
+          path: |
+            dist/*.zip
+            dist/*.exe
+
+  build-linux:
+    # Dep-fetching steps mirror scripts/build.sh setup_linux — keep in sync.
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake gcc g++
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Create directories
+        run: mkdir -p bin/linux models
+
+      - name: Build whisper.cpp
+        run: |
+          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git .build-whisper
+          cmake -S .build-whisper -B .build-whisper/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build .build-whisper/build -j$(nproc) --config Release
+          WHISPER_BIN=$(find .build-whisper/build -name "whisper-cli" -type f | head -1)
+          cp "$WHISPER_BIN" bin/linux/whisper-cli
+          chmod +x bin/linux/whisper-cli
+          find .build-whisper/build -name "libwhisper.so*" -exec cp {} bin/linux/ \;
+          find .build-whisper/build -name "libggml*.so*" -exec cp {} bin/linux/ \;
+
+      - name: Download FFmpeg
+        run: |
+          curl -L -o ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          mkdir ffmpeg-temp
+          tar -xf ffmpeg.tar.xz -C ffmpeg-temp
+          find ffmpeg-temp -name "ffmpeg" -type f -exec cp {} bin/linux/ffmpeg \;
+          chmod +x bin/linux/ffmpeg
+          rm -rf ffmpeg.tar.xz ffmpeg-temp
+
+      - name: Download default model
+        run: |
+          curl -L -o models/ggml-tiny.en.bin \
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
+
+      - name: Build
+        run: npx electron-builder --linux AppImage
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-builds
+          path: dist/*.AppImage
+
+  release:
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: |
+            artifacts/windows-builds/*
+            artifacts/linux-builds/*
