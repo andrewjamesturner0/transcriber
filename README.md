@@ -1,66 +1,99 @@
 # Transcriber
 
-Private, on-device audio transcription. Your files never leave your computer.
+[![GPLv3 License](https://img.shields.io/badge/licence-GPLv3-blue.svg)](LICENSE)
 
-Transcriber is a desktop app that converts audio to text using [whisper.cpp](https://github.com/ggml-org/whisper.cpp). No cloud services, no accounts, no internet required for transcription.
+Local audio and video transcription powered by OpenAI's Whisper — entirely on your machine.
+
+Transcriber is a desktop application that transcribes audio and video files using the Whisper speech recognition model. All processing happens locally. No audio is uploaded, no data is transmitted, no accounts are needed.
+
+**Download:** [Windows & Linux — GitHub Releases](https://github.com/andrewjamesturner0/transcriber/releases)
+
+---
 
 ## Features
 
-- **Fully local** — all processing happens on your machine
-- **Multiple formats** — MP3, WAV, FLAC, M4A, OGG, WebM, WMA, AAC
-- **Batch processing** — queue multiple files and transcribe them all at once
-- **Model picker** — choose from Tiny (75 MB) to Large-v3 (3.1 GB), download models directly in the app
-- **Speaker diarization** — identify different speakers in the audio (using TinyDiarize models)
-- **Copy and save** — copy transcript to clipboard or save as a text file
+- **Completely local** — your audio never leaves your computer. No cloud, no telemetry, no network calls.
+- **Speaker diarisation** — automatically identifies and labels speaker changes. (This is not very good however.)
+- **9 Whisper model sizes** — from Tiny (fastest) to Large-v3 (most accurate). English-optimised models available.
+- **8 audio and video formats** — MP3, WAV, FLAC, OGG, M4A, AAC, WMA, MP4
+- **Batch processing** — queue multiple files and transcribe them sequentially
+- **Cross-platform** — Windows and Linux
 
-## Download
+## Install
 
-Grab the latest release for your platform:
+### Direct download
+
+Download the latest release for your platform from the [Releases page](https://github.com/andrewjamesturner0/transcriber/releases).
 
 | Platform | Format |
 |----------|--------|
-| Windows | `.zip` — extract and run `Transcriber.exe` |
-| Linux | `.AppImage` — `chmod +x` and run directly |
+| Windows | NSIS installer or portable ZIP |
+| Linux | AppImage |
 
-The app ships with the Tiny English model (75 MB). You can download larger models from within the app for better accuracy.
+Note: The packages are not signed, so will throw some warnings when installing.
 
-## Models
+## How it works
 
-| Model | Size | Languages | Notes |
-|-------|------|-----------|-------|
-| Tiny | 75 MB | English or multilingual | Fast, good for quick drafts |
-| Base | 142 MB | English or multilingual | Better accuracy, still fast |
-| Small | 466 MB | English or multilingual | Good balance of speed and quality |
-| Medium | 1.5 GB | English or multilingual | High accuracy, slower |
-| Large v3 | 3.1 GB | Multilingual | Best accuracy, requires more RAM |
+```
+Your audio/video file
+    → FFmpeg converts to WAV (locally)
+    → whisper.cpp transcribes the audio (locally)
+    → (If using an appropriate model) TinyDiarize labels speakers (locally)
+    → Your transcript, ready to use
+```
 
-Larger models are more accurate but need more RAM and take longer to process. Start with Tiny or Base and upgrade if you need better results.
+Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes — no native bindings, no compilation required. Models are downloaded once and stored locally; after that, Transcriber works fully offline.
 
-## How It Works
+## For researchers
 
-1. **Choose a model** — pick one from the dropdown (or download a new one)
-2. **Select audio files** — click to browse or drag and drop
-3. **Transcribe** — hit the button and wait for results
-4. **Save or copy** — copy the transcript to your clipboard or save it as a file
+If you work with sensitive recordings — participant interviews, clinical conversations, confidential data — Transcriber is designed for your workflow.
 
-The app uses FFmpeg to convert your audio to the format whisper.cpp expects, then runs whisper-cli to produce the transcript. Everything runs locally using your CPU (up to 8 threads).
+**Why local processing matters:**
+- Ethics committees often prohibit uploading recordings to cloud services
+- GDPR Article 25 (Data Protection by Design) favours tools that minimise data exposure
+- Institutional policies may restrict third-party data processing
+- Participant consent forms may specify local-only handling
 
-## Troubleshooting
+**What you can tell your ethics committee:** Transcriber processes audio using machine learning models running on the local CPU. No audio, transcript text, or metadata is transmitted over any network. No third-party data processor is involved. The application makes no network connections after initial model download.
 
-**Transcription is slow** — Larger models and longer audio take more time. Try the Tiny or Base model first. The app shows a time estimate before you start.
+For a detailed architecture description suitable for ethics applications and data management plans, see [docs/privacy-architecture.md](docs/privacy-architecture.md).
 
-**Out of memory** — Large models (Medium, Large) need significant RAM. If the app crashes or hangs, switch to a smaller model.
+## System requirements
 
-**Unsupported file** — If a file fails, check that it's a valid audio file in one of the supported formats.
+- Modern CPU (Intel or AMD)
+- 4 GB RAM minimum (8 GB+ recommended for larger models)
+- 75 MB – 3 GB disk space per model
+- No GPU required
+- Internet connection for first-time model download only
 
-## Credits
+## Model sizes
 
-Built with [whisper.cpp](https://github.com/ggml-org/whisper.cpp), [FFmpeg](https://ffmpeg.org/), and [Electron](https://www.electronjs.org/). See the in-app license viewer for full open source attributions.
+| Model | Size | Relative speed | Best for |
+|-------|------|---------------|----------|
+| Tiny / Tiny.en | ~75 MB | Fastest | Quick drafts, clear audio |
+| Base / Base.en | ~150 MB | Fast | Good balance for simple recordings |
+| Small / Small.en | ~500 MB | Moderate | General use |
+| Medium / Medium.en | ~1.5 GB | Slower | Challenging audio, accents |
+| Large-v3 | ~3 GB | Slowest | Maximum accuracy |
 
-## License
+`.en` models are English-optimised and faster when multilingual support isn't needed.
 
-This project is licensed under the [GNU General Public License v3.0](LICENSE).
+## Contributing
 
-## Development
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, coding style, and the PR process.
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for build instructions, project structure, and contributor information.
+## Sponsors
+
+Transcriber is free software. If it's useful to you, consider [sponsoring development](https://github.com/sponsors/andrewjamesturner0).
+
+## Built with
+
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — C/C++ Whisper inference (MIT)
+- [OpenAI Whisper](https://github.com/openai/whisper) — speech recognition models (MIT)
+- [FFmpeg](https://ffmpeg.org) — multimedia processing (LGPL 2.1)
+- [Electron](https://www.electronjs.org) — desktop framework (MIT)
+- [ggml](https://github.com/ggml-org/ggml) — tensor library (MIT)
+
+## Licence
+
+[GPLv3](LICENSE) — free to use, modify, and distribute. Derivative works must also be open-source under GPLv3.
