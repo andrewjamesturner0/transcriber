@@ -1,3 +1,8 @@
+// Transcriber — local audio/video transcription
+// Copyright (C) 2026 Andrew James Turner
+// Licensed under the GNU General Public License v3.0
+// See LICENSE for the full licence text.
+
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
@@ -11,4 +16,5 @@ contextBridge.exposeInMainWorld('api', {
   onStatus: (callback) => ipcRenderer.on('transcribe-status', (_, msg) => callback(msg)),
   onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (_, data) => callback(data)),
   getLicenses: () => ipcRenderer.invoke('get-licenses'),
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
 });

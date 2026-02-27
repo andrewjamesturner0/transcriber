@@ -1,3 +1,8 @@
+// Transcriber — local audio/video transcription
+// Copyright (C) 2026 Andrew James Turner
+// Licensed under the GNU General Public License v3.0
+// See LICENSE for the full licence text.
+
 const btnSelect = document.getElementById('btn-select');
 const btnTranscribe = document.getElementById('btn-transcribe');
 const btnSave = document.getElementById('btn-save');
@@ -496,6 +501,13 @@ licenseModalBody.addEventListener('click', (e) => {
   const isHidden = textEl.hidden;
   textEl.hidden = !isHidden;
   toggle.classList.toggle('expanded', isHidden);
+});
+
+// --- Sponsor link ---
+
+document.getElementById('btn-sponsor').addEventListener('click', (e) => {
+  e.preventDefault();
+  window.api.openExternal('https://github.com/sponsors/andrewjamesturner0');
 });
 
 // --- Init ---

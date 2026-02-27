@@ -1,4 +1,9 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+// Transcriber — local audio/video transcription
+// Copyright (C) 2026 Andrew James Turner
+// Licensed under the GNU General Public License v3.0
+// See LICENSE for the full licence text.
+
+const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -200,6 +205,13 @@ ipcMain.handle('transcribe', async (event, filePath, modelId) => {
   } finally {
     // Clean up temp file
     try { fs.unlinkSync(tmpWav); } catch (_) {}
+  }
+});
+
+ipcMain.handle('open-external', async (event, url) => {
+  // Only allow opening https URLs
+  if (typeof url === 'string' && url.startsWith('https://')) {
+    await shell.openExternal(url);
   }
 });
 

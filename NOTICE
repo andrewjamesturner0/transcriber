@@ -1,0 +1,41 @@
+Transcriber
+Copyright (c) 2026 Andrew James Turner
+Licensed under the GNU General Public License v3.0
+
+This software includes the following third-party components:
+
+---
+
+whisper.cpp
+Copyright (c) 2023 Georgi Gerganov
+Licensed under the MIT License
+https://github.com/ggml-org/whisper.cpp
+
+---
+
+OpenAI Whisper
+Copyright (c) 2022 OpenAI
+Licensed under the MIT License
+https://github.com/openai/whisper
+
+---
+
+FFmpeg
+Copyright (c) the FFmpeg developers
+Licensed under the GNU Lesser General Public License version 2.1
+https://ffmpeg.org | https://github.com/FFmpeg/FFmpeg
+
+---
+
+ggml
+Copyright (c) 2023 Georgi Gerganov
+Licensed under the MIT License
+https://github.com/ggml-org/ggml
+
+---
+
+Electron
+Copyright (c) Electron contributors
+Copyright (c) GitHub Inc.
+Licensed under the MIT License
+https://www.electronjs.org
