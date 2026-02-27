@@ -3,4 +3,5 @@ dist/
 bin/
 models/
 .build-whisper/
+.claude/
 *.wav

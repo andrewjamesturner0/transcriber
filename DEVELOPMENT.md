@@ -93,7 +93,7 @@ mkdir -p bin\win
 mkdir -p models
 
 # Download whisper.cpp release
-$WHISPER_VERSION = "v1.7.5"
+$WHISPER_VERSION = "v1.8.3"
 Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
 Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
 Copy-Item whisper-temp\* bin\win\ -Recurse -Force
@@ -189,3 +189,7 @@ dist/                Built distributables
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
 - `MODELS` array in `main.js` defines all available models; the `download-model` IPC streams from Hugging Face with progress events
 - macOS builds require building on macOS with `bin/mac/` populated manually
+
+## FFmpeg
+
+FFmpeg is bundled as a standalone binary and spawned as a child process. See [docs/ffmpeg.md](docs/ffmpeg.md) for details on sources, licensing, and how to replace the bundled binary.

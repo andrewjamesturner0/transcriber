@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Local development build script. GitHub Actions (.github/workflows/release.yml)
+# replicates the dependency-fetching steps independently for CI-specific reasons
+# (native Windows runners, caching, etc.). Changes here should be reflected there.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
