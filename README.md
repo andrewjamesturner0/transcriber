@@ -4,7 +4,7 @@
 
 Local audio and video transcription powered by OpenAI's Whisper — entirely on your machine.
 
-Transcriber is a desktop application that transcribes audio and video files using the Whisper speech recognition model. All processing happens locally. No audio is uploaded, no data is transmitted, no accounts are needed.
+Transcriber is a desktop application that transcribes audio and video files using the Whisper speech recognition model. All processing happens locally. No audio is sent anywhere and no accounts are needed.
 
 **Download:** [Windows & Linux — GitHub Releases](https://github.com/andrewjamesturner0/transcriber/releases)
 
@@ -42,11 +42,11 @@ Your audio/video file
     → Your transcript, ready to use
 ```
 
-Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes — no native bindings, no compilation required. Models are downloaded once and stored locally; after that, Transcriber works fully offline.
+Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes; no native bindings or compilation required. Models are downloaded once and stored locally; after that, Transcriber works offline.
 
 ## For researchers
 
-If you work with sensitive recordings — participant interviews, clinical conversations, confidential data — Transcriber is designed for your workflow.
+If you work with sensitive recordings (participant interviews, clinical conversations, confidential data), Transcriber may be useful.
 
 **Why local processing matters:**
 - Ethics committees often prohibit uploading recordings to cloud services
