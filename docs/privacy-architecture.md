@@ -61,7 +61,7 @@ Because Transcriber is open-source (GPLv3), the architecture described here can 
 
 Suggested language for ethics board submissions:
 
-> Audio recordings will be transcribed using Transcriber (https://github.com/andrewjamesturner0/transcriber), a free, open-source desktop application that processes audio locally on the researcher's computer. No audio data is transmitted to cloud services or third parties during transcription. The software's source code is publicly available under the GNU General Public License v3.0 and can be audited to verify this claim. A detailed privacy architecture document is available at https://github.com/andrewjamesturner0/transcriber/blob/main/docs/privacy-architecture.md.
+> Audio recordings will be transcribed using Transcriber (https://github.com/andrewjamesturner0/transcriber), a free, open-source desktop application that processes audio locally on the researcher's computer. No audio data is transmitted to cloud services or third parties during transcription. The software's source code is publicly available under the GNU General Public License v3.0 and can be audited to verify this claim. A detailed privacy architecture document is available at https://github.com/andrewjamesturner0/transcriber/blob/master/docs/privacy-architecture.md.
 
 ## Contact
 

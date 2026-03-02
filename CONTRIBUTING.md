@@ -33,7 +33,7 @@ There is no automated linter or formatter configured. Follow the conventions in 
 ## Pull requests
 
 1. Fork the repository
-2. Create a feature branch from `main`
+2. Create a feature branch from `master`
 3. Make your changes
 4. Test manually — run `npm start` and verify the app works as expected
 5. Submit a PR with a clear description of the change and why it's needed
