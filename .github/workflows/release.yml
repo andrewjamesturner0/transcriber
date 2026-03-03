@@ -35,7 +35,7 @@ jobs:
           $WHISPER_VERSION = "v1.8.3"
           Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
           Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
-          Copy-Item whisper-temp\* bin\win\ -Recurse -Force
+          Copy-Item whisper-temp\Release\* bin\win\ -Force
           Remove-Item whisper.zip, whisper-temp -Recurse -Force
 
       - name: Download FFmpeg
