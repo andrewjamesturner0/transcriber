@@ -1,6 +1,6 @@
 {
   "name": "transcriber",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Local audio transcription powered by whisper.cpp",
   "license": "GPL-3.0-only",
   "main": "main.js",
@@ -16,5 +16,8 @@
   "devDependencies": {
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }
