@@ -9,6 +9,7 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const https = require('https');
+const { autoUpdater } = require('electron-updater');
 
 const HF_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
 
@@ -77,7 +78,35 @@ function createWindow() {
   mainWindow.setMenuBarVisibility(false);
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  createWindow();
+
+  // Auto-update setup
+  try {
+    autoUpdater.autoDownload = true;
+    autoUpdater.autoInstallOnAppQuit = true;
+
+    autoUpdater.on('update-available', (info) => {
+      // Only notify if remote version is actually newer
+      const r = info.version.split('.').map(Number);
+      const c = app.getVersion().split('.').map(Number);
+      const isNewer = r[0] > c[0] || (r[0] === c[0] && r[1] > c[1]) || (r[0] === c[0] && r[1] === c[1] && r[2] > c[2]);
+      if (isNewer) {
+        mainWindow.webContents.send('update-available', { version: info.version });
+      } else {
+        autoUpdater.autoDownload = false;
+      }
+    });
+
+    autoUpdater.on('update-downloaded', () => {
+      mainWindow.webContents.send('update-downloaded');
+    });
+
+    autoUpdater.checkForUpdates();
+  } catch (_) {
+    // Fail silently (e.g. dev mode, no internet)
+  }
+});
 app.on('window-all-closed', () => app.quit());
 
 // --- IPC Handlers ---
@@ -214,6 +243,10 @@ ipcMain.handle('open-external', async (event, url) => {
     await shell.openExternal(url);
   }
 });
+
+ipcMain.handle('get-version', () => app.getVersion());
+
+ipcMain.handle('install-update', () => autoUpdater.quitAndInstall());
 
 ipcMain.handle('get-licenses', async () => {
   const licensePath = getResourcePath('THIRD-PARTY-LICENSES.json');

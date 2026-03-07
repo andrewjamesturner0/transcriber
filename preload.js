@@ -17,4 +17,8 @@ contextBridge.exposeInMainWorld('api', {
   onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (_, data) => callback(data)),
   getLicenses: () => ipcRenderer.invoke('get-licenses'),
   openExternal: (url) => ipcRenderer.invoke('open-external', url),
+  getVersion: () => ipcRenderer.invoke('get-version'),
+  onUpdateAvailable: (cb) => ipcRenderer.on('update-available', (_, info) => cb(info)),
+  onUpdateDownloaded: (cb) => ipcRenderer.on('update-downloaded', () => cb()),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
 });

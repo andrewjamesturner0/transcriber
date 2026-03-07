@@ -512,3 +512,23 @@ document.getElementById('btn-sponsor').addEventListener('click', (e) => {
 
 // --- Init ---
 loadModels();
+window.api.getVersion().then((v) => {
+  document.getElementById('version-label').textContent = `v${v}`;
+});
+
+// --- Auto-update ---
+
+window.api.onUpdateAvailable((info) => {
+  const link = document.getElementById('update-link');
+  link.textContent = `Downloading v${info.version}...`;
+  link.hidden = false;
+});
+
+window.api.onUpdateDownloaded(() => {
+  const link = document.getElementById('update-link');
+  link.textContent = 'Update ready \u2014 click to restart';
+  link.onclick = (e) => {
+    e.preventDefault();
+    window.api.installUpdate();
+  };
+});

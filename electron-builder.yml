@@ -43,3 +43,8 @@ mac:
       to: bin/mac/
       filter:
         - "**/*"
+
+publish:
+  provider: github
+  owner: andrewjamesturner0
+  repo: transcriber
