@@ -64,6 +64,7 @@ jobs:
           path: |
             dist/*.zip
             dist/*.exe
+            dist/latest.yml
 
   build-linux:
     # Dep-fetching steps mirror scripts/build.sh setup_linux — keep in sync.
@@ -120,7 +121,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: linux-builds
-          path: dist/*.AppImage
+          path: |
+            dist/*.AppImage
+            dist/latest-linux.yml
 
   release:
     needs: [build-windows, build-linux]
