@@ -137,12 +137,10 @@ fi
 
 echo ""
 echo "==> Building Electron app for: $TARGET"
-# Note: NSIS installer target requires native Linux (not WSL) or Windows.
-# Use -c.win.target=zip to build just the zip if NSIS fails.
 case "$TARGET" in
-  win)   npx electron-builder --win -c.win.target=zip ;;
+  win)   npx electron-builder --win ;;
   linux) npx electron-builder --linux ;;
-  all)   npx electron-builder --win -c.win.target=zip && npx electron-builder --linux ;;
+  all)   npx electron-builder --win && npx electron-builder --linux ;;
 esac
 
 echo ""

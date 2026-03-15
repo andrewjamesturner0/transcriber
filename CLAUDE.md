@@ -12,7 +12,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions, project struct
 
 ```bash
 npm install                          # Install Electron and dev dependencies
-bash scripts/build.sh                # Full build: download deps + package Windows zip (default)
+bash scripts/build.sh                # Full build: download deps + package Windows zip+exe (default)
 bash scripts/build.sh --target linux # Build Linux AppImage instead
 bash scripts/build.sh --target all   # Build both Windows and Linux
 bash scripts/build.sh --skip-deps    # Skip binary downloads, just package
@@ -26,4 +26,4 @@ npm start                            # Launch app in dev mode (Linux only, needs
 - `main.js`: main process — `getPlatformDir()` and `getResourcePath()` handle dev vs packaged paths
 - Transcription flow: ffmpeg converts to 16kHz mono WAV, then whisper-cli transcribes with `--no-timestamps`
 - `MODELS` array in `main.js` defines available models; `download-model` IPC streams from Hugging Face
-- NSIS installer target in `electron-builder.yml` requires native Windows (not WSL); build script defaults to zip
+- NSIS installer builds via wine32 in WSL; build script produces both zip and exe by default
