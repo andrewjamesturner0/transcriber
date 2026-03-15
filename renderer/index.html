@@ -33,6 +33,30 @@
           <p class="tagline">Private, on-device audio transcription</p>
         </div>
       </div>
+      <div class="header-menu">
+        <button class="menu-btn" id="menu-btn" type="button" aria-label="Settings">
+          <svg viewBox="0 0 20 20" fill="none" width="18" height="18">
+            <path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </button>
+        <div class="menu-dropdown" id="menu-dropdown" hidden>
+          <div class="menu-section-label">Settings</div>
+          <label class="menu-toggle-row">
+            <span class="menu-toggle-label">
+              Prevent transcript corruption
+              <span class="menu-info-bubble" data-tooltip="Enable this if your transcripts contain many repeating lines. This disables cross-segment text conditioning, which prevents the model from entering hallucination loops.">
+                <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
+                  <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+                  <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                  <circle cx="8" cy="5" r="0.75" fill="currentColor"/>
+                </svg>
+              </span>
+            </span>
+            <input type="checkbox" id="anti-corruption-toggle" class="menu-toggle-input">
+            <span class="menu-toggle-switch"></span>
+          </label>
+        </div>
+      </div>
     </header>
 
     <main class="main">

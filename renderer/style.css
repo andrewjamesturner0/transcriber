@@ -134,7 +134,11 @@ body {
   max-width: 540px;
   margin-bottom: 2rem;
   position: relative;
+  z-index: 10;
   animation: fadeUp 0.5s var(--ease) both;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
 }
 
 .logo {
@@ -248,6 +252,177 @@ h1 {
   height: 14px;
   color: var(--text-tertiary);
   pointer-events: none;
+}
+
+/* === Hamburger Menu === */
+.header-menu {
+  position: relative;
+  flex-shrink: 0;
+  margin-top: 0.25rem;
+  z-index: 150;
+}
+
+.menu-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.15s var(--ease);
+}
+
+.menu-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  border-color: var(--border);
+}
+
+.menu-btn.active {
+  background: var(--bg-card);
+  color: var(--accent);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.menu-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  padding: 0.625rem 0;
+  z-index: 100;
+  animation: menuReveal 0.15s var(--ease) both;
+}
+
+@keyframes menuReveal {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.menu-section-label {
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary);
+  padding: 0.25rem 0.875rem 0.5rem;
+}
+
+.menu-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.625rem;
+  padding: 0.5rem 0.875rem;
+  cursor: pointer;
+  transition: background 0.1s var(--ease);
+}
+
+.menu-toggle-row:hover {
+  background: var(--bg-input);
+}
+
+.menu-toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 0.325rem;
+  font-size: 0.775rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+
+.menu-info-bubble {
+  position: relative;
+  display: inline-flex;
+  color: var(--text-tertiary);
+  cursor: help;
+  flex-shrink: 0;
+}
+
+.menu-info-bubble:hover {
+  color: var(--accent);
+}
+
+.menu-info-bubble::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: -0.5rem;
+  width: 240px;
+  padding: 0.5rem 0.625rem;
+  background: var(--text-primary);
+  color: var(--text-inverse);
+  font-size: 0.675rem;
+  font-weight: 400;
+  line-height: 1.5;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-lg);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s var(--ease);
+  z-index: 110;
+}
+
+.menu-info-bubble:hover::after {
+  opacity: 1;
+}
+
+.menu-toggle-input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.menu-toggle-switch {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  background: var(--border);
+  border-radius: 9px;
+  flex-shrink: 0;
+  transition: background 0.2s var(--ease);
+}
+
+.menu-toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: white;
+  border-radius: 50%;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+  transition: transform 0.2s var(--ease);
+}
+
+.menu-toggle-input:checked + .menu-toggle-switch {
+  background: var(--accent);
+}
+
+.menu-toggle-input:checked + .menu-toggle-switch::after {
+  transform: translateX(16px);
+}
+
+.menu-toggle-input:focus-visible + .menu-toggle-switch {
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.2);
 }
 
 /* === File drop zone === */

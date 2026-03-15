@@ -192,7 +192,7 @@ ipcMain.handle('download-model', async (event, modelId) => {
   return true;
 });
 
-ipcMain.handle('transcribe', async (event, filePath, modelId) => {
+ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
   const ffmpeg = getFfmpegBinary();
   const whisper = getWhisperBinary();
   const modelConfig = MODELS.find((m) => m.id === (modelId || 'tiny.en'));
@@ -226,6 +226,11 @@ ipcMain.handle('transcribe', async (event, filePath, modelId) => {
       args.push('--tinydiarize');
     } else {
       args.push('--no-timestamps');
+    }
+
+    // Anti-corruption: disable context window + adjusted sampling to prevent hallucination loops
+    if (options && options.antiCorruption) {
+      args.push('-mc', '0', '--temperature', '0.4', '--entropy-thold', '1.8');
     }
 
     const output = await runProcess(whisper, args);

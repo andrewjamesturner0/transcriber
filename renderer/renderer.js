@@ -22,6 +22,9 @@ const elapsedTimerEl = document.getElementById('elapsed-timer');
 const elapsedTimeEl = document.getElementById('elapsed-time');
 const queueListEl = document.getElementById('queue-list');
 const queueSummaryEl = document.getElementById('queue-summary');
+const menuBtn = document.getElementById('menu-btn');
+const menuDropdown = document.getElementById('menu-dropdown');
+const antiCorruptionToggle = document.getElementById('anti-corruption-toggle');
 
 let models = [];
 
@@ -332,7 +335,9 @@ btnTranscribe.addEventListener('click', async () => {
     setStatus(`Transcribing ${item.fileName}...`, 'progress');
 
     try {
-      const text = await window.api.transcribe(item.filePath, modelSelect.value);
+      const text = await window.api.transcribe(item.filePath, modelSelect.value, {
+        antiCorruption: antiCorruptionToggle.checked,
+      });
       item.status = 'done';
       item.result = text;
       allResults.push({ fileName: item.fileName, text: formatDiarizedOutput(text) });
@@ -490,7 +495,13 @@ licenseOverlay.addEventListener('click', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !licenseOverlay.hidden) closeLicenseModal();
+  if (e.key === 'Escape') {
+    if (!licenseOverlay.hidden) closeLicenseModal();
+    if (!menuDropdown.hidden) {
+      menuDropdown.hidden = true;
+      menuBtn.classList.remove('active');
+    }
+  }
 });
 
 licenseModalBody.addEventListener('click', (e) => {
@@ -508,6 +519,22 @@ licenseModalBody.addEventListener('click', (e) => {
 document.getElementById('btn-sponsor').addEventListener('click', (e) => {
   e.preventDefault();
   window.api.openExternal('https://github.com/sponsors/andrewjamesturner0');
+});
+
+// --- Hamburger menu ---
+
+menuBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  const isHidden = menuDropdown.hidden;
+  menuDropdown.hidden = !isHidden;
+  menuBtn.classList.toggle('active', isHidden);
+});
+
+document.addEventListener('click', (e) => {
+  if (!menuDropdown.hidden && !menuDropdown.contains(e.target) && e.target !== menuBtn) {
+    menuDropdown.hidden = true;
+    menuBtn.classList.remove('active');
+  }
 });
 
 // --- Init ---
