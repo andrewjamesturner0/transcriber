@@ -163,6 +163,9 @@ renderer/
   index.html         App UI
   renderer.js        UI logic (model picker, file selection, transcription, save)
   style.css          Styles
+lib/
+  diarize.py         Pyannote speaker diarization script (spawned as subprocess)
+  requirements.txt   Python dependencies for diarization
 scripts/
   build.sh           Full build script (download deps + package distributable)
   setup.sh           Dev-only setup (build whisper.cpp from source for local testing)
@@ -189,6 +192,43 @@ dist/                Built distributables
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
 - `MODELS` array in `main.js` defines all available models; the `download-model` IPC streams from Hugging Face with progress events
 - macOS builds require building on macOS with `bin/mac/` populated manually
+
+## Diarization Architecture
+
+Speaker diarization uses [pyannote.audio](https://github.com/pyannote/pyannote-audio) via a subprocess, following the same pattern as whisper-cli and ffmpeg.
+
+### Flow
+
+```
+User enables diarization in settings
+    → transcribe IPC handler runs whisper with --output-json (timestamped segments)
+    → runs lib/diarize.py as subprocess on the same WAV
+    → mergeTranscriptWithDiarization() aligns whisper segments with speaker labels
+    → renderer displays color-coded speaker output
+```
+
+### Subprocess protocol
+
+`lib/diarize.py` communicates with Electron via:
+- **stderr**: JSON progress lines — `{"message": "Loading model...", "percent": 10}`
+- **stderr**: JSON error lines — `{"error": "Authentication failed..."}`
+- **stdout**: Final summary — `{"segments": 42}`
+- **output file**: JSON array of segments — `[{"start": 0.0, "end": 3.5, "speaker": "SPEAKER_00"}, ...]`
+
+### Testing standalone
+
+```bash
+python lib/diarize.py --audio test.wav --output out.json --hf-token YOUR_TOKEN
+cat out.json  # should contain speaker segments
+```
+
+### Timestamp alignment
+
+Whisper outputs segments with millisecond offsets. Pyannote outputs speaker segments with second-precision timestamps. `mergeTranscriptWithDiarization()` in `main.js` assigns each whisper segment to the pyannote speaker with the greatest temporal overlap, then collapses consecutive same-speaker segments.
+
+### Cancellation
+
+Both whisper and diarize subprocesses share a single `AbortController` per transcription job. The cancel button calls the `cancel-transcription` IPC, which aborts the controller, killing whichever subprocess is currently running.
 
 ## FFmpeg
 

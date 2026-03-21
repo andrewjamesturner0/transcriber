@@ -25,8 +25,18 @@ const queueSummaryEl = document.getElementById('queue-summary');
 const menuBtn = document.getElementById('menu-btn');
 const menuDropdown = document.getElementById('menu-dropdown');
 const antiCorruptionToggle = document.getElementById('anti-corruption-toggle');
+const diarizeToggle = document.getElementById('diarize-toggle');
+const diarizeOptions = document.getElementById('diarize-options');
+const diarizeStatusText = document.getElementById('diarize-status-text');
+const diarizeStatusDot = document.querySelector('#diarize-setup-status .menu-status-dot');
+const hfTokenInput = document.getElementById('hf-token-input');
+const numSpeakersSelect = document.getElementById('num-speakers-select');
+const gpuWarning = document.getElementById('gpu-warning');
+const btnCheckPython = document.getElementById('btn-check-python');
+const btnCancel = document.getElementById('btn-cancel');
 
 let models = [];
+let pythonSetup = null;
 
 // --- Queue state ---
 
@@ -200,6 +210,9 @@ function clearQueue() {
     hideTimer();
     outputSection.hidden = true;
     transcriptEl.value = '';
+    transcriptEl.hidden = false;
+    const richEl = document.getElementById('transcript-rich');
+    if (richEl) richEl.remove();
     btnSave.disabled = true;
   }
   renderQueue();
@@ -321,9 +334,13 @@ btnTranscribe.addEventListener('click', async () => {
 
   isProcessing = true;
   btnTranscribe.disabled = true;
+  btnCancel.hidden = false;
   btnSelect.disabled = true;
   btnSave.disabled = true;
   transcriptEl.value = '';
+  transcriptEl.hidden = false;
+  const existingRich = document.getElementById('transcript-rich');
+  if (existingRich) existingRich.remove();
   outputSection.hidden = true;
   startTimer();
 
@@ -335,39 +352,71 @@ btnTranscribe.addEventListener('click', async () => {
     setStatus(`Transcribing ${item.fileName}...`, 'progress');
 
     try {
-      const text = await window.api.transcribe(item.filePath, modelSelect.value, {
+      const options = {
         antiCorruption: antiCorruptionToggle.checked,
-      });
+      };
+      if (diarizeToggle.checked) {
+        options.diarization = true;
+        options.hfToken = hfTokenInput.value || undefined;
+        const speakers = numSpeakersSelect.value;
+        if (speakers !== 'auto') options.numSpeakers = parseInt(speakers, 10);
+      }
+      const text = await window.api.transcribe(item.filePath, modelSelect.value, options);
       item.status = 'done';
       item.result = text;
-      allResults.push({ fileName: item.fileName, text: formatDiarizedOutput(text) });
+      item.hasSpeakers = isPyannoteDiarized(text);
+      allResults.push({ fileName: item.fileName, text: formatDiarizedOutput(text), hasSpeakers: item.hasSpeakers });
     } catch (err) {
       item.status = 'error';
       item.error = err.message;
-      allResults.push({ fileName: item.fileName, text: `[Error: ${err.message}]` });
+      allResults.push({ fileName: item.fileName, text: `[Error: ${err.message}]`, hasSpeakers: false });
     }
     renderQueue();
   }
 
   stopTimer();
   isProcessing = false;
+  btnCancel.hidden = true;
 
-  if (allResults.length === 1) {
-    transcriptEl.value = allResults[0].text;
+  // Check if any result has pyannote speaker labels
+  const hasPyannoteSpeakers = allResults.some((r) => r.hasSpeakers);
+
+  if (hasPyannoteSpeakers) {
+    displayRichTranscript(allResults);
   } else {
-    transcriptEl.value = allResults
-      .map((r) => `=== ${r.fileName} ===\n\n${r.text}`)
-      .join('\n\n\n');
+    if (allResults.length === 1) {
+      transcriptEl.value = allResults[0].text;
+    } else {
+      transcriptEl.value = allResults
+        .map((r) => `=== ${r.fileName} ===\n\n${r.text}`)
+        .join('\n\n\n');
+    }
   }
 
-  // Show diarization info if speaker turns were detected
+  // Show diarization info
   const allRawText = queue.filter((i) => i.result).map((i) => i.result).join('');
-  const turnCount = (allRawText.match(/\[SPEAKER_TURN\]/g) || []).length;
-  if (turnCount > 0) {
-    diarizeInfoEl.textContent = `${turnCount} speaker change${turnCount !== 1 ? 's' : ''} detected \u2014 speaker detection is experimental and may be inaccurate`;
+
+  if (hasPyannoteSpeakers) {
+    // Count unique speakers from pyannote output
+    const speakerMatches = allRawText.match(/\[Speaker \d+\]/g) || [];
+    const uniqueSpeakers = new Set(speakerMatches);
+    const count = uniqueSpeakers.size;
+    const dots = Array.from(uniqueSpeakers).map((s, i) => {
+      const num = Math.min(i + 1, 8);
+      return `<span class="diarize-info-dot speaker-${num}-bg"></span>`;
+    }).join('');
+    diarizeInfoEl.innerHTML = `${dots} ${count} speaker${count !== 1 ? 's' : ''} detected`;
+    diarizeInfoEl.className = 'diarize-info diarize-info-speakers';
     diarizeInfoEl.hidden = false;
   } else {
-    diarizeInfoEl.hidden = true;
+    const turnCount = (allRawText.match(/\[SPEAKER_TURN\]/g) || []).length;
+    if (turnCount > 0) {
+      diarizeInfoEl.textContent = `${turnCount} speaker change${turnCount !== 1 ? 's' : ''} detected \u2014 speaker detection is experimental and may be inaccurate`;
+      diarizeInfoEl.className = 'diarize-info';
+      diarizeInfoEl.hidden = false;
+    } else {
+      diarizeInfoEl.hidden = true;
+    }
   }
 
   outputSection.hidden = false;
@@ -376,6 +425,17 @@ btnTranscribe.addEventListener('click', async () => {
   btnTranscribe.disabled = false;
   btnSelect.disabled = false;
   onModelChange();
+});
+
+// --- Cancel ---
+
+btnCancel.addEventListener('click', async () => {
+  btnCancel.disabled = true;
+  setStatus('Cancelling...', 'progress');
+  try {
+    await window.api.cancelTranscription();
+  } catch (_) {}
+  btnCancel.disabled = false;
 });
 
 // --- Save ---
@@ -424,7 +484,16 @@ function setStatus(msg, type) {
 
 // --- Diarization formatting ---
 
+function isPyannoteDiarized(text) {
+  return /\[\d+ speakers? detected\]/.test(text);
+}
+
 function formatDiarizedOutput(text) {
+  // Pyannote-diarized text already has [Speaker N] labels — pass through
+  if (isPyannoteDiarized(text)) {
+    return text;
+  }
+
   if (!text.includes('[SPEAKER_TURN]')) {
     return text;
   }
@@ -436,6 +505,69 @@ function formatDiarizedOutput(text) {
     .map((part) => part.trim())
     .filter(Boolean)
     .join('\n\n--- Speaker Change ---\n\n');
+}
+
+function displayRichTranscript(results) {
+  // Replace textarea with rich div for speaker-colored output
+  const container = document.createElement('div');
+  container.className = 'transcript-rich';
+  container.id = 'transcript-rich';
+  container.setAttribute('tabindex', '0');
+
+  for (const result of results) {
+    if (results.length > 1) {
+      const fileHeader = document.createElement('div');
+      fileHeader.className = 'transcript-segment';
+      fileHeader.innerHTML = `<strong>=== ${escapeHtml(result.fileName)} ===</strong>`;
+      container.appendChild(fileHeader);
+    }
+
+    if (!result.hasSpeakers) {
+      const seg = document.createElement('div');
+      seg.className = 'transcript-segment';
+      seg.innerHTML = `<span class="segment-text">${escapeHtml(result.text)}</span>`;
+      container.appendChild(seg);
+      continue;
+    }
+
+    // Parse pyannote-formatted text: "[N speakers detected]\n\n[Speaker X] text"
+    const lines = result.text.replace(/^\[\d+ speakers? detected\]\n\n/, '').split('\n\n');
+
+    for (const line of lines) {
+      const match = line.match(/^\[Speaker (\d+)\]\s*(.*)/s);
+      if (!match) continue;
+
+      const speakerNum = Math.min(parseInt(match[1], 10), 8);
+      const text = match[2].trim();
+      if (!text) continue;
+
+      const seg = document.createElement('div');
+      seg.className = 'transcript-segment';
+      seg.innerHTML = `<span class="speaker-label speaker-${speakerNum}">Speaker ${match[1]}</span><span class="segment-text">${escapeHtml(text)}</span>`;
+      container.appendChild(seg);
+    }
+  }
+
+  // Replace textarea (or previous rich div) with the new container
+  const existing = document.getElementById('transcript-rich');
+  if (existing) {
+    existing.replaceWith(container);
+  } else {
+    transcriptEl.hidden = true;
+    transcriptEl.parentNode.insertBefore(container, transcriptEl);
+  }
+
+  // Keep textarea in sync for copy/save (plain text version)
+  transcriptEl.value = results.map((r) => {
+    if (results.length > 1) return `=== ${r.fileName} ===\n\n${r.text}`;
+    return r.text;
+  }).join('\n\n\n');
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
 }
 
 // --- License modal ---
@@ -521,6 +653,64 @@ document.getElementById('btn-sponsor').addEventListener('click', (e) => {
   window.api.openExternal('https://github.com/sponsors/andrewjamesturner0');
 });
 
+// --- Diarization setup ---
+
+async function checkPythonSetup() {
+  btnCheckPython.classList.add('checking');
+  diarizeStatusText.textContent = 'Checking Python...';
+  diarizeStatusDot.className = 'menu-status-dot menu-status-dot-unknown';
+
+  try {
+    pythonSetup = await window.api.checkPythonSetup();
+  } catch (_) {
+    pythonSetup = { pythonFound: false };
+  }
+
+  btnCheckPython.classList.remove('checking');
+
+  if (!pythonSetup.pythonFound) {
+    diarizeStatusText.textContent = 'Python 3.9+ not found';
+    diarizeStatusDot.className = 'menu-status-dot menu-status-dot-error';
+    diarizeToggle.disabled = true;
+    diarizeToggle.checked = false;
+    diarizeOptions.hidden = true;
+  } else if (!pythonSetup.pyannoteInstalled) {
+    diarizeStatusText.textContent = `Python ${pythonSetup.pythonVersion} found — pyannote not installed`;
+    diarizeStatusDot.className = 'menu-status-dot menu-status-dot-partial';
+    diarizeToggle.disabled = true;
+    diarizeToggle.checked = false;
+    diarizeOptions.hidden = true;
+  } else {
+    const gpu = pythonSetup.gpuAvailable ? 'GPU' : 'CPU only';
+    diarizeStatusText.textContent = `Ready — pyannote ${pythonSetup.pyannoteVersion} (${gpu})`;
+    diarizeStatusDot.className = 'menu-status-dot menu-status-dot-ready';
+    diarizeToggle.disabled = false;
+    gpuWarning.hidden = pythonSetup.gpuAvailable;
+  }
+}
+
+btnCheckPython.addEventListener('click', checkPythonSetup);
+
+diarizeToggle.addEventListener('change', () => {
+  diarizeOptions.hidden = !diarizeToggle.checked;
+});
+
+// Persist HF token
+hfTokenInput.value = localStorage.getItem('hf-token') || '';
+hfTokenInput.addEventListener('input', () => {
+  localStorage.setItem('hf-token', hfTokenInput.value);
+});
+
+// Listen for diarization progress
+window.api.onDiarizeStatus((data) => {
+  if (data.error) {
+    setStatus(`Diarization error: ${data.error}`, 'error');
+  } else if (data.message) {
+    const pct = data.percent != null ? ` (${data.percent}%)` : '';
+    setStatus(`${data.message}${pct}`, 'progress');
+  }
+});
+
 // --- Hamburger menu ---
 
 menuBtn.addEventListener('click', (e) => {
@@ -539,6 +729,7 @@ document.addEventListener('click', (e) => {
 
 // --- Init ---
 loadModels();
+checkPythonSetup();
 window.api.getVersion().then((v) => {
   document.getElementById('version-label').textContent = `v${v}`;
 });

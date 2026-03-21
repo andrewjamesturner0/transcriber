@@ -21,4 +21,12 @@ contextBridge.exposeInMainWorld('api', {
   onUpdateAvailable: (cb) => ipcRenderer.on('update-available', (_, info) => cb(info)),
   onUpdateDownloaded: (cb) => ipcRenderer.on('update-downloaded', () => cb()),
   installUpdate: () => ipcRenderer.invoke('install-update'),
+  cancelTranscription: () => ipcRenderer.invoke('cancel-transcription'),
+  checkPythonSetup: () => ipcRenderer.invoke('check-python'),
+  diarize: (wavPath, options) => ipcRenderer.invoke('diarize', wavPath, options),
+  onDiarizeStatus: (callback) => ipcRenderer.on('diarize-status', (_, data) => callback(data)),
+  isDebugBuild: () => ipcRenderer.invoke('is-debug-build'),
+  getLogPath: () => ipcRenderer.invoke('get-log-path'),
+  openLogFile: () => ipcRenderer.invoke('open-log-file'),
+  openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
 });

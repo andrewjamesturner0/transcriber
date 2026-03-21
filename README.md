@@ -13,7 +13,7 @@ Transcriber is a desktop application that transcribes audio and video files usin
 ## Features
 
 - **Completely local** — your audio never leaves your computer. No cloud, no telemetry, no network calls.
-- **Speaker diarisation** — automatically identifies and labels speaker changes. (This is not very good however.)
+- **Speaker diarisation** — built-in speaker change detection, with optional advanced speaker identification via [pyannote.audio](#speaker-diarization-advanced)
 - **9 Whisper model sizes** — from Tiny (fastest) to Large-v3 (most accurate). English-optimised models available.
 - **8 audio and video formats** — MP3, WAV, FLAC, OGG, M4A, AAC, WMA, MP4
 - **Batch processing** — queue multiple files and transcribe them sequentially
@@ -43,6 +43,36 @@ Your audio/video file
 ```
 
 Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes; no native bindings or compilation required. Models are downloaded once and stored locally; after that, Transcriber works offline.
+
+## Speaker Diarization (Advanced)
+
+Transcriber includes basic speaker change detection via TinyDiarize (built into whisper.cpp). For full speaker identification — labelling *who* said *what* — you can enable pyannote.audio as an optional advanced feature.
+
+This uses [pyannote.audio](https://github.com/pyannote/pyannote-audio), the leading open-source speaker diarization pipeline, running as a subprocess. It requires Python and several large dependencies installed separately. **A CUDA GPU is strongly recommended** — CPU diarization is very slow.
+
+### Setup (Windows)
+
+1. **Install Python 3.9+** from [python.org](https://www.python.org/downloads/) — tick "Add to PATH" during install
+2. **Install dependencies** — open Command Prompt and run:
+   ```
+   pip install pyannote.audio torch
+   ```
+3. **Get a Hugging Face token:**
+   - Create an account at [huggingface.co](https://huggingface.co/join)
+   - Accept the pyannote model licence at [hf.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+   - Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+4. **Optional: Install CUDA** for GPU acceleration — [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
+5. **In Transcriber:** Settings (hamburger menu) > Speaker Diarization > paste your HF token > enable the toggle
+
+### Setup (Linux)
+
+```bash
+pip install pyannote.audio torch
+```
+
+Then follow steps 3-5 above.
+
+For detailed setup instructions, GPU configuration, and troubleshooting, see [docs/diarization-setup.md](docs/diarization-setup.md).
 
 ## For researchers
 

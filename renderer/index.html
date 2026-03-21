@@ -55,6 +55,83 @@
             <input type="checkbox" id="anti-corruption-toggle" class="menu-toggle-input">
             <span class="menu-toggle-switch"></span>
           </label>
+
+          <div class="menu-divider"></div>
+          <div class="menu-section-label">Speaker Diarization</div>
+
+          <div class="menu-status-row" id="diarize-setup-status">
+            <span class="menu-status-dot menu-status-dot-unknown"></span>
+            <span class="menu-status-text" id="diarize-status-text">Checking Python...</span>
+          </div>
+
+          <label class="menu-toggle-row">
+            <span class="menu-toggle-label">
+              Enable speaker diarization
+              <span class="menu-info-bubble" data-tooltip="Uses pyannote.audio to identify who spoke when. Requires Python 3.9+ and pyannote.audio installed separately. GPU (CUDA) strongly recommended — CPU is very slow.">
+                <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
+                  <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+                  <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                  <circle cx="8" cy="5" r="0.75" fill="currentColor"/>
+                </svg>
+              </span>
+            </span>
+            <input type="checkbox" id="diarize-toggle" class="menu-toggle-input" disabled>
+            <span class="menu-toggle-switch"></span>
+          </label>
+
+          <div class="menu-diarize-options" id="diarize-options" hidden>
+            <div class="menu-input-row">
+              <label class="menu-input-label" for="hf-token-input">
+                HF Token
+                <span class="menu-info-bubble" data-tooltip="Required to download pyannote models. Get yours at huggingface.co/settings/tokens — you must also accept the model license at hf.co/pyannote/speaker-diarization-3.1">
+                  <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
+                    <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+                    <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                    <circle cx="8" cy="5" r="0.75" fill="currentColor"/>
+                  </svg>
+                </span>
+              </label>
+              <input type="password" id="hf-token-input" class="menu-text-input" placeholder="hf_..." autocomplete="off" spellcheck="false">
+            </div>
+            <div class="menu-input-row">
+              <label class="menu-input-label" for="num-speakers-select">Speakers</label>
+              <div class="menu-select-wrap">
+                <select id="num-speakers-select" class="menu-number-input">
+                  <option value="auto">Auto-detect</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                  <option value="9">9</option>
+                  <option value="10">10</option>
+                </select>
+                <svg class="menu-select-chevron" viewBox="0 0 16 16" fill="none" width="10" height="10">
+                  <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+            </div>
+            <div class="menu-gpu-warning" id="gpu-warning" hidden>
+              <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
+                <path d="M8 1.5l6.5 12H1.5L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
+                <path d="M8 6.5v3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                <circle cx="8" cy="11.5" r="0.6" fill="currentColor"/>
+              </svg>
+              No GPU detected — diarization will be very slow
+            </div>
+          </div>
+
+          <div class="menu-action-row">
+            <button type="button" class="menu-action-btn" id="btn-check-python">
+              <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
+                <path d="M13.5 8A5.5 5.5 0 112.5 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                <path d="M11 5.5L13.5 8 16 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+              Check Setup
+            </button>
+          </div>
         </div>
       </div>
     </header>
@@ -100,14 +177,22 @@
       </section>
 
       <!-- Transcribe Action -->
-      <button id="btn-transcribe" class="btn btn-primary btn-transcribe" disabled>
-        <svg class="btn-icon" viewBox="0 0 20 20" fill="none" width="18" height="18">
-          <path d="M10 3a7 7 0 00-7 7h2a5 5 0 0110 0h2a7 7 0 00-7-7z" fill="currentColor"/>
-          <rect x="9" y="10" width="2" height="5" rx="1" fill="currentColor"/>
-          <circle cx="10" cy="17" r="1" fill="currentColor"/>
-        </svg>
-        Transcribe
-      </button>
+      <div class="transcribe-row">
+        <button id="btn-transcribe" class="btn btn-primary btn-transcribe" disabled>
+          <svg class="btn-icon" viewBox="0 0 20 20" fill="none" width="18" height="18">
+            <path d="M10 3a7 7 0 00-7 7h2a5 5 0 0110 0h2a7 7 0 00-7-7z" fill="currentColor"/>
+            <rect x="9" y="10" width="2" height="5" rx="1" fill="currentColor"/>
+            <circle cx="10" cy="17" r="1" fill="currentColor"/>
+          </svg>
+          Transcribe
+        </button>
+        <button id="btn-cancel" class="btn btn-cancel" hidden>
+          <svg viewBox="0 0 16 16" fill="none" width="14" height="14">
+            <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          Cancel
+        </button>
+      </div>
 
       <!-- Time estimate banner -->
       <div class="estimate-banner" id="estimate-banner">

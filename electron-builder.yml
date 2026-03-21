@@ -9,6 +9,10 @@ extraResources:
     to: models/
     filter:
       - "**/*"
+  - from: lib/
+    to: lib/
+    filter:
+      - "**/*"
   - from: THIRD-PARTY-LICENSES.json
     to: THIRD-PARTY-LICENSES.json
 
