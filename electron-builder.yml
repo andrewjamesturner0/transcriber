@@ -15,6 +15,10 @@ extraResources:
       - "**/*"
   - from: THIRD-PARTY-LICENSES.json
     to: THIRD-PARTY-LICENSES.json
+  - from: "."
+    to: "."
+    filter:
+      - ".debug-build"
 
 win:
   target:

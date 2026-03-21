@@ -6,3 +6,4 @@ models/
 .claude/
 *.wav
 *.code-workspace
+.debug-build

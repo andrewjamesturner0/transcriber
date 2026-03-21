@@ -14,20 +14,23 @@ WHISPER_RELEASE_URL="https://github.com/ggml-org/whisper.cpp/releases/download/$
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
 
 usage() {
-  echo "Usage: $0 [--target win|linux|all] [--skip-deps]"
+  echo "Usage: $0 [--target win|linux|all] [--skip-deps] [--debug]"
   echo ""
   echo "  --target    Build target (default: win)"
   echo "  --skip-deps Skip downloading binaries (use existing bin/)"
+  echo "  --debug     Include debug panel in the build"
   exit 1
 }
 
 TARGET="win"
 SKIP_DEPS=false
+DEBUG_BUILD=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target)  TARGET="$2"; shift 2 ;;
     --skip-deps) SKIP_DEPS=true; shift ;;
+    --debug) DEBUG_BUILD=true; shift ;;
     -h|--help) usage ;;
     *) echo "Unknown option: $1"; usage ;;
   esac
@@ -133,6 +136,15 @@ if [ "$SKIP_DEPS" = false ]; then
     all)   setup_win; setup_linux ;;
     *)     echo "Unknown target: $TARGET"; usage ;;
   esac
+fi
+
+# --- Debug build marker ---
+DEBUG_MARKER="$PROJECT_DIR/.debug-build"
+if [ "$DEBUG_BUILD" = true ]; then
+  echo "==> Debug build enabled"
+  touch "$DEBUG_MARKER"
+else
+  rm -f "$DEBUG_MARKER"
 fi
 
 echo ""

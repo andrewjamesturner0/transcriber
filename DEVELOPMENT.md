@@ -47,7 +47,7 @@ bash scripts/build.sh --target all
 ### Build Script Reference
 
 ```
-scripts/build.sh [--target win|linux|all] [--skip-deps]
+scripts/build.sh [--target win|linux|all] [--skip-deps] [--debug]
 ```
 
 | Flag | Description |
@@ -56,6 +56,7 @@ scripts/build.sh [--target win|linux|all] [--skip-deps]
 | `--target linux` | Build whisper.cpp from source, package as AppImage |
 | `--target all` | Build both Windows and Linux |
 | `--skip-deps` | Skip downloading/building binaries (reuse existing `bin/` and `models/`) |
+| `--debug` | Include debug panel in settings (log file viewer) |
 
 The script runs these steps:
 

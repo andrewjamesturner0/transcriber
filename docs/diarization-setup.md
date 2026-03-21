@@ -39,12 +39,15 @@ This downloads PyTorch and pyannote.audio with all dependencies. Expect ~1–2 G
 
 ### 3. Get a Hugging Face token
 
-Pyannote models are hosted on Hugging Face and require accepting a licence agreement.
+Pyannote models are hosted on Hugging Face as gated models. You must accept the licence for **both** models — otherwise the download will fail with an authentication error.
 
 1. Create an account at [huggingface.co](https://huggingface.co/join)
-2. Go to [hf.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) and accept the licence
-3. Also accept the licence at [hf.co/pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
-4. Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (read access is sufficient)
+2. Accept the licence at [hf.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) — click **"Agree and access repository"**
+3. Accept the licence at [hf.co/pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) — click **"Agree and access repository"**
+4. Accept the licence at [hf.co/pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) — click **"Agree and access repository"**
+5. Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens):
+   - Token type: **Read** (this is sufficient — no write access needed)
+   - The token should start with `hf_`
 
 ### 4. GPU setup (optional but recommended)
 
@@ -95,11 +98,14 @@ Then follow the Hugging Face token steps above (steps 3–5).
 
 ### Authentication / token errors
 
-- Make sure you've accepted both model licences:
+- Make sure you've accepted **all three** model licences (each page should show "You have been granted access"):
   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
-- Check that your token is valid and has read access
+  - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
+- Check that your token is valid, starts with `hf_`, and has at least **Read** scope
+- If you recently accepted the licences, restart Transcriber and try again
 - The first run downloads ~300 MB of model files — ensure you have an internet connection
+- Check the debug log (Settings > Debug > Open Log File) for the exact error from Hugging Face
 
 ### Out of memory
 
@@ -116,6 +122,6 @@ Then follow the Hugging Face token steps above (steps 3–5).
 
 ### Diarization failed, falling back to plain transcript
 
-- This means the diarization subprocess errored. Check the status bar for the specific error message.
-- Common causes: missing token, model download failure, out of memory
+- This means the diarization subprocess errored. Check the debug log (Settings > Debug > Open Log File) for the full error.
+- Common causes: missing token, model licence not accepted, model download failure, out of memory
 - The transcription itself still succeeds — you just won't get speaker labels

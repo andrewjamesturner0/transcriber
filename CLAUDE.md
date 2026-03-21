@@ -16,6 +16,7 @@ bash scripts/build.sh                # Full build: download deps + package Windo
 bash scripts/build.sh --target linux # Build Linux AppImage instead
 bash scripts/build.sh --target all   # Build both Windows and Linux
 bash scripts/build.sh --skip-deps    # Skip binary downloads, just package
+bash scripts/build.sh --debug        # Include debug panel (log viewer in settings menu)
 bash scripts/setup.sh                # Dev only: build whisper.cpp from source for local Linux testing
 npm start                            # Launch app in dev mode (Linux only, needs bin/linux/ populated)
 ```

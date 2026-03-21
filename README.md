@@ -59,8 +59,11 @@ This uses [pyannote.audio](https://github.com/pyannote/pyannote-audio), the lead
    ```
 3. **Get a Hugging Face token:**
    - Create an account at [huggingface.co](https://huggingface.co/join)
-   - Accept the pyannote model licence at [hf.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
-   - Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+   - Accept **all three** model licences (you must click "Agree" on each page while logged in):
+     - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+     - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+     - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
+   - Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — a **Read** token is sufficient
 4. **Optional: Install CUDA** for GPU acceleration — [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
 5. **In Transcriber:** Settings (hamburger menu) > Speaker Diarization > paste your HF token > enable the toggle
 
