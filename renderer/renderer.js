@@ -31,7 +31,9 @@ const diarizeStatusText = document.getElementById('diarize-status-text');
 const diarizeStatusDot = document.querySelector('#diarize-setup-status .menu-status-dot');
 const hfTokenInput = document.getElementById('hf-token-input');
 const numSpeakersSelect = document.getElementById('num-speakers-select');
-const gpuWarning = document.getElementById('gpu-warning');
+const gpuStatus = document.getElementById('gpu-status');
+const gpuStatusDot = document.getElementById('gpu-status-dot');
+const gpuStatusText = document.getElementById('gpu-status-text');
 const btnCheckPython = document.getElementById('btn-check-python');
 const btnCancel = document.getElementById('btn-cancel');
 
@@ -674,22 +676,35 @@ async function checkPythonSetup() {
     diarizeToggle.disabled = true;
     diarizeToggle.checked = false;
     diarizeOptions.hidden = true;
+    gpuStatus.hidden = true;
   } else if (!pythonSetup.pyannoteInstalled) {
     diarizeStatusText.textContent = `Python ${pythonSetup.pythonVersion} found — pyannote not installed`;
     diarizeStatusDot.className = 'menu-status-dot menu-status-dot-partial';
     diarizeToggle.disabled = true;
     diarizeToggle.checked = false;
     diarizeOptions.hidden = true;
+    gpuStatus.hidden = true;
   } else {
-    const gpu = pythonSetup.gpuAvailable ? 'GPU' : 'CPU only';
-    diarizeStatusText.textContent = `Ready — pyannote ${pythonSetup.pyannoteVersion} (${gpu})`;
+    diarizeStatusText.textContent = `Ready — pyannote ${pythonSetup.pyannoteVersion}`;
     diarizeStatusDot.className = 'menu-status-dot menu-status-dot-ready';
     diarizeToggle.disabled = false;
-    gpuWarning.hidden = pythonSetup.gpuAvailable;
+    gpuStatus.hidden = false;
+    if (pythonSetup.gpuAvailable) {
+      gpuStatusDot.className = 'menu-status-dot menu-status-dot-ready';
+      gpuStatusText.textContent = 'GPU detected';
+    } else {
+      gpuStatusDot.className = 'menu-status-dot menu-status-dot-error';
+      gpuStatusText.textContent = 'No GPU detected';
+    }
   }
 }
 
 btnCheckPython.addEventListener('click', checkPythonSetup);
+
+document.getElementById('btn-diarize-setup-guide').addEventListener('click', (e) => {
+  e.preventDefault();
+  window.api.openExternal('https://github.com/andrewjamesturner0/transcriber#speaker-diarization-advanced');
+});
 
 diarizeToggle.addEventListener('change', () => {
   diarizeOptions.hidden = !diarizeToggle.checked;
@@ -709,6 +724,22 @@ window.api.onDiarizeStatus((data) => {
     const pct = data.percent != null ? ` (${data.percent}%)` : '';
     setStatus(`${data.message}${pct}`, 'progress');
   }
+});
+
+// --- Debug panel (only shown in debug builds) ---
+
+window.api.isDebugBuild().then((isDebug) => {
+  if (isDebug) {
+    document.getElementById('debug-panel').hidden = false;
+  }
+});
+
+document.getElementById('btn-open-log').addEventListener('click', () => {
+  window.api.openLogFile();
+});
+
+document.getElementById('btn-open-log-folder').addEventListener('click', () => {
+  window.api.openLogFolder();
 });
 
 // --- Hamburger menu ---

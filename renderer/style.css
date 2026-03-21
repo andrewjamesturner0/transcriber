@@ -364,7 +364,7 @@ h1 {
   position: absolute;
   bottom: calc(100% + 8px);
   right: -0.5rem;
-  width: 240px;
+  width: 260px;
   padding: 0.5rem 0.625rem;
   background: var(--text-primary);
   color: var(--text-inverse);
@@ -377,6 +377,8 @@ h1 {
   opacity: 0;
   transition: opacity 0.15s var(--ease);
   z-index: 110;
+  white-space: normal;
+  word-wrap: break-word;
 }
 
 .menu-info-bubble:hover::after {
@@ -435,6 +437,85 @@ h1 {
   height: 1px;
   background: var(--border);
   margin: 0.375rem 0.875rem;
+}
+
+/* === Settings panels (grouped sections) === */
+.menu-panel {
+  margin: 0.375rem 0.5rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0.125rem 0;
+}
+
+.menu-panel .menu-section-label {
+  padding-top: 0.5rem;
+}
+
+.menu-panel .menu-toggle-row {
+  padding-left: 0.625rem;
+  padding-right: 0.625rem;
+}
+
+.menu-panel .menu-toggle-row:last-child {
+  padding-bottom: 0.25rem;
+}
+
+.menu-panel .menu-status-row {
+  padding-left: 0.625rem;
+  padding-right: 0.625rem;
+}
+
+.menu-panel .menu-diarize-options {
+  padding-left: 0.625rem;
+  padding-right: 0.625rem;
+}
+
+.menu-panel .menu-panel-footer {
+  margin-left: 0.5rem;
+  margin-right: 0.5rem;
+}
+
+/* === Panel footer (status + warnings consolidated) === */
+.menu-panel-footer {
+  margin: 0.25rem 0.625rem 0.5rem;
+  padding: 0.375rem 0.5rem;
+  background: var(--bg-card);
+  border-radius: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.325rem;
+}
+
+.menu-panel-footer .menu-status-row {
+  padding: 0;
+}
+
+.menu-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Setup link */
+.menu-setup-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.65rem;
+  color: var(--accent);
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 0.15s var(--ease);
+}
+
+.menu-setup-link:hover {
+  color: var(--accent-hover);
+  text-decoration: underline;
+}
+
+.menu-setup-link svg {
+  flex-shrink: 0;
 }
 
 /* === Menu status row (Python detection) === */
@@ -551,24 +632,6 @@ h1 {
   pointer-events: none;
 }
 
-/* === GPU warning === */
-.menu-gpu-warning {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  font-size: 0.65rem;
-  color: #b45309;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-  border-radius: 6px;
-  padding: 0.3rem 0.5rem;
-  line-height: 1.3;
-}
-
-.menu-gpu-warning svg {
-  flex-shrink: 0;
-  color: #d97706;
-}
 
 /* === Menu action row (Check Setup button) === */
 .menu-action-row {
@@ -1020,45 +1083,43 @@ textarea::placeholder {
 }
 
 /* === Time estimate banner === */
-.estimate-banner {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  animation: fadeUp 0.5s var(--ease) 0.2s both;
+/* === Model estimate (inside model card) === */
+.model-estimate {
+  margin-top: 0.5rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.375rem;
 }
 
-.estimate-banner-current {
+.model-estimate-current {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 0.75rem;
-  font-size: 0.75rem;
-  color: var(--text-secondary);
+  gap: 0.4rem;
+  font-size: 0.7rem;
+  color: var(--text-tertiary);
 }
 
-.estimate-banner-icon {
-  color: var(--accent);
+.model-estimate-icon {
+  color: var(--text-tertiary);
   flex-shrink: 0;
 }
 
-.estimate-banner-current span {
+.model-estimate-current span {
   flex: 1;
 }
 
-.estimate-banner-current .estimate-model-name {
+.model-estimate-current .estimate-model-name {
   font-weight: 600;
-  color: var(--accent-text);
+  color: var(--text-secondary);
 }
 
 .estimate-expand-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border: none;
-  border-radius: 4px;
+  border-radius: 3px;
   background: transparent;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -1076,9 +1137,10 @@ textarea::placeholder {
 }
 
 .estimate-all {
-  border-top: 1px solid var(--border);
-  padding: 0.625rem 0.75rem;
+  margin-top: 0.25rem;
+  padding: 0.5rem;
   background: var(--bg-input);
+  border-radius: var(--radius-sm);
   animation: fadeUp 0.15s var(--ease) both;
 }
 

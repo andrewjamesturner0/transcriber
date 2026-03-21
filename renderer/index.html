@@ -40,97 +40,122 @@
           </svg>
         </button>
         <div class="menu-dropdown" id="menu-dropdown" hidden>
-          <div class="menu-section-label">Settings</div>
-          <label class="menu-toggle-row">
-            <span class="menu-toggle-label">
-              Prevent transcript corruption
-              <span class="menu-info-bubble" data-tooltip="Enable this if your transcripts contain many repeating lines. This disables cross-segment text conditioning, which prevents the model from entering hallucination loops.">
-                <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
-                  <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
-                  <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-                  <circle cx="8" cy="5" r="0.75" fill="currentColor"/>
-                </svg>
-              </span>
-            </span>
-            <input type="checkbox" id="anti-corruption-toggle" class="menu-toggle-input">
-            <span class="menu-toggle-switch"></span>
-          </label>
-
-          <div class="menu-divider"></div>
-          <div class="menu-section-label">Speaker Diarization</div>
-
-          <div class="menu-status-row" id="diarize-setup-status">
-            <span class="menu-status-dot menu-status-dot-unknown"></span>
-            <span class="menu-status-text" id="diarize-status-text">Checking Python...</span>
-          </div>
-
-          <label class="menu-toggle-row">
-            <span class="menu-toggle-label">
-              Enable speaker diarization
-              <span class="menu-info-bubble" data-tooltip="Uses pyannote.audio to identify who spoke when. Requires Python 3.9+ and pyannote.audio installed separately. GPU (CUDA) strongly recommended — CPU is very slow.">
-                <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
-                  <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
-                  <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-                  <circle cx="8" cy="5" r="0.75" fill="currentColor"/>
-                </svg>
-              </span>
-            </span>
-            <input type="checkbox" id="diarize-toggle" class="menu-toggle-input" disabled>
-            <span class="menu-toggle-switch"></span>
-          </label>
-
-          <div class="menu-diarize-options" id="diarize-options" hidden>
-            <div class="menu-input-row">
-              <label class="menu-input-label" for="hf-token-input">
-                HF Token
-                <span class="menu-info-bubble" data-tooltip="Required to download pyannote models. Get yours at huggingface.co/settings/tokens — you must also accept the model license at hf.co/pyannote/speaker-diarization-3.1">
+          <div class="menu-panel">
+            <div class="menu-section-label">Transcription</div>
+            <label class="menu-toggle-row">
+              <span class="menu-toggle-label">
+                Prevent transcript corruption
+                <span class="menu-info-bubble" data-tooltip="Enable this if your transcripts contain many repeating lines. This disables cross-segment text conditioning, which prevents the model from entering hallucination loops.">
                   <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
                     <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
                     <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
                     <circle cx="8" cy="5" r="0.75" fill="currentColor"/>
                   </svg>
                 </span>
-              </label>
-              <input type="password" id="hf-token-input" class="menu-text-input" placeholder="hf_..." autocomplete="off" spellcheck="false">
-            </div>
-            <div class="menu-input-row">
-              <label class="menu-input-label" for="num-speakers-select">Speakers</label>
-              <div class="menu-select-wrap">
-                <select id="num-speakers-select" class="menu-number-input">
-                  <option value="auto">Auto-detect</option>
-                  <option value="2">2</option>
-                  <option value="3">3</option>
-                  <option value="4">4</option>
-                  <option value="5">5</option>
-                  <option value="6">6</option>
-                  <option value="7">7</option>
-                  <option value="8">8</option>
-                  <option value="9">9</option>
-                  <option value="10">10</option>
-                </select>
-                <svg class="menu-select-chevron" viewBox="0 0 16 16" fill="none" width="10" height="10">
-                  <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                </svg>
+              </span>
+              <input type="checkbox" id="anti-corruption-toggle" class="menu-toggle-input">
+              <span class="menu-toggle-switch"></span>
+            </label>
+          </div>
+
+          <div class="menu-panel">
+            <div class="menu-section-label">Speaker Diarization</div>
+
+            <label class="menu-toggle-row">
+              <span class="menu-toggle-label">
+                Enable speaker diarization
+                <span class="menu-info-bubble" data-tooltip="Uses pyannote.audio to identify who spoke when. Requires Python 3.9+ and pyannote.audio installed separately. GPU (CUDA) strongly recommended — CPU is very slow.">
+                  <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
+                    <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+                    <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                    <circle cx="8" cy="5" r="0.75" fill="currentColor"/>
+                  </svg>
+                </span>
+              </span>
+              <input type="checkbox" id="diarize-toggle" class="menu-toggle-input" disabled>
+              <span class="menu-toggle-switch"></span>
+            </label>
+
+            <div class="menu-diarize-options" id="diarize-options" hidden>
+              <div class="menu-input-row">
+                <label class="menu-input-label" for="hf-token-input">
+                  HF Token
+                  <span class="menu-info-bubble" data-tooltip="Required to download pyannote models. Create a Read token at huggingface.co/settings/tokens — you must also accept the model licenses at hf.co/pyannote/speaker-diarization-3.1, hf.co/pyannote/segmentation-3.0, and hf.co/pyannote/speaker-diarization-community-1">
+                    <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
+                      <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
+                      <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
+                      <circle cx="8" cy="5" r="0.75" fill="currentColor"/>
+                    </svg>
+                  </span>
+                </label>
+                <input type="password" id="hf-token-input" class="menu-text-input" placeholder="hf_..." autocomplete="off" spellcheck="false">
+              </div>
+              <div class="menu-input-row">
+                <label class="menu-input-label" for="num-speakers-select">Speakers</label>
+                <div class="menu-select-wrap">
+                  <select id="num-speakers-select" class="menu-number-input">
+                    <option value="auto">Auto-detect</option>
+                    <option value="2">2</option>
+                    <option value="3">3</option>
+                    <option value="4">4</option>
+                    <option value="5">5</option>
+                    <option value="6">6</option>
+                    <option value="7">7</option>
+                    <option value="8">8</option>
+                    <option value="9">9</option>
+                    <option value="10">10</option>
+                  </select>
+                  <svg class="menu-select-chevron" viewBox="0 0 16 16" fill="none" width="10" height="10">
+                    <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </div>
               </div>
             </div>
-            <div class="menu-gpu-warning" id="gpu-warning" hidden>
-              <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
-                <path d="M8 1.5l6.5 12H1.5L8 1.5z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/>
-                <path d="M8 6.5v3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
-                <circle cx="8" cy="11.5" r="0.6" fill="currentColor"/>
-              </svg>
-              No GPU detected — diarization will be very slow
+
+            <div class="menu-panel-footer" id="diarize-footer">
+              <div class="menu-status-row" id="diarize-setup-status">
+                <span class="menu-status-dot menu-status-dot-unknown"></span>
+                <span class="menu-status-text" id="diarize-status-text">Checking Python...</span>
+              </div>
+              <div class="menu-status-row" id="gpu-status" hidden>
+                <span class="menu-status-dot" id="gpu-status-dot"></span>
+                <span class="menu-status-text" id="gpu-status-text"></span>
+              </div>
+              <div class="menu-footer-actions">
+                <button type="button" class="menu-action-btn" id="btn-check-python">
+                  <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
+                    <path d="M13.5 8A5.5 5.5 0 112.5 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    <path d="M11 5.5L13.5 8 16 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  Check Setup
+                </button>
+                <a href="#" class="menu-setup-link" id="btn-diarize-setup-guide">
+                  <svg viewBox="0 0 16 16" fill="none" width="11" height="11">
+                    <path d="M6 3h7M6 8h7M6 13h7M3 3h.01M3 8h.01M3 13h.01" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                  </svg>
+                  Setup guide
+                </a>
+              </div>
             </div>
           </div>
 
-          <div class="menu-action-row">
-            <button type="button" class="menu-action-btn" id="btn-check-python">
-              <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
-                <path d="M13.5 8A5.5 5.5 0 112.5 8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
-                <path d="M11 5.5L13.5 8 16 5.5" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>
-              </svg>
-              Check Setup
-            </button>
+          <div class="menu-panel" id="debug-panel" hidden>
+            <div class="menu-section-label">Debug</div>
+            <div class="menu-footer-actions">
+              <button type="button" class="menu-action-btn" id="btn-open-log">
+                <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
+                  <path d="M3 2h7l3 3v9H3V2z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  <path d="M5 9h6M5 11.5h4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>
+                Open Log File
+              </button>
+              <button type="button" class="menu-action-btn" id="btn-open-log-folder">
+                <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
+                  <path d="M1.5 3.5h4l1.5 1.5h7v8h-13z" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                </svg>
+                Open Log Folder
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -153,6 +178,24 @@
             </svg>
             Download
           </button>
+        </div>
+        <div class="model-estimate" id="estimate-banner">
+          <div class="model-estimate-current" id="estimate-current">
+            <svg class="model-estimate-icon" viewBox="0 0 16 16" fill="none" width="12" height="12">
+              <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M8 5v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span id="estimate-current-text"></span>
+            <button class="estimate-expand-btn" id="estimate-expand-btn" type="button" aria-label="Show all estimates">
+              <svg viewBox="0 0 16 16" fill="none" width="10" height="10">
+                <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+          <div class="estimate-all" id="estimate-all" hidden>
+            <div class="estimate-all-header">Estimates for 45 min of audio</div>
+            <div class="estimate-all-body" id="estimate-all-body"></div>
+          </div>
         </div>
       </section>
 
@@ -192,26 +235,6 @@
           </svg>
           Cancel
         </button>
-      </div>
-
-      <!-- Time estimate banner -->
-      <div class="estimate-banner" id="estimate-banner">
-        <div class="estimate-banner-current" id="estimate-current">
-          <svg class="estimate-banner-icon" viewBox="0 0 16 16" fill="none" width="14" height="14">
-            <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.5"/>
-            <path d="M8 5v3.5l2.5 1.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span id="estimate-current-text"></span>
-          <button class="estimate-expand-btn" id="estimate-expand-btn" type="button" aria-label="Show all estimates">
-            <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
-              <path d="M4 6l4 4 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
-        </div>
-        <div class="estimate-all" id="estimate-all" hidden>
-          <div class="estimate-all-header">Estimates for 45 min of audio</div>
-          <div class="estimate-all-body" id="estimate-all-body"></div>
-        </div>
       </div>
 
       <!-- Status -->
