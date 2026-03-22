@@ -126,6 +126,9 @@ Transcriber is free software. If it's useful to you, consider [sponsoring develo
 - [FFmpeg](https://ffmpeg.org) — multimedia processing (LGPL 2.1)
 - [Electron](https://www.electronjs.org) — desktop framework (MIT)
 - [ggml](https://github.com/ggml-org/ggml) — tensor library (MIT)
+- [pyannote.audio](https://github.com/pyannote/pyannote-audio) — speaker diarization (MIT)
+- [PyTorch](https://pytorch.org) — machine learning framework (BSD-3-Clause)
+- [NumPy](https://numpy.org) — numerical computing (BSD-3-Clause)
 
 ## Licence
 
