@@ -51,7 +51,7 @@ function getFfmpegBinary() {
 }
 
 // --- GPU backend detection ---
-const gpuState = { setting: 'auto', detected: null }; // detected: 'vulkan' | 'cpu'
+const gpuState = { setting: 'auto', detected: null, deviceName: null, deviceIndex: null }; // detected: 'vulkan' | 'cpu'
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 
 function readSettings() {
@@ -82,6 +82,7 @@ async function detectGpuBackend() {
   }
 
   try {
+    const stderrChunks = [];
     await new Promise((resolve, reject) => {
       const proc = spawn(vulkanBinary, ['--help'], {
         env: (() => {
@@ -96,11 +97,39 @@ async function detectGpuBackend() {
         })(),
         timeout: 5000,
       });
+      proc.stderr.on('data', (d) => stderrChunks.push(d));
       proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`exit ${code}`)));
       proc.on('error', reject);
     });
-    logWrite('[GPU] Vulkan backend available');
-    gpuState.detected = 'vulkan';
+    // Parse all Vulkan devices: ggml_vulkan: N = DEVICE_NAME (driver info) | ...
+    const stderrText = Buffer.concat(stderrChunks).toString();
+    const deviceRegex = /ggml_vulkan:\s*(\d+)\s*=\s*(.+?)(?:\s*\(|$)/gm;
+    const devices = [];
+    let match;
+    while ((match = deviceRegex.exec(stderrText)) !== null) {
+      devices.push({ index: parseInt(match[1]), name: match[2].trim() });
+    }
+    logWrite(`[GPU] Found ${devices.length} Vulkan device(s): ${devices.map(d => `${d.index}=${d.name}`).join(', ')}`);
+
+    // Prefer discrete GPU (non-Intel) over integrated
+    const discrete = devices.find(d => !/\bintel\b/i.test(d.name));
+    const chosen = discrete || devices[0] || null;
+
+    if (chosen && !/\bintel\b/i.test(chosen.name)) {
+      gpuState.deviceName = chosen.name;
+      gpuState.deviceIndex = chosen.index;
+      // Tell ggml which Vulkan device to use
+      process.env.GGML_VK_VISIBLE_DEVICES = String(chosen.index);
+      logWrite(`[GPU] Using Vulkan device ${chosen.index}: ${chosen.name}`);
+      gpuState.detected = 'vulkan';
+    } else if (chosen) {
+      gpuState.deviceName = chosen.name;
+      logWrite(`[GPU] Only Intel integrated GPU found (${chosen.name}), using CPU instead`);
+      gpuState.detected = 'cpu';
+    } else {
+      logWrite('[GPU] No Vulkan devices found, using CPU');
+      gpuState.detected = 'cpu';
+    }
   } catch (err) {
     logWrite(`[GPU] Vulkan test failed (${err.message}), using CPU`);
     gpuState.detected = 'cpu';
@@ -352,10 +381,14 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
       // If Vulkan failed, fall back to CPU and retry
       if (backend === 'vulkan' && err.message !== 'Cancelled') {
         logWrite(`[GPU] Vulkan transcription failed (${err.message}), falling back to CPU`);
-        gpuState.detected = 'cpu';
+        const isOOM = /OutOfDeviceMemory|failed to allocate/i.test(err.message);
+        if (!isOOM) gpuState.detected = 'cpu'; // OOM is model-specific, don't disable GPU for future runs
         backend = 'cpu';
         whisper = getWhisperBinary('cpu');
-        event.sender.send('transcribe-status', 'GPU unavailable, retrying with CPU...');
+        const fallbackMsg = isOOM
+          ? 'Model too large for GPU memory — retrying with CPU...'
+          : 'GPU unavailable — retrying with CPU...';
+        event.sender.send('transcribe-status', fallbackMsg);
         output = await runProcess(whisper, args, { signal: abort.signal });
       } else {
         throw err;
@@ -565,6 +598,7 @@ ipcMain.handle('get-gpu-status', () => {
   return {
     backend: getActiveBackend(),
     detected: gpuState.detected,
+    deviceName: gpuState.deviceName,
     setting: gpuState.setting,
     available,
   };

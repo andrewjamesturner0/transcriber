@@ -772,7 +772,7 @@ async function updateGpuStatus() {
       backendLabel.textContent = 'GPU acceleration available';
     } else {
       backendDot.className = 'backend-dot backend-dot-cpu';
-      backendLabel.textContent = 'No GPU detected \u2014 using CPU';
+      backendLabel.textContent = 'Using CPU';
     }
   } catch (_) {
     backendDot.className = 'backend-dot backend-dot-cpu';
