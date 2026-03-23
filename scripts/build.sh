@@ -14,10 +14,11 @@ WHISPER_RELEASE_URL="https://github.com/ggml-org/whisper.cpp/releases/download/$
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
 
 usage() {
-  echo "Usage: $0 [--target win|linux|all] [--skip-deps] [--debug]"
+  echo "Usage: $0 [--target win|linux|all] [--skip-deps] [--no-gpu] [--debug]"
   echo ""
   echo "  --target    Build target (default: win)"
   echo "  --skip-deps Skip downloading binaries (use existing bin/)"
+  echo "  --no-gpu    Skip building Vulkan GPU binaries (faster dev builds)"
   echo "  --debug     Include debug panel in the build"
   exit 1
 }
@@ -25,11 +26,13 @@ usage() {
 TARGET="win"
 SKIP_DEPS=false
 DEBUG_BUILD=false
+NO_GPU=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target)  TARGET="$2"; shift 2 ;;
     --skip-deps) SKIP_DEPS=true; shift ;;
+    --no-gpu) NO_GPU=true; shift ;;
     --debug) DEBUG_BUILD=true; shift ;;
     -h|--help) usage ;;
     *) echo "Unknown option: $1"; usage ;;
@@ -48,14 +51,17 @@ download_model() {
 }
 
 # --- Windows dependencies ---
+# Local builds download pre-built CPU binaries only.
+# Vulkan (GPU) binaries are built from source in CI (see release.yml).
 setup_win() {
   local DIR="$BIN_DIR/win"
-  mkdir -p "$DIR"
+  local CPU_DIR="$DIR/cpu"
+  mkdir -p "$CPU_DIR"
 
-  if [ -f "$DIR/whisper-cli.exe" ]; then
-    echo "==> Windows whisper-cli already exists, skipping."
+  if [ -f "$CPU_DIR/whisper-cli.exe" ]; then
+    echo "==> Windows whisper-cli (CPU) already exists, skipping."
   else
-    echo "==> Downloading Windows whisper.cpp binaries ($WHISPER_VERSION)..."
+    echo "==> Downloading Windows whisper.cpp CPU binaries ($WHISPER_VERSION)..."
     local TMP=$(mktemp -d)
     curl -L -o "$TMP/whisper.zip" "$WHISPER_RELEASE_URL/whisper-bin-x64.zip"
     unzip -o -j "$TMP/whisper.zip" \
@@ -64,7 +70,7 @@ setup_win() {
       "Release/ggml-base.dll" \
       "Release/ggml-cpu.dll" \
       "Release/ggml.dll" \
-      -d "$DIR"
+      -d "$CPU_DIR"
     rm -rf "$TMP"
   fi
 
@@ -82,24 +88,51 @@ setup_win() {
 # --- Linux dependencies ---
 setup_linux() {
   local DIR="$BIN_DIR/linux"
-  mkdir -p "$DIR"
+  local CPU_DIR="$DIR/cpu"
+  local VULKAN_DIR="$DIR/vulkan"
+  mkdir -p "$CPU_DIR"
 
-  if [ -f "$DIR/whisper-cli" ]; then
-    echo "==> Linux whisper-cli already exists, skipping."
+  local BUILD_DIR="$PROJECT_DIR/.build-whisper"
+
+  # Clone whisper.cpp source (shared between CPU and Vulkan builds)
+  if [ ! -d "$BUILD_DIR" ]; then
+    echo "==> Cloning whisper.cpp..."
+    git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$BUILD_DIR"
+  fi
+
+  # CPU build
+  if [ -f "$CPU_DIR/whisper-cli" ]; then
+    echo "==> Linux whisper-cli (CPU) already exists, skipping."
   else
-    echo "==> Building whisper.cpp from source..."
-    local BUILD_DIR="$PROJECT_DIR/.build-whisper"
-    if [ ! -d "$BUILD_DIR" ]; then
-      git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$BUILD_DIR"
-    fi
-    cmake -S "$BUILD_DIR" -B "$BUILD_DIR/build" -DCMAKE_BUILD_TYPE=Release
-    cmake --build "$BUILD_DIR/build" -j"$(nproc 2>/dev/null || echo 4)" --config Release
+    echo "==> Building whisper.cpp (CPU) from source..."
+    cmake -S "$BUILD_DIR" -B "$BUILD_DIR/build-cpu" -DCMAKE_BUILD_TYPE=Release
+    cmake --build "$BUILD_DIR/build-cpu" -j"$(nproc 2>/dev/null || echo 4)" --config Release
 
-    WHISPER_BIN=$(find "$BUILD_DIR/build" -name "whisper-cli" -type f | head -1)
-    cp "$WHISPER_BIN" "$DIR/whisper-cli"
-    chmod +x "$DIR/whisper-cli"
-    find "$BUILD_DIR/build" -name "libwhisper.so*" -exec cp {} "$DIR/" \;
-    find "$BUILD_DIR/build" -name "libggml*.so*" -exec cp {} "$DIR/" \;
+    WHISPER_BIN=$(find "$BUILD_DIR/build-cpu" -name "whisper-cli" -type f | head -1)
+    cp "$WHISPER_BIN" "$CPU_DIR/whisper-cli"
+    chmod +x "$CPU_DIR/whisper-cli"
+    find "$BUILD_DIR/build-cpu" -name "libwhisper.so*" -exec cp {} "$CPU_DIR/" \;
+    find "$BUILD_DIR/build-cpu" -name "libggml*.so*" -exec cp {} "$CPU_DIR/" \;
+  fi
+
+  # Vulkan (GPU) build — requires libvulkan-dev and glslang-tools
+  if [ "$NO_GPU" = true ]; then
+    echo "==> Skipping Vulkan build (--no-gpu)."
+  elif ! command -v glslc &>/dev/null; then
+    echo "==> Skipping Vulkan build (glslc not installed — run: sudo apt install libvulkan-dev glslc)"
+  elif [ -f "$VULKAN_DIR/whisper-cli" ]; then
+    echo "==> Linux whisper-cli (Vulkan) already exists, skipping."
+  else
+    echo "==> Building whisper.cpp (Vulkan) from source..."
+    mkdir -p "$VULKAN_DIR"
+    cmake -S "$BUILD_DIR" -B "$BUILD_DIR/build-vulkan" -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON
+    cmake --build "$BUILD_DIR/build-vulkan" -j"$(nproc 2>/dev/null || echo 4)" --config Release
+
+    WHISPER_BIN=$(find "$BUILD_DIR/build-vulkan" -name "whisper-cli" -type f | head -1)
+    cp "$WHISPER_BIN" "$VULKAN_DIR/whisper-cli"
+    chmod +x "$VULKAN_DIR/whisper-cli"
+    find "$BUILD_DIR/build-vulkan" -name "libwhisper.so*" -exec cp {} "$VULKAN_DIR/" \;
+    find "$BUILD_DIR/build-vulkan" -name "libggml*.so*" -exec cp {} "$VULKAN_DIR/" \;
   fi
 
   if [ -f "$DIR/ffmpeg" ]; then

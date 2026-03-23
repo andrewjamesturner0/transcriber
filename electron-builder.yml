@@ -22,7 +22,6 @@ extraResources:
 
 win:
   target:
-    - zip
     - nsis
   extraResources:
     - from: bin/win/

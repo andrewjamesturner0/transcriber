@@ -4,13 +4,15 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build-windows:
-    # Dep-fetching steps mirror scripts/build.sh setup_win — keep in sync.
+    # CPU: pre-built download. Vulkan: built from source.
+    # CPU download mirrors scripts/build.sh setup_win — keep in sync.
     runs-on: windows-latest
 
     steps:
@@ -21,22 +23,41 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install Vulkan SDK
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.3.290.0
+          install_runtime: false
+          cache: true
+
       - name: Install dependencies
         run: npm install
 
       - name: Create directories
+        shell: pwsh
         run: |
-          mkdir -p bin/win
-          mkdir -p models
+          New-Item -ItemType Directory -Force -Path bin\win\cpu
+          New-Item -ItemType Directory -Force -Path bin\win\vulkan
+          New-Item -ItemType Directory -Force -Path models
 
-      - name: Download whisper.cpp binaries
+      - name: Download whisper.cpp CPU binaries
         shell: pwsh
         run: |
           $WHISPER_VERSION = "v1.8.3"
           Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
           Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
-          Copy-Item whisper-temp\Release\* bin\win\ -Force
+          Copy-Item whisper-temp\Release\* bin\win\cpu\ -Force
           Remove-Item whisper.zip, whisper-temp -Recurse -Force
+
+      - name: Build whisper.cpp (Vulkan)
+        shell: pwsh
+        run: |
+          git clone --depth 1 --branch v1.8.3 https://github.com/ggml-org/whisper.cpp.git .build-whisper
+          cmake -S .build-whisper -B .build-whisper/build-vulkan -DBUILD_SHARED_LIBS=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+          cmake --build .build-whisper/build-vulkan --config Release
+          Copy-Item .build-whisper\build-vulkan\bin\Release\whisper-cli.exe bin\win\vulkan\
+          Copy-Item .build-whisper\build-vulkan\bin\Release\whisper.dll bin\win\vulkan\
+          Get-ChildItem .build-whisper\build-vulkan\bin\Release\ggml*.dll | Copy-Item -Destination bin\win\vulkan\
 
       - name: Download FFmpeg
         shell: pwsh
@@ -53,7 +74,7 @@ jobs:
           Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" -OutFile models\ggml-tiny.en.bin
 
       - name: Build
-        run: npx electron-builder --win zip nsis -p never
+        run: npx electron-builder --win nsis -p never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
 
@@ -62,12 +83,12 @@ jobs:
         with:
           name: windows-builds
           path: |
-            dist/*.zip
             dist/*.exe
             dist/latest.yml
 
   build-linux:
-    # Dep-fetching steps mirror scripts/build.sh setup_linux — keep in sync.
+    # Builds whisper.cpp from source (CPU + Vulkan) on Linux.
+    # Mirrors scripts/build.sh setup_linux — keep in sync.
     runs-on: ubuntu-latest
 
     steps:
@@ -79,24 +100,36 @@ jobs:
           node-version: 20
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake gcc g++
+        run: sudo apt-get update && sudo apt-get install -y cmake gcc g++ libvulkan-dev glslc
 
       - name: Install dependencies
         run: npm install
 
       - name: Create directories
-        run: mkdir -p bin/linux models
+        run: mkdir -p bin/linux/cpu bin/linux/vulkan models
 
-      - name: Build whisper.cpp
+      - name: Clone whisper.cpp
+        run: git clone --depth 1 --branch v1.8.3 https://github.com/ggml-org/whisper.cpp.git .build-whisper
+
+      - name: Build whisper.cpp (CPU)
         run: |
-          git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git .build-whisper
-          cmake -S .build-whisper -B .build-whisper/build -DCMAKE_BUILD_TYPE=Release
-          cmake --build .build-whisper/build -j$(nproc) --config Release
-          WHISPER_BIN=$(find .build-whisper/build -name "whisper-cli" -type f | head -1)
-          cp "$WHISPER_BIN" bin/linux/whisper-cli
-          chmod +x bin/linux/whisper-cli
-          find .build-whisper/build -name "libwhisper.so*" -exec cp {} bin/linux/ \;
-          find .build-whisper/build -name "libggml*.so*" -exec cp {} bin/linux/ \;
+          cmake -S .build-whisper -B .build-whisper/build-cpu -DCMAKE_BUILD_TYPE=Release
+          cmake --build .build-whisper/build-cpu -j$(nproc) --config Release
+          WHISPER_BIN=$(find .build-whisper/build-cpu -name "whisper-cli" -type f | head -1)
+          cp "$WHISPER_BIN" bin/linux/cpu/whisper-cli
+          chmod +x bin/linux/cpu/whisper-cli
+          find .build-whisper/build-cpu -name "libwhisper.so*" -exec cp {} bin/linux/cpu/ \;
+          find .build-whisper/build-cpu -name "libggml*.so*" -exec cp {} bin/linux/cpu/ \;
+
+      - name: Build whisper.cpp (Vulkan)
+        run: |
+          cmake -S .build-whisper -B .build-whisper/build-vulkan -DCMAKE_BUILD_TYPE=Release -DGGML_VULKAN=ON
+          cmake --build .build-whisper/build-vulkan -j$(nproc) --config Release
+          WHISPER_BIN=$(find .build-whisper/build-vulkan -name "whisper-cli" -type f | head -1)
+          cp "$WHISPER_BIN" bin/linux/vulkan/whisper-cli
+          chmod +x bin/linux/vulkan/whisper-cli
+          find .build-whisper/build-vulkan -name "libwhisper.so*" -exec cp {} bin/linux/vulkan/ \;
+          find .build-whisper/build-vulkan -name "libggml*.so*" -exec cp {} bin/linux/vulkan/ \;
 
       - name: Download FFmpeg
         run: |
@@ -126,6 +159,7 @@ jobs:
             dist/latest-linux.yml
 
   release:
+    if: startsWith(github.ref, 'refs/tags/v')
     needs: [build-windows, build-linux]
     runs-on: ubuntu-latest
 

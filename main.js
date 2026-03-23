@@ -39,14 +39,72 @@ function getPlatformDir() {
   return 'linux';
 }
 
-function getWhisperBinary() {
+function getWhisperBinary(backend) {
+  const b = backend || getActiveBackend();
   const name = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
-  return getResourcePath(path.join('bin', getPlatformDir(), name));
+  return getResourcePath(path.join('bin', getPlatformDir(), b, name));
 }
 
 function getFfmpegBinary() {
   const name = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
   return getResourcePath(path.join('bin', getPlatformDir(), name));
+}
+
+// --- GPU backend detection ---
+const gpuState = { setting: 'auto', detected: null }; // detected: 'vulkan' | 'cpu'
+const settingsFile = path.join(app.getPath('userData'), 'settings.json');
+
+function readSettings() {
+  try {
+    if (fs.existsSync(settingsFile)) return JSON.parse(fs.readFileSync(settingsFile, 'utf-8'));
+  } catch (_) {}
+  return {};
+}
+
+function writeSettings(data) {
+  try {
+    const existing = readSettings();
+    fs.writeFileSync(settingsFile, JSON.stringify({ ...existing, ...data }, null, 2));
+  } catch (_) {}
+}
+
+function getActiveBackend() {
+  if (gpuState.setting === 'cpu' || gpuState.setting === 'vulkan') return gpuState.setting;
+  return gpuState.detected || 'cpu';
+}
+
+async function detectGpuBackend() {
+  const vulkanBinary = getWhisperBinary('vulkan');
+  if (!fs.existsSync(vulkanBinary)) {
+    logWrite('[GPU] Vulkan binary not found, using CPU');
+    gpuState.detected = 'cpu';
+    return;
+  }
+
+  try {
+    await new Promise((resolve, reject) => {
+      const proc = spawn(vulkanBinary, ['--help'], {
+        env: (() => {
+          const env = { ...process.env };
+          const binDir = path.dirname(vulkanBinary);
+          if (process.platform === 'linux') {
+            env.LD_LIBRARY_PATH = binDir + (env.LD_LIBRARY_PATH ? ':' + env.LD_LIBRARY_PATH : '');
+          } else if (process.platform === 'darwin') {
+            env.DYLD_LIBRARY_PATH = binDir + (env.DYLD_LIBRARY_PATH ? ':' + env.DYLD_LIBRARY_PATH : '');
+          }
+          return env;
+        })(),
+        timeout: 5000,
+      });
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`exit ${code}`)));
+      proc.on('error', reject);
+    });
+    logWrite('[GPU] Vulkan backend available');
+    gpuState.detected = 'vulkan';
+  } catch (err) {
+    logWrite(`[GPU] Vulkan test failed (${err.message}), using CPU`);
+    gpuState.detected = 'cpu';
+  }
 }
 
 function getModelsDir() {
@@ -107,7 +165,16 @@ function createWindow() {
   mainWindow.setMenuBarVisibility(false);
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  // Load saved GPU backend preference
+  const saved = readSettings();
+  if (saved.gpuBackend) gpuState.setting = saved.gpuBackend;
+
+  // Detect GPU support (non-blocking for window creation)
+  detectGpuBackend().then(() => {
+    logWrite(`[GPU] Active backend: ${getActiveBackend()} (setting=${gpuState.setting}, detected=${gpuState.detected})`);
+  });
+
   createWindow();
 
   // Auto-update setup
@@ -222,14 +289,20 @@ ipcMain.handle('download-model', async (event, modelId) => {
 });
 
 ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
-  logWrite(`=== Transcription started: model=${modelId}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
+  let backend = getActiveBackend();
+  logWrite(`=== Transcription started: model=${modelId}, backend=${backend}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
   const ffmpeg = getFfmpegBinary();
-  const whisper = getWhisperBinary();
+  let whisper = getWhisperBinary(backend);
   const modelConfig = MODELS.find((m) => m.id === (modelId || 'tiny.en'));
   const modelPath = getModelPath(modelId || 'tiny.en');
   const diarization = options && options.diarization;
 
-  // Validate binaries exist
+  // Validate binaries exist (fall back to CPU if chosen backend missing)
+  if (!fs.existsSync(whisper) && backend === 'vulkan') {
+    logWrite(`[GPU] Vulkan binary not found, falling back to CPU`);
+    backend = 'cpu';
+    whisper = getWhisperBinary('cpu');
+  }
   for (const [name, p] of [['whisper-cli', whisper], ['ffmpeg', ffmpeg], ['model', modelPath]]) {
     if (!fs.existsSync(p)) {
       throw new Error(`${name} not found at ${p}. Run "npm run setup" first.`);
@@ -248,7 +321,8 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
     await runProcess(ffmpeg, ['-i', filePath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', '-y', tmpWav], { signal: abort.signal });
 
     // Step 2: Run whisper
-    event.sender.send('transcribe-status', 'Transcribing (this may take a while)...');
+    const backendLabel = backend === 'vulkan' ? 'Transcribing with GPU (Vulkan)...' : 'Transcribing (CPU)...';
+    event.sender.send('transcribe-status', backendLabel);
     const threads = Math.max(1, Math.min(os.cpus().length - 1, 8));
     const args = [
       '-m', modelPath,
@@ -271,7 +345,22 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
       args.push('-mc', '0', '--temperature', '0.4', '--entropy-thold', '1.8');
     }
 
-    const output = await runProcess(whisper, args, { signal: abort.signal });
+    let output;
+    try {
+      output = await runProcess(whisper, args, { signal: abort.signal });
+    } catch (err) {
+      // If Vulkan failed, fall back to CPU and retry
+      if (backend === 'vulkan' && err.message !== 'Cancelled') {
+        logWrite(`[GPU] Vulkan transcription failed (${err.message}), falling back to CPU`);
+        gpuState.detected = 'cpu';
+        backend = 'cpu';
+        whisper = getWhisperBinary('cpu');
+        event.sender.send('transcribe-status', 'GPU unavailable, retrying with CPU...');
+        output = await runProcess(whisper, args, { signal: abort.signal });
+      } else {
+        throw err;
+      }
+    }
 
     // Step 3: If diarization enabled, run pyannote and merge
     if (diarization && !modelConfig?.tdrz) {
@@ -467,6 +556,26 @@ ipcMain.handle('check-python', async () => {
   } catch (_) { /* torch not installed or no GPU */ }
 
   return result;
+});
+
+ipcMain.handle('get-gpu-status', () => {
+  const vulkanExists = fs.existsSync(getWhisperBinary('vulkan'));
+  const available = ['cpu'];
+  if (vulkanExists) available.push('vulkan');
+  return {
+    backend: getActiveBackend(),
+    detected: gpuState.detected,
+    setting: gpuState.setting,
+    available,
+  };
+});
+
+ipcMain.handle('set-gpu-backend', (event, backend) => {
+  if (!['auto', 'cpu', 'vulkan'].includes(backend)) return false;
+  gpuState.setting = backend;
+  writeSettings({ gpuBackend: backend });
+  logWrite(`[GPU] Backend preference set to: ${backend} (active: ${getActiveBackend()})`);
+  return true;
 });
 
 ipcMain.handle('diarize', async (event, wavPath, options = {}) => {
