@@ -233,8 +233,12 @@ app.whenReady().then(async () => {
   try {
     autoUpdater.autoDownload = true;
     autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.on('checking-for-update', () => {
+      logWrite('[UPDATE] Checking for updates...');
+    });
 
     autoUpdater.on('update-available', (info) => {
+      logWrite(`[UPDATE] Update available: v${info.version}`);
       // Only notify if remote version is actually newer
       const r = info.version.split('.').map(Number);
       const c = app.getVersion().split('.').map(Number);
@@ -246,13 +250,22 @@ app.whenReady().then(async () => {
       }
     });
 
-    autoUpdater.on('update-downloaded', () => {
+    autoUpdater.on('update-not-available', () => {
+      logWrite('[UPDATE] No update available (already latest)');
+    });
+
+    autoUpdater.on('update-downloaded', (info) => {
+      logWrite(`[UPDATE] Update downloaded: v${info.version}`);
       mainWindow.webContents.send('update-downloaded');
     });
 
+    autoUpdater.on('error', (err) => {
+      logWrite(`[UPDATE] Error: ${err.message}`);
+    });
+
     autoUpdater.checkForUpdates();
-  } catch (_) {
-    // Fail silently (e.g. dev mode, no internet)
+  } catch (err) {
+    logWrite(`[UPDATE] Failed to initialize: ${err.message}`);
   }
 });
 app.on('window-all-closed', () => app.quit());
