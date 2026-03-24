@@ -7,6 +7,10 @@ PLATFORM_DIR="$PROJECT_DIR/bin/linux"
 CPU_DIR="$PLATFORM_DIR/cpu"
 MODELS_DIR="$PROJECT_DIR/models"
 BUILD_DIR="$PROJECT_DIR/.build-whisper"
+DEPS_JSON="$PROJECT_DIR/deps.json"
+
+# Read dependency versions from deps.json (single source of truth)
+dep() { node -p "require('$DEPS_JSON')$1"; }
 
 mkdir -p "$CPU_DIR" "$MODELS_DIR"
 
@@ -60,8 +64,7 @@ fi
 MODEL_FILE="$MODELS_DIR/ggml-tiny.en.bin"
 if [ ! -f "$MODEL_FILE" ]; then
   echo "==> Downloading tiny.en model..."
-  curl -L -o "$MODEL_FILE" \
-    "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
+  curl -L -o "$MODEL_FILE" "$(dep '.model.url')"
 else
   echo "==> Model already exists, skipping download."
 fi
@@ -77,8 +80,8 @@ else
   case "$OS" in
     Linux)
       case "$ARCH" in
-        x86_64)  FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" ;;
-        aarch64) FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz" ;;
+        x86_64)  FFMPEG_URL="$(dep '.ffmpeg["linux-amd64"].url')" ;;
+        aarch64) FFMPEG_URL="$(dep '.ffmpeg["linux-arm64"].url')" ;;
         *)       echo "Unsupported arch: $ARCH"; exit 1 ;;
       esac
       TMPDIR_FF=$(mktemp -d)

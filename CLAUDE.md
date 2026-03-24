@@ -23,6 +23,7 @@ npm start                            # Launch app in dev mode (Linux only, needs
 
 ## Key Details
 
+- **deps.json** is the single source of truth for dependency versions (whisper.cpp, ffmpeg URLs, Vulkan SDK, Node). Build scripts and CI both read from it.
 - Platform binaries in `bin/{win,linux,mac}/{cpu,vulkan}/`, models in `models/` — all gitignored, created by build scripts
 - `main.js`: main process — `getPlatformDir()` and `getResourcePath()` handle dev vs packaged paths
 - Transcription flow: ffmpeg converts to 16kHz mono WAV, then whisper-cli transcribes with `--no-timestamps`
@@ -30,3 +31,4 @@ npm start                            # Launch app in dev mode (Linux only, needs
 - NSIS installer builds via wine32 in WSL; build script produces NSIS `.exe` installer only
 - GPU acceleration via Vulkan backend; CPU and Vulkan binaries in separate subdirs under `bin/{platform}/`
 - Runtime GPU detection: spawns Vulkan binary with `--help` at startup, falls back to CPU if unavailable
+- Weekly `dep-check.yml` workflow checks for whisper.cpp releases and ffmpeg checksum changes, auto-opens PRs

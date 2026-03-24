@@ -160,6 +160,7 @@ The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Win
 ```
 main.js              Electron main process — IPC handlers, spawns whisper-cli & ffmpeg
 preload.js           Context bridge between main and renderer
+deps.json            Single source of truth for dependency versions and URLs
 renderer/
   index.html         App UI
   renderer.js        UI logic (model picker, file selection, transcription, save)
@@ -236,6 +237,30 @@ Whisper outputs segments with millisecond offsets. Pyannote outputs speaker segm
 ### Cancellation
 
 Both whisper and diarize subprocesses share a single `AbortController` per transcription job. The cancel button calls the `cancel-transcription` IPC, which aborts the controller, killing whichever subprocess is currently running.
+
+## Dependency Updates
+
+All external dependency versions and download URLs are centralized in `deps.json`. Both `scripts/build.sh`, `scripts/setup.sh`, and `.github/workflows/release.yml` read from it.
+
+### Automated checks
+
+A weekly GitHub Actions workflow (`.github/workflows/dep-check.yml`) runs every Monday:
+
+1. Checks the latest whisper.cpp release tag against `deps.json`
+2. Downloads ffmpeg archives and compares SHA-256 checksums against stored values
+3. If anything changed, opens a PR with the updated `deps.json`
+
+You can also trigger it manually via `workflow_dispatch` in the Actions tab.
+
+### Manual update
+
+To bump whisper.cpp manually, edit `deps.json`:
+
+```json
+{ "whisper": { "version": "v1.8.4", ... } }
+```
+
+Then push and run a CI build. The build scripts and CI workflow will pick up the new version automatically.
 
 ## FFmpeg
 

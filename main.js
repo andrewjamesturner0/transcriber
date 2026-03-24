@@ -11,7 +11,12 @@ const os = require('os');
 const https = require('https');
 const { autoUpdater } = require('electron-updater');
 
+// --- Constants ---
 const HF_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
+const AUDIO_EXTENSIONS = ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac'];
+const MAX_THREADS = Math.max(1, Math.min(os.cpus().length - 1, 8));
+const GPU_DETECT_TIMEOUT = 5000;
+const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
 
 const MODELS = [
   { id: 'tiny.en',    fileName: 'ggml-tiny.en.bin',    label: 'Tiny (English)',       size: '75 MB' },
@@ -50,6 +55,32 @@ function getFfmpegBinary() {
   return getResourcePath(path.join('bin', getPlatformDir(), name));
 }
 
+function makeEnvWithLibPath(binDir) {
+  const env = { ...process.env };
+  if (process.platform === 'linux') {
+    env.LD_LIBRARY_PATH = binDir + (env.LD_LIBRARY_PATH ? ':' + env.LD_LIBRARY_PATH : '');
+  } else if (process.platform === 'darwin') {
+    env.DYLD_LIBRARY_PATH = binDir + (env.DYLD_LIBRARY_PATH ? ':' + env.DYLD_LIBRARY_PATH : '');
+  }
+  return env;
+}
+
+async function findPython() {
+  if (cachedPythonCmd) return cachedPythonCmd;
+  const candidates = process.platform === 'win32'
+    ? ['python3', 'python', 'py']
+    : ['python3', 'python'];
+  for (const cmd of candidates) {
+    try {
+      const args = cmd === 'py' ? ['-3', '--version'] : ['--version'];
+      await runProcess(cmd, args);
+      cachedPythonCmd = cmd;
+      return cmd;
+    } catch (_) { /* not found */ }
+  }
+  return null;
+}
+
 // --- GPU backend detection ---
 const gpuState = { setting: 'auto', detected: null, deviceName: null, deviceIndex: null }; // detected: 'vulkan' | 'cpu'
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
@@ -85,17 +116,8 @@ async function detectGpuBackend() {
     const stderrChunks = [];
     await new Promise((resolve, reject) => {
       const proc = spawn(vulkanBinary, ['--help'], {
-        env: (() => {
-          const env = { ...process.env };
-          const binDir = path.dirname(vulkanBinary);
-          if (process.platform === 'linux') {
-            env.LD_LIBRARY_PATH = binDir + (env.LD_LIBRARY_PATH ? ':' + env.LD_LIBRARY_PATH : '');
-          } else if (process.platform === 'darwin') {
-            env.DYLD_LIBRARY_PATH = binDir + (env.DYLD_LIBRARY_PATH ? ':' + env.DYLD_LIBRARY_PATH : '');
-          }
-          return env;
-        })(),
-        timeout: 5000,
+        env: makeEnvWithLibPath(path.dirname(vulkanBinary)),
+        timeout: GPU_DETECT_TIMEOUT,
       });
       proc.stderr.on('data', (d) => stderrChunks.push(d));
       proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`exit ${code}`)));
@@ -166,7 +188,7 @@ function logRotate() {
   try {
     if (!fs.existsSync(logFile)) return;
     const stats = fs.statSync(logFile);
-    if (stats.size > 5 * 1024 * 1024) { // 5 MB
+    if (stats.size > MAX_LOG_SIZE) {
       const old = logFile + '.old';
       if (fs.existsSync(old)) fs.unlinkSync(old);
       fs.renameSync(logFile, old);
@@ -236,23 +258,11 @@ app.on('window-all-closed', () => app.quit());
 
 // --- IPC Handlers ---
 
-ipcMain.handle('select-file', async () => {
-  const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select Audio File',
-    filters: [
-      { name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac'] },
-    ],
-    properties: ['openFile'],
-  });
-  if (result.canceled) return null;
-  return result.filePaths[0];
-});
-
 ipcMain.handle('select-files', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Select Audio Files',
     filters: [
-      { name: 'Audio Files', extensions: ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac'] },
+      { name: 'Audio Files', extensions: AUDIO_EXTENSIONS },
     ],
     properties: ['openFile', 'multiSelections'],
   });
@@ -352,7 +362,7 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
     // Step 2: Run whisper
     const backendLabel = backend === 'vulkan' ? 'Transcribing with GPU...' : 'Transcribing (CPU)...';
     event.sender.send('transcribe-status', backendLabel);
-    const threads = Math.max(1, Math.min(os.cpus().length - 1, 8));
+    const threads = MAX_THREADS;
     const args = [
       '-m', modelPath,
       '-f', tmpWav,
@@ -437,21 +447,7 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
 async function runDiarization(event, wavPath, options, signal) {
   const { hfToken, numSpeakers } = options;
 
-  let pythonCmd = cachedPythonCmd;
-  if (!pythonCmd) {
-    const candidates = process.platform === 'win32'
-      ? ['python3', 'python', 'py']
-      : ['python3', 'python'];
-    for (const cmd of candidates) {
-      try {
-        const args = cmd === 'py' ? ['-3', '--version'] : ['--version'];
-        await runProcess(cmd, args);
-        pythonCmd = cmd;
-        cachedPythonCmd = cmd;
-        break;
-      } catch (_) { /* not found */ }
-    }
-  }
+  const pythonCmd = await findPython();
   if (!pythonCmd) throw new Error('Python not found');
 
   const scriptPath = getResourcePath(path.join('lib', 'diarize.py'));
@@ -547,15 +543,11 @@ ipcMain.handle('check-python', async () => {
   const result = { pythonFound: false, pythonVersion: null, pyannoteInstalled: false, pyannoteVersion: null, gpuAvailable: false };
 
   // Find a working Python >= 3.9
-  const candidates = process.platform === 'win32'
-    ? ['python3', 'python', 'py']
-    : ['python3', 'python'];
-
-  let pythonCmd = null;
-  for (const cmd of candidates) {
+  const pythonCmd = await findPython();
+  if (pythonCmd) {
     try {
-      const args = cmd === 'py' ? ['-3', '--version'] : ['--version'];
-      const out = await runProcess(cmd, args);
+      const vArgs = pythonCmd === 'py' ? ['-3', '--version'] : ['--version'];
+      const out = await runProcess(pythonCmd, vArgs);
       const match = out.match(/Python (\d+)\.(\d+)\.(\d+)/);
       if (match) {
         const major = parseInt(match[1], 10);
@@ -563,15 +555,12 @@ ipcMain.handle('check-python', async () => {
         if (major >= 3 && minor >= 9) {
           result.pythonFound = true;
           result.pythonVersion = `${match[1]}.${match[2]}.${match[3]}`;
-          pythonCmd = cmd;
-          cachedPythonCmd = cmd;
-          break;
         }
       }
-    } catch (_) { /* not found or wrong version */ }
+    } catch (_) { /* version check failed */ }
   }
 
-  if (!pythonCmd) return result;
+  if (!pythonCmd || !result.pythonFound) return result;
 
   const pyArgs = (code) => pythonCmd === 'py' ? ['-3', '-c', code] : ['-c', code];
 
@@ -685,13 +674,7 @@ function runProcess(cmd, args, { signal, onStderr } = {}) {
     });
     logWrite(`[RUN] ${cmdName} ${safeArgs.join(' ')}`);
 
-    const binDir = path.dirname(cmd);
-    const env = { ...process.env };
-    if (process.platform === 'linux') {
-      env.LD_LIBRARY_PATH = binDir + (env.LD_LIBRARY_PATH ? ':' + env.LD_LIBRARY_PATH : '');
-    } else if (process.platform === 'darwin') {
-      env.DYLD_LIBRARY_PATH = binDir + (env.DYLD_LIBRARY_PATH ? ':' + env.DYLD_LIBRARY_PATH : '');
-    }
+    const env = makeEnvWithLibPath(path.dirname(cmd));
     const proc = spawn(cmd, args, { env });
     let stdout = '';
     let stderr = '';

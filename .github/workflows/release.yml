@@ -23,10 +23,20 @@ jobs:
         with:
           node-version: 20
 
+      - name: Read deps.json
+        id: deps
+        shell: pwsh
+        run: |
+          $deps = Get-Content deps.json | ConvertFrom-Json
+          echo "WHISPER_VERSION=$($deps.whisper.version)" >> $env:GITHUB_OUTPUT
+          echo "VULKAN_SDK=$($deps.vulkanSdk)" >> $env:GITHUB_OUTPUT
+          echo "MODEL_URL=$($deps.model.url)" >> $env:GITHUB_OUTPUT
+          echo "FFMPEG_WIN_URL=$($deps.ffmpeg.win.url)" >> $env:GITHUB_OUTPUT
+
       - name: Install Vulkan SDK
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
-          vulkan_version: 1.3.290.0
+          vulkan_version: ${{ steps.deps.outputs.VULKAN_SDK }}
           install_runtime: false
           cache: true
 
@@ -43,8 +53,8 @@ jobs:
       - name: Download whisper.cpp CPU binaries
         shell: pwsh
         run: |
-          $WHISPER_VERSION = "v1.8.3"
-          Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
+          $V = "${{ steps.deps.outputs.WHISPER_VERSION }}"
+          Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$V/whisper-bin-x64.zip" -OutFile whisper.zip
           Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
           Copy-Item whisper-temp\Release\* bin\win\cpu\ -Force
           Remove-Item whisper.zip, whisper-temp -Recurse -Force
@@ -52,7 +62,8 @@ jobs:
       - name: Build whisper.cpp (Vulkan)
         shell: pwsh
         run: |
-          git clone --depth 1 --branch v1.8.3 https://github.com/ggml-org/whisper.cpp.git .build-whisper
+          $V = "${{ steps.deps.outputs.WHISPER_VERSION }}"
+          git clone --depth 1 --branch $V https://github.com/ggml-org/whisper.cpp.git .build-whisper
           cmake -S .build-whisper -B .build-whisper/build-vulkan -DBUILD_SHARED_LIBS=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
           cmake --build .build-whisper/build-vulkan --config Release
           Copy-Item .build-whisper\build-vulkan\bin\Release\whisper-cli.exe bin\win\vulkan\
@@ -62,7 +73,7 @@ jobs:
       - name: Download FFmpeg
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+          Invoke-WebRequest -Uri "${{ steps.deps.outputs.FFMPEG_WIN_URL }}" -OutFile ffmpeg.zip
           Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
           $ffmpegExe = Get-ChildItem -Path ffmpeg-temp -Recurse -Filter "ffmpeg.exe" | Select-Object -First 1
           Copy-Item $ffmpegExe.FullName bin\win\
@@ -71,7 +82,7 @@ jobs:
       - name: Download default model
         shell: pwsh
         run: |
-          Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" -OutFile models\ggml-tiny.en.bin
+          Invoke-WebRequest -Uri "${{ steps.deps.outputs.MODEL_URL }}" -OutFile models\ggml-tiny.en.bin
 
       - name: Build
         run: npx electron-builder --win nsis -p never
@@ -99,6 +110,13 @@ jobs:
         with:
           node-version: 20
 
+      - name: Read deps.json
+        id: deps
+        run: |
+          echo "WHISPER_VERSION=$(node -p "require('./deps.json').whisper.version")" >> "$GITHUB_OUTPUT"
+          echo "MODEL_URL=$(node -p "require('./deps.json').model.url")" >> "$GITHUB_OUTPUT"
+          echo "FFMPEG_URL=$(node -p "require('./deps.json').ffmpeg['linux-amd64'].url")" >> "$GITHUB_OUTPUT"
+
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y cmake gcc g++ libvulkan-dev glslc
 
@@ -109,7 +127,7 @@ jobs:
         run: mkdir -p bin/linux/cpu bin/linux/vulkan models
 
       - name: Clone whisper.cpp
-        run: git clone --depth 1 --branch v1.8.3 https://github.com/ggml-org/whisper.cpp.git .build-whisper
+        run: git clone --depth 1 --branch ${{ steps.deps.outputs.WHISPER_VERSION }} https://github.com/ggml-org/whisper.cpp.git .build-whisper
 
       - name: Build whisper.cpp (CPU)
         run: |
@@ -133,7 +151,7 @@ jobs:
 
       - name: Download FFmpeg
         run: |
-          curl -L -o ffmpeg.tar.xz "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+          curl -L -o ffmpeg.tar.xz "${{ steps.deps.outputs.FFMPEG_URL }}"
           mkdir ffmpeg-temp
           tar -xf ffmpeg.tar.xz -C ffmpeg-temp
           find ffmpeg-temp -name "ffmpeg" -type f -exec cp {} bin/linux/ffmpeg \;
@@ -142,8 +160,7 @@ jobs:
 
       - name: Download default model
         run: |
-          curl -L -o models/ggml-tiny.en.bin \
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
+          curl -L -o models/ggml-tiny.en.bin "${{ steps.deps.outputs.MODEL_URL }}"
 
       - name: Build
         run: npx electron-builder --linux AppImage -p never

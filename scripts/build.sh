@@ -8,10 +8,15 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 BIN_DIR="$PROJECT_DIR/bin"
 MODELS_DIR="$PROJECT_DIR/models"
+DEPS_JSON="$PROJECT_DIR/deps.json"
 
-WHISPER_VERSION="v1.8.3"
+# Read dependency versions from deps.json (single source of truth)
+dep() { node -p "require('$DEPS_JSON')$1"; }
+
+WHISPER_VERSION="$(dep '.whisper.version')"
 WHISPER_RELEASE_URL="https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION"
-MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
+MODEL_URL="$(dep '.model.url')"
+FFMPEG_WIN_URL="$(dep '.ffmpeg.win.url')"
 
 usage() {
   echo "Usage: $0 [--target win|linux|all] [--skip-deps] [--no-gpu] [--debug]"
@@ -79,7 +84,7 @@ setup_win() {
   else
     echo "==> Downloading Windows ffmpeg..."
     local TMP=$(mktemp -d)
-    curl -L -o "$TMP/ffmpeg.zip" "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
+    curl -L -o "$TMP/ffmpeg.zip" "$FFMPEG_WIN_URL"
     unzip -o -j "$TMP/ffmpeg.zip" "*/bin/ffmpeg.exe" -d "$DIR"
     rm -rf "$TMP"
   fi
@@ -141,8 +146,8 @@ setup_linux() {
     echo "==> Downloading Linux ffmpeg..."
     local ARCH="$(uname -m)"
     case "$ARCH" in
-      x86_64)  FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz" ;;
-      aarch64) FFMPEG_URL="https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz" ;;
+      x86_64)  FFMPEG_URL="$(dep '.ffmpeg["linux-amd64"].url')" ;;
+      aarch64) FFMPEG_URL="$(dep '.ffmpeg["linux-arm64"].url')" ;;
       *)       echo "Unsupported arch: $ARCH"; exit 1 ;;
     esac
     local TMP=$(mktemp -d)
