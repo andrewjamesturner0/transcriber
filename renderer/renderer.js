@@ -9,7 +9,7 @@ const btnSave = document.getElementById('btn-save');
 const btnCopy = document.getElementById('btn-copy');
 const btnDownload = document.getElementById('btn-download');
 const modelSelect = document.getElementById('model-select');
-const fileNameEl = document.getElementById('file-name');
+
 const statusEl = document.getElementById('status');
 const transcriptEl = document.getElementById('transcript');
 const outputSection = document.getElementById('output-section');
@@ -36,6 +36,8 @@ const gpuStatusDot = document.getElementById('gpu-status-dot');
 const gpuStatusText = document.getElementById('gpu-status-text');
 const btnCheckPython = document.getElementById('btn-check-python');
 const btnCancel = document.getElementById('btn-cancel');
+const backendDot = document.getElementById('backend-dot');
+const backendLabel = document.getElementById('backend-label');
 
 let models = [];
 let pythonSetup = null;
@@ -227,11 +229,9 @@ function renderQueue() {
     queueListEl.hidden = true;
     queueSummaryEl.innerHTML = '';
     queueSummaryEl.hidden = true;
-    fileNameEl.hidden = true;
     return;
   }
 
-  fileNameEl.hidden = true;
   queueListEl.hidden = false;
   queueListEl.innerHTML = '';
 
@@ -380,6 +380,13 @@ btnTranscribe.addEventListener('click', async () => {
   isProcessing = false;
   btnCancel.hidden = true;
 
+  // Capture raw text before clearing queue
+  const allRawText = queue.filter((i) => i.result).map((i) => i.result).join('');
+
+  // Clear completed queue
+  queue = [];
+  renderQueue();
+
   // Check if any result has pyannote speaker labels
   const hasPyannoteSpeakers = allResults.some((r) => r.hasSpeakers);
 
@@ -394,9 +401,6 @@ btnTranscribe.addEventListener('click', async () => {
         .join('\n\n\n');
     }
   }
-
-  // Show diarization info
-  const allRawText = queue.filter((i) => i.result).map((i) => i.result).join('');
 
   if (hasPyannoteSpeakers) {
     // Count unique speakers from pyannote output
@@ -659,7 +663,7 @@ document.getElementById('btn-sponsor').addEventListener('click', (e) => {
 
 async function checkPythonSetup() {
   btnCheckPython.classList.add('checking');
-  diarizeStatusText.textContent = 'Checking Python...';
+  diarizeStatusText.textContent = 'Checking...';
   diarizeStatusDot.className = 'menu-status-dot menu-status-dot-unknown';
 
   try {
@@ -678,23 +682,23 @@ async function checkPythonSetup() {
     diarizeOptions.hidden = true;
     gpuStatus.hidden = true;
   } else if (!pythonSetup.pyannoteInstalled) {
-    diarizeStatusText.textContent = `Python ${pythonSetup.pythonVersion} found — pyannote not installed`;
-    diarizeStatusDot.className = 'menu-status-dot menu-status-dot-partial';
+    diarizeStatusText.textContent = 'pyannote not detected';
+    diarizeStatusDot.className = 'menu-status-dot menu-status-dot-error';
     diarizeToggle.disabled = true;
     diarizeToggle.checked = false;
     diarizeOptions.hidden = true;
     gpuStatus.hidden = true;
   } else {
-    diarizeStatusText.textContent = `Ready — pyannote ${pythonSetup.pyannoteVersion}`;
+    diarizeStatusText.textContent = `pyannote ${pythonSetup.pyannoteVersion} detected`;
     diarizeStatusDot.className = 'menu-status-dot menu-status-dot-ready';
     diarizeToggle.disabled = false;
     gpuStatus.hidden = false;
     if (pythonSetup.gpuAvailable) {
       gpuStatusDot.className = 'menu-status-dot menu-status-dot-ready';
-      gpuStatusText.textContent = 'GPU detected';
+      gpuStatusText.textContent = 'CUDA detected';
     } else {
       gpuStatusDot.className = 'menu-status-dot menu-status-dot-error';
-      gpuStatusText.textContent = 'No GPU detected';
+      gpuStatusText.textContent = 'CUDA not detected';
     }
   }
 }
@@ -758,9 +762,29 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// --- Whisper GPU acceleration ---
+
+async function updateGpuStatus() {
+  try {
+    const status = await window.api.getGpuStatus();
+    if (status.backend === 'vulkan') {
+      backendDot.className = 'backend-dot backend-dot-gpu';
+      backendLabel.textContent = 'GPU acceleration available';
+    } else {
+      backendDot.className = 'backend-dot backend-dot-cpu';
+      backendLabel.textContent = 'No GPU detected \u2014 using CPU';
+    }
+  } catch (_) {
+    backendDot.className = 'backend-dot backend-dot-cpu';
+    backendLabel.textContent = 'CPU';
+  }
+}
+
 // --- Init ---
 loadModels();
 checkPythonSetup();
+// Delay GPU status check slightly to allow backend detection to complete
+setTimeout(updateGpuStatus, 500);
 window.api.getVersion().then((v) => {
   document.getElementById('version-label').textContent = `v${v}`;
 });

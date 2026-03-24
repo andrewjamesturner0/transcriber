@@ -321,7 +321,7 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
     await runProcess(ffmpeg, ['-i', filePath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', '-y', tmpWav], { signal: abort.signal });
 
     // Step 2: Run whisper
-    const backendLabel = backend === 'vulkan' ? 'Transcribing with GPU (Vulkan)...' : 'Transcribing (CPU)...';
+    const backendLabel = backend === 'vulkan' ? 'Transcribing with GPU...' : 'Transcribing (CPU)...';
     event.sender.send('transcribe-status', backendLabel);
     const threads = Math.max(1, Math.min(os.cpus().length - 1, 8));
     const args = [

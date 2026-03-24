@@ -15,7 +15,8 @@ Transcriber is a desktop application that transcribes audio and video files usin
 - **Completely local** — your audio never leaves your computer. No cloud, no telemetry, no network calls.
 - **Speaker diarisation** — built-in speaker change detection, with optional advanced speaker identification via [pyannote.audio](#speaker-diarization-advanced)
 - **9 Whisper model sizes** — from Tiny (fastest) to Large-v3 (most accurate). English-optimised models available.
-- **8 audio and video formats** — MP3, WAV, FLAC, OGG, M4A, AAC, WMA, MP4
+- **GPU acceleration** — automatic Vulkan GPU detection with transparent CPU fallback
+- **8 audio formats** — MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM
 - **Batch processing** — queue multiple files and transcribe them sequentially
 - **Cross-platform** — Windows and Linux
 
@@ -27,7 +28,7 @@ Download the latest release for your platform from the [Releases page](https://g
 
 | Platform | Format |
 |----------|--------|
-| Windows | NSIS installer or portable ZIP |
+| Windows | NSIS installer (.exe) |
 | Linux | AppImage |
 
 Note: The packages are not signed, so will throw some warnings when installing.
@@ -96,7 +97,7 @@ For a detailed architecture description suitable for ethics applications and dat
 - Modern CPU (Intel or AMD)
 - 4 GB RAM minimum (8 GB+ recommended for larger models)
 - 75 MB – 3 GB disk space per model
-- No GPU required
+- GPU optional — Vulkan-capable GPU auto-detected for faster transcription; falls back to CPU seamlessly
 - Internet connection for first-time model download only
 
 ## Model sizes
@@ -104,7 +105,7 @@ For a detailed architecture description suitable for ethics applications and dat
 | Model | Size | Relative speed | Best for |
 |-------|------|---------------|----------|
 | Tiny / Tiny.en | ~75 MB | Fastest | Quick drafts, clear audio |
-| Base / Base.en | ~150 MB | Fast | Good balance for simple recordings |
+| Base / Base.en | ~142 MB | Fast | Good balance for simple recordings |
 | Small / Small.en | ~500 MB | Moderate | General use |
 | Medium / Medium.en | ~1.5 GB | Slower | Challenging audio, accents |
 | Large-v3 | ~3 GB | Slowest | Maximum accuracy |

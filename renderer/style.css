@@ -254,6 +254,34 @@ h1 {
   pointer-events: none;
 }
 
+/* === Backend badge (in model card) === */
+.backend-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 100px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  font-size: 0.675rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+.backend-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-tertiary);
+}
+
+.backend-dot-gpu { background: #22c55e; }
+.backend-dot-cpu { background: var(--text-tertiary); }
+
 /* === Hamburger Menu === */
 .header-menu {
   position: relative;
@@ -314,13 +342,40 @@ h1 {
   }
 }
 
+.menu-dropdown-title {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  padding: 0.125rem 0.875rem 0.375rem;
+}
+
 .menu-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   font-size: 0.625rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-tertiary);
   padding: 0.25rem 0.875rem 0.5rem;
+}
+
+.menu-section-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.6rem;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-tertiary);
+  text-decoration: none;
+  transition: color 0.15s var(--ease);
+}
+
+.menu-section-link:hover {
+  color: var(--accent);
 }
 
 .menu-toggle-row {
@@ -478,8 +533,10 @@ h1 {
 
 /* === Panel footer (status + warnings consolidated) === */
 .menu-panel-footer {
+  position: relative;
   margin: 0.25rem 0.625rem 0.5rem;
   padding: 0.375rem 0.5rem;
+  padding-right: 2rem;
   background: var(--bg-card);
   border-radius: 6px;
   display: flex;
@@ -491,32 +548,43 @@ h1 {
   padding: 0;
 }
 
-.menu-footer-actions {
+.menu-recheck-btn {
+  position: absolute;
+  right: 0.375rem;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-}
-
-/* Setup link */
-.menu-setup-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  font-size: 0.65rem;
-  color: var(--accent);
-  text-decoration: none;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-tertiary);
   cursor: pointer;
-  transition: color 0.15s var(--ease);
+  transition: all 0.15s var(--ease);
 }
 
-.menu-setup-link:hover {
-  color: var(--accent-hover);
-  text-decoration: underline;
+.menu-recheck-btn:hover {
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border-color: var(--border);
 }
 
-.menu-setup-link svg {
-  flex-shrink: 0;
+.menu-recheck-btn:active {
+  transform: translateY(-50%) scale(0.9);
 }
+
+.menu-recheck-btn.checking {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.menu-recheck-btn.checking svg {
+  animation: spin 0.8s linear infinite;
+}
+
 
 /* === Menu status row (Python detection) === */
 .menu-status-row {
@@ -723,32 +791,6 @@ h1 {
 .drop-text small {
   font-size: 0.7rem;
   color: var(--text-tertiary);
-}
-
-.file-name {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-top: 0.625rem;
-  padding: 0.5rem 0.75rem;
-  background: var(--accent-subtle);
-  border-radius: var(--radius-sm);
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--accent-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-name::before {
-  content: '';
-  display: inline-block;
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--accent);
-  flex-shrink: 0;
 }
 
 /* === Buttons === */

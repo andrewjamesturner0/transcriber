@@ -27,7 +27,7 @@ npm start                # launches the Electron app
 Downloads pre-built Windows binaries for whisper.cpp and ffmpeg:
 
 ```bash
-bash scripts/build.sh                # produces dist/Transcriber-*-win.zip
+bash scripts/build.sh                # produces dist/Transcriber Setup *.exe
 ```
 
 ### Linux target
@@ -47,24 +47,26 @@ bash scripts/build.sh --target all
 ### Build Script Reference
 
 ```
-scripts/build.sh [--target win|linux|all] [--skip-deps] [--debug]
+scripts/build.sh [--target win|linux|all] [--skip-deps] [--no-gpu] [--debug]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--target win` | **(default)** Download Windows binaries, package as zip |
+| `--target win` | **(default)** Download Windows binaries, package as NSIS installer |
 | `--target linux` | Build whisper.cpp from source, package as AppImage |
 | `--target all` | Build both Windows and Linux |
 | `--skip-deps` | Skip downloading/building binaries (reuse existing `bin/` and `models/`) |
+| `--no-gpu` | Skip building Vulkan GPU binaries (CPU only) |
 | `--debug` | Include debug panel in settings (log file viewer) |
 
 The script runs these steps:
 
 1. `npm install`
 2. Downloads the bundled model (`ggml-tiny.en.bin`, 75 MB) from Hugging Face
-3. Fetches or builds platform-specific binaries into `bin/{win,linux}/`
-   - **Windows**: pre-built `whisper-cli.exe` + DLLs from [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), `ffmpeg.exe` from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
-   - **Linux**: clones whisper.cpp, builds with cmake, downloads static ffmpeg from [johnvansickle.com](https://johnvansickle.com/ffmpeg/)
+3. Fetches or builds platform-specific binaries into `bin/{win,linux}/{cpu,vulkan}/`
+   - **Windows**: pre-built CPU `whisper-cli.exe` + DLLs from [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), `ffmpeg.exe` from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
+   - **Linux**: clones whisper.cpp, builds CPU and Vulkan variants with cmake, downloads static ffmpeg from [johnvansickle.com](https://johnvansickle.com/ffmpeg/)
+   - Vulkan binaries are built from source (requires Vulkan SDK); skipped with `--no-gpu`
 4. Runs `electron-builder` to produce the distributable in `dist/`
 
 ## Windows Native Build
@@ -90,14 +92,14 @@ git clone <repo-url>
 cd transcriber
 npm install
 
-mkdir -p bin\win
+mkdir -p bin\win\cpu
 mkdir -p models
 
 # Download whisper.cpp release
 $WHISPER_VERSION = "v1.8.3"
 Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
 Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
-Copy-Item whisper-temp\* bin\win\ -Recurse -Force
+Copy-Item whisper-temp\* bin\win\cpu\ -Recurse -Force
 Remove-Item whisper.zip, whisper-temp -Recurse -Force
 
 # Download ffmpeg
@@ -127,8 +129,8 @@ cmake -B build -DBUILD_SHARED_LIBS=ON
 cmake --build build --config Release
 
 cd ..
-Copy-Item .build-whisper\build\bin\Release\whisper-cli.exe bin\win\
-Copy-Item .build-whisper\build\bin\Release\*.dll bin\win\
+Copy-Item .build-whisper\build\bin\Release\whisper-cli.exe bin\win\cpu\
+Copy-Item .build-whisper\build\bin\Release\*.dll bin\win\cpu\
 
 # Still need ffmpeg and model — see Option A for download commands
 ```
@@ -137,12 +139,10 @@ Copy-Item .build-whisper\build\bin\Release\*.dll bin\win\
 
 ```powershell
 npm start              # development mode
-npm run package        # produces dist/ with installer and zip
+npm run package        # produces dist/ with NSIS installer
 ```
 
-The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Windows experience: installs to Program Files, creates Start Menu shortcuts, and registers an uninstaller. The zip is a portable alternative.
-
-> **Note:** NSIS builds require native Windows. The cross-compile build script only produces the zip target.
+The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Windows experience: installs to Program Files, creates Start Menu shortcuts, and registers an uninstaller.
 
 ## npm Scripts
 
@@ -176,8 +176,12 @@ electron-builder.yml Packaging config (extraResources, targets per platform)
 **Not checked in** (gitignored, created by scripts):
 
 ```
-bin/win/             whisper-cli.exe, DLLs, ffmpeg.exe
-bin/linux/           whisper-cli, shared libs, ffmpeg
+bin/win/cpu/         whisper-cli.exe, DLLs (CPU backend)
+bin/win/vulkan/      whisper-cli.exe, DLLs (Vulkan GPU backend)
+bin/win/             ffmpeg.exe (shared)
+bin/linux/cpu/       whisper-cli, shared libs (CPU backend)
+bin/linux/vulkan/    whisper-cli, shared libs (Vulkan GPU backend)
+bin/linux/           ffmpeg (shared)
 models/              ggml-*.bin model files
 .build-whisper/      whisper.cpp source and build tree (Linux only)
 node_modules/
@@ -189,9 +193,11 @@ dist/                Built distributables
 - `getPlatformDir()` in `main.js` resolves the `win`/`linux`/`mac` subdirectory for binaries
 - `getResourcePath()` handles dev (`__dirname`) vs packaged (`process.resourcesPath`) paths
 - Transcription flow: ffmpeg converts input to 16kHz mono WAV temp file, then spawns whisper-cli with `--no-timestamps`
-- Thread count: `Math.min(os.cpus() - 1, 8)`
+- Thread count: `Math.max(1, Math.min(os.cpus().length - 1, 8))`
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
 - `MODELS` array in `main.js` defines all available models; the `download-model` IPC streams from Hugging Face with progress events
+- GPU acceleration: ships both CPU and Vulkan whisper-cli binaries; at startup, tests the Vulkan binary with `--help` (5s timeout) and caches the result. If Vulkan fails mid-transcription, transparently retries with CPU
+- Backend preference stored in `settings.json` in `app.getPath('userData')`
 - macOS builds require building on macOS with `bin/mac/` populated manually
 
 ## Diarization Architecture

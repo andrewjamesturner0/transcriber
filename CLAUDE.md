@@ -12,7 +12,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions, project struct
 
 ```bash
 npm install                          # Install Electron and dev dependencies
-bash scripts/build.sh                # Full build: download deps + package Windows zip+exe (default)
+bash scripts/build.sh                # Full build: download deps + package Windows NSIS installer (default)
 bash scripts/build.sh --target linux # Build Linux AppImage instead
 bash scripts/build.sh --target all   # Build both Windows and Linux
 bash scripts/build.sh --skip-deps    # Skip binary downloads, just package
@@ -23,8 +23,10 @@ npm start                            # Launch app in dev mode (Linux only, needs
 
 ## Key Details
 
-- Platform binaries in `bin/{win,linux,mac}/`, models in `models/` — all gitignored, created by build scripts
+- Platform binaries in `bin/{win,linux,mac}/{cpu,vulkan}/`, models in `models/` — all gitignored, created by build scripts
 - `main.js`: main process — `getPlatformDir()` and `getResourcePath()` handle dev vs packaged paths
 - Transcription flow: ffmpeg converts to 16kHz mono WAV, then whisper-cli transcribes with `--no-timestamps`
 - `MODELS` array in `main.js` defines available models; `download-model` IPC streams from Hugging Face
-- NSIS installer builds via wine32 in WSL; build script produces both zip and exe by default
+- NSIS installer builds via wine32 in WSL; build script produces NSIS `.exe` installer only
+- GPU acceleration via Vulkan backend; CPU and Vulkan binaries in separate subdirs under `bin/{platform}/`
+- Runtime GPU detection: spawns Vulkan binary with `--help` at startup, falls back to CPU if unavailable
