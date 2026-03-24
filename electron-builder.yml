@@ -32,6 +32,7 @@ win:
 nsis:
   oneClick: true
   allowToChangeInstallationDirectory: false
+  artifactName: "${productName}-Setup-${version}.${ext}"
 
 linux:
   target: AppImage
