@@ -100,7 +100,8 @@ function writeSettings(data) {
 }
 
 function getActiveBackend() {
-  if (gpuState.setting === 'cpu' || gpuState.setting === 'vulkan') return gpuState.setting;
+  if (gpuState.setting === 'vulkan' && fs.existsSync(getWhisperBinary('vulkan'))) return 'vulkan';
+  if (gpuState.setting === 'cpu') return 'cpu';
   return gpuState.detected || 'cpu';
 }
 
