@@ -1,6 +1,6 @@
 {
   "whisper": {
-    "version": "v1.8.3",
+    "version": "v1.8.4",
     "repo": "ggml-org/whisper.cpp",
     "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/download/${version}",
     "winCpuAsset": "whisper-bin-x64.zip"
@@ -8,15 +8,15 @@
   "ffmpeg": {
     "win": {
       "url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
-      "sha256": ""
+      "sha256": "8748283d821613d930b0e7be685aaa9df4ca6f0ad4d0c42fd02622b3623463c6"
     },
     "linux-amd64": {
       "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
-      "sha256": ""
+      "sha256": "abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67"
     },
     "linux-arm64": {
       "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-arm64-static.tar.xz",
-      "sha256": ""
+      "sha256": "f4149bb2b0784e30e99bdda85471c9b5930d3402014e934a5098b41d0f7201b1"
     }
   },
   "model": {
