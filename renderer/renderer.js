@@ -135,7 +135,7 @@ function updateEstimateBanner() {
   const label = currentKey === 'large-turbo' ? 'Large Turbo' : currentKey ? currentKey.charAt(0).toUpperCase() + currentKey.slice(1) : '';
 
   if (est) {
-    estimateCurrentText.innerHTML = `<span class="estimate-model-name">${label}</span> model: ${est.example} for 45 min of audio &mdash; ${est.ratio}`;
+    estimateCurrentText.innerHTML = `<span class="estimate-model-name">${label}</span> model: ${est.example} for 45 min of audio &mdash; ${est.ratio} <span class="estimate-gpu-note">(CPU, faster with GPU)</span>`;
   } else {
     estimateCurrentText.textContent = 'Select a model to see time estimates';
   }
@@ -147,6 +147,7 @@ function updateEstimateBanner() {
     const keyLabel = key === 'large-turbo' ? 'Large Turbo' : key.charAt(0).toUpperCase() + key.slice(1);
     html += `<div class="estimate-row${active}"><span>${keyLabel} <span class="estimate-quality">${e.quality}</span></span><span class="estimate-time">${e.example} <span class="estimate-ratio">${e.ratio}</span></span></div>`;
   }
+  html += '<div class="estimate-gpu-footer">CPU estimates &mdash; faster with GPU acceleration</div>';
   estimateAllBody.innerHTML = html;
 }
 
