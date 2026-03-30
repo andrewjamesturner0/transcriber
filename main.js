@@ -14,6 +14,8 @@ const { autoUpdater } = require('electron-updater');
 // --- Constants ---
 const HF_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
 const AUDIO_EXTENSIONS = ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac'];
+const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp'];
+const MEDIA_EXTENSIONS = [...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS];
 const MAX_THREADS = Math.max(1, Math.min(os.cpus().length - 1, 8));
 const GPU_DETECT_TIMEOUT = 5000;
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
@@ -277,9 +279,9 @@ app.on('window-all-closed', () => app.quit());
 
 ipcMain.handle('select-files', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Select Audio Files',
+    title: 'Select Audio or Video Files',
     filters: [
-      { name: 'Audio Files', extensions: AUDIO_EXTENSIONS },
+      { name: 'Media Files', extensions: MEDIA_EXTENSIONS },
     ],
     properties: ['openFile', 'multiSelections'],
   });
@@ -373,7 +375,9 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
 
   try {
     // Step 1: Convert to 16kHz mono WAV
-    event.sender.send('transcribe-status', 'Converting audio...');
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    const isVideo = VIDEO_EXTENSIONS.includes(ext);
+    event.sender.send('transcribe-status', isVideo ? 'Extracting audio...' : 'Converting audio...');
     await runProcess(ffmpeg, ['-i', filePath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', '-y', tmpWav], { signal: abort.signal });
 
     // Step 2: Run whisper

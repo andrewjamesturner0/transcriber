@@ -64,7 +64,10 @@ const TIME_ESTIMATES = {
   large:         { ratio: '3x slower than realtime',   example: '~150 min', quality: 'Most accurate' },
 };
 
-const SUPPORTED_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac']);
+const SUPPORTED_EXTENSIONS = new Set([
+  'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac',
+  'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp',
+]);
 
 // --- Model picker ---
 
@@ -286,15 +289,15 @@ btnSelect.addEventListener('click', async () => {
 
 // --- Drag and drop ---
 
-function isValidAudioFile(filename) {
+function isValidMediaFile(filename) {
   const ext = filename.split('.').pop().toLowerCase();
   return SUPPORTED_EXTENSIONS.has(ext);
 }
 
 function handleDroppedFiles(files) {
-  const validFiles = Array.from(files).filter((f) => isValidAudioFile(f.name));
+  const validFiles = Array.from(files).filter((f) => isValidMediaFile(f.name));
   if (validFiles.length === 0) {
-    setStatus('No supported audio files. Supported: MP3, WAV, FLAC, M4A, OGG, WebM, WMA, AAC', 'error');
+    setStatus('No supported media files. Supported: MP3, WAV, FLAC, M4A, OGG, WebM, WMA, AAC, MP4, MOV, AVI, MKV', 'error');
     setTimeout(() => setStatus(''), 4000);
     return;
   }
