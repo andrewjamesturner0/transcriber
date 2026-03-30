@@ -29,6 +29,9 @@ const MODELS = [
   { id: 'medium.en',  fileName: 'ggml-medium.en.bin',  label: 'Medium (English)',     size: '1.5 GB' },
   { id: 'medium',     fileName: 'ggml-medium.bin',     label: 'Medium (Multilingual)',size: '1.5 GB' },
   { id: 'large-v3',   fileName: 'ggml-large-v3.bin',   label: 'Large v3 (Multilingual)', size: '3.1 GB' },
+  { id: 'large-v3-turbo',      fileName: 'ggml-large-v3-turbo.bin',      label: 'Large v3 Turbo (Multilingual)', size: '1.6 GB' },
+  { id: 'large-v3-turbo-q5_0', fileName: 'ggml-large-v3-turbo-q5_0.bin', label: 'Large v3 Turbo Q5 (Multilingual)', size: '574 MB' },
+  { id: 'large-v3-q5_0',       fileName: 'ggml-large-v3-q5_0.bin',       label: 'Large v3 Q5 (Multilingual)', size: '1.1 GB' },
 ];
 
 function getResourcePath(relativePath) {

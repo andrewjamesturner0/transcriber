@@ -56,11 +56,12 @@ let timerStartTime = null;
 // --- Time estimates for tooltip ---
 
 const TIME_ESTIMATES = {
-  tiny:   { ratio: '6x faster than realtime',    example: '~8 min',   quality: 'Fastest' },
-  base:   { ratio: '3x faster than realtime',    example: '~15 min',  quality: 'Fast' },
-  small:  { ratio: '1.5x faster than realtime',  example: '~30 min',  quality: 'Balanced' },
-  medium: { ratio: '2x slower than realtime',    example: '~90 min',  quality: 'Accurate' },
-  large:  { ratio: '3x slower than realtime',    example: '~150 min', quality: 'Most accurate' },
+  tiny:          { ratio: '6x faster than realtime',   example: '~8 min',   quality: 'Fastest' },
+  base:          { ratio: '3x faster than realtime',   example: '~15 min',  quality: 'Fast' },
+  small:         { ratio: '1.5x faster than realtime', example: '~30 min',  quality: 'Balanced' },
+  medium:        { ratio: '2x slower than realtime',   example: '~90 min',  quality: 'Accurate' },
+  'large-turbo': { ratio: 'Near realtime',             example: '~50 min',  quality: 'Fast + accurate' },
+  large:         { ratio: '3x slower than realtime',   example: '~150 min', quality: 'Most accurate' },
 };
 
 const SUPPORTED_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac']);
@@ -120,6 +121,7 @@ window.api.onDownloadProgress((data) => {
 // --- Time estimate banner ---
 
 function getEstimateKey(modelId) {
+  if (modelId.startsWith('large') && modelId.includes('turbo')) return 'large-turbo';
   for (const key of ['tiny', 'base', 'small', 'medium', 'large']) {
     if (modelId.startsWith(key)) return key;
   }
@@ -130,7 +132,7 @@ function updateEstimateBanner() {
   const selectedModelId = modelSelect.value;
   const currentKey = getEstimateKey(selectedModelId);
   const est = currentKey ? TIME_ESTIMATES[currentKey] : null;
-  const label = currentKey ? currentKey.charAt(0).toUpperCase() + currentKey.slice(1) : '';
+  const label = currentKey === 'large-turbo' ? 'Large Turbo' : currentKey ? currentKey.charAt(0).toUpperCase() + currentKey.slice(1) : '';
 
   if (est) {
     estimateCurrentText.innerHTML = `<span class="estimate-model-name">${label}</span> model: ${est.example} for 45 min of audio &mdash; ${est.ratio}`;
@@ -142,7 +144,7 @@ function updateEstimateBanner() {
   let html = '';
   for (const [key, e] of Object.entries(TIME_ESTIMATES)) {
     const active = key === currentKey ? ' estimate-active' : '';
-    const keyLabel = key.charAt(0).toUpperCase() + key.slice(1);
+    const keyLabel = key === 'large-turbo' ? 'Large Turbo' : key.charAt(0).toUpperCase() + key.slice(1);
     html += `<div class="estimate-row${active}"><span>${keyLabel} <span class="estimate-quality">${e.quality}</span></span><span class="estimate-time">${e.example} <span class="estimate-ratio">${e.ratio}</span></span></div>`;
   }
   estimateAllBody.innerHTML = html;
