@@ -56,14 +56,18 @@ let timerStartTime = null;
 // --- Time estimates for tooltip ---
 
 const TIME_ESTIMATES = {
-  tiny:   { ratio: '6x faster than realtime',    example: '~8 min',   quality: 'Fastest' },
-  base:   { ratio: '3x faster than realtime',    example: '~15 min',  quality: 'Fast' },
-  small:  { ratio: '1.5x faster than realtime',  example: '~30 min',  quality: 'Balanced' },
-  medium: { ratio: '2x slower than realtime',    example: '~90 min',  quality: 'Accurate' },
-  large:  { ratio: '3x slower than realtime',    example: '~150 min', quality: 'Most accurate' },
+  tiny:          { ratio: '6x faster than realtime',   example: '~8 min',   quality: 'Fastest' },
+  base:          { ratio: '3x faster than realtime',   example: '~15 min',  quality: 'Fast' },
+  small:         { ratio: '1.5x faster than realtime', example: '~30 min',  quality: 'Balanced' },
+  medium:        { ratio: '2x slower than realtime',   example: '~90 min',  quality: 'Accurate' },
+  'large-turbo': { ratio: 'Near realtime',             example: '~50 min',  quality: 'Fast + accurate' },
+  large:         { ratio: '3x slower than realtime',   example: '~150 min', quality: 'Most accurate' },
 };
 
-const SUPPORTED_EXTENSIONS = new Set(['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac']);
+const SUPPORTED_EXTENSIONS = new Set([
+  'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac',
+  'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp',
+]);
 
 // --- Model picker ---
 
@@ -120,6 +124,7 @@ window.api.onDownloadProgress((data) => {
 // --- Time estimate banner ---
 
 function getEstimateKey(modelId) {
+  if (modelId.startsWith('large') && modelId.includes('turbo')) return 'large-turbo';
   for (const key of ['tiny', 'base', 'small', 'medium', 'large']) {
     if (modelId.startsWith(key)) return key;
   }
@@ -130,10 +135,10 @@ function updateEstimateBanner() {
   const selectedModelId = modelSelect.value;
   const currentKey = getEstimateKey(selectedModelId);
   const est = currentKey ? TIME_ESTIMATES[currentKey] : null;
-  const label = currentKey ? currentKey.charAt(0).toUpperCase() + currentKey.slice(1) : '';
+  const label = currentKey === 'large-turbo' ? 'Large Turbo' : currentKey ? currentKey.charAt(0).toUpperCase() + currentKey.slice(1) : '';
 
   if (est) {
-    estimateCurrentText.innerHTML = `<span class="estimate-model-name">${label}</span> model: ${est.example} for 45 min of audio &mdash; ${est.ratio}`;
+    estimateCurrentText.innerHTML = `<span class="estimate-model-name">${label}</span> model: ${est.example} for 45 min of audio &mdash; ${est.ratio} <span class="estimate-gpu-note">(CPU, faster with GPU)</span>`;
   } else {
     estimateCurrentText.textContent = 'Select a model to see time estimates';
   }
@@ -142,9 +147,10 @@ function updateEstimateBanner() {
   let html = '';
   for (const [key, e] of Object.entries(TIME_ESTIMATES)) {
     const active = key === currentKey ? ' estimate-active' : '';
-    const keyLabel = key.charAt(0).toUpperCase() + key.slice(1);
+    const keyLabel = key === 'large-turbo' ? 'Large Turbo' : key.charAt(0).toUpperCase() + key.slice(1);
     html += `<div class="estimate-row${active}"><span>${keyLabel} <span class="estimate-quality">${e.quality}</span></span><span class="estimate-time">${e.example} <span class="estimate-ratio">${e.ratio}</span></span></div>`;
   }
+  html += '<div class="estimate-gpu-footer">CPU estimates &mdash; faster with GPU acceleration</div>';
   estimateAllBody.innerHTML = html;
 }
 
@@ -283,15 +289,15 @@ btnSelect.addEventListener('click', async () => {
 
 // --- Drag and drop ---
 
-function isValidAudioFile(filename) {
+function isValidMediaFile(filename) {
   const ext = filename.split('.').pop().toLowerCase();
   return SUPPORTED_EXTENSIONS.has(ext);
 }
 
 function handleDroppedFiles(files) {
-  const validFiles = Array.from(files).filter((f) => isValidAudioFile(f.name));
+  const validFiles = Array.from(files).filter((f) => isValidMediaFile(f.name));
   if (validFiles.length === 0) {
-    setStatus('No supported audio files. Supported: MP3, WAV, FLAC, M4A, OGG, WebM, WMA, AAC', 'error');
+    setStatus('No supported media files. Supported: MP3, WAV, FLAC, M4A, OGG, WebM, WMA, AAC, MP4, MOV, AVI, MKV', 'error');
     setTimeout(() => setStatus(''), 4000);
     return;
   }
