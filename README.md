@@ -2,7 +2,7 @@
 
 [![GPLv3 License](https://img.shields.io/badge/licence-GPLv3-blue.svg)](LICENSE)
 
-Local audio and video transcription powered by OpenAI's Whisper — entirely on your machine.
+Local audio and video transcription powered by OpenAI's Whisper. All processing on-device.
 
 Transcriber is a desktop application that transcribes audio and video files using the Whisper speech recognition model. All processing happens locally. No audio is sent anywhere and no accounts are needed.
 
@@ -12,13 +12,13 @@ Transcriber is a desktop application that transcribes audio and video files usin
 
 ## Features
 
-- **Completely local** — your audio never leaves your computer. No cloud, no telemetry, no network calls.
-- **Speaker diarisation** — built-in speaker change detection, with optional advanced speaker identification via [pyannote.audio](#speaker-diarization-advanced)
-- **9 Whisper model sizes** — from Tiny (fastest) to Large-v3 (most accurate). English-optimised models available.
-- **GPU acceleration** — automatic Vulkan GPU detection with transparent CPU fallback
-- **8 audio formats** — MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM
-- **Batch processing** — queue multiple files and transcribe them sequentially
-- **Cross-platform** — Windows and Linux
+- Completely local. Your audio never leaves your computer; no cloud, no telemetry, no network calls.
+- Speaker diarisation, with built-in speaker change detection and optional advanced speaker identification via [pyannote.audio](#speaker-diarization-advanced)
+- 13 Whisper models, from Tiny (fastest) to Large-v3 (most accurate), including turbo and quantized variants. English-optimised models available.
+- GPU acceleration via Vulkan, with automatic detection and CPU fallback
+- Audio and video input: 8 audio formats (MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM) and 7 video formats (MP4, MOV, AVI, MKV, WMV, FLV, 3GP)
+- Batch processing. Queue multiple files and transcribe them sequentially.
+- Windows and Linux
 
 ## Install
 
@@ -37,36 +37,36 @@ Note: The packages are not signed, so will throw some warnings when installing.
 
 ```
 Your audio/video file
-    → FFmpeg converts to WAV (locally)
-    → whisper.cpp transcribes the audio (locally)
-    → (If using an appropriate model) TinyDiarize labels speakers (locally)
-    → Your transcript, ready to use
+    -> FFmpeg converts to WAV (locally)
+    -> whisper.cpp transcribes the audio (locally)
+    -> (If using an appropriate model) TinyDiarize labels speakers (locally)
+    -> Your transcript, ready to use
 ```
 
-Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes; no native bindings or compilation required. Models are downloaded once and stored locally; after that, Transcriber works offline.
+Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes; no native bindings or compilation required. Models are downloaded once and stored locally; after that, Transcriber works offline. For details on FFmpeg bundling and LGPL compliance, see [docs/ffmpeg.md](docs/ffmpeg.md).
 
 ## Speaker Diarization (Advanced)
 
-Transcriber includes basic speaker change detection via TinyDiarize (built into whisper.cpp). For full speaker identification — labelling *who* said *what* — you can enable pyannote.audio as an optional advanced feature.
+Transcriber includes basic speaker change detection via TinyDiarize (built into whisper.cpp). For full speaker identification (labelling *who* said *what*), you can enable pyannote.audio as an optional advanced feature.
 
-This uses [pyannote.audio](https://github.com/pyannote/pyannote-audio), the leading open-source speaker diarization pipeline, running as a subprocess. It requires Python and several large dependencies installed separately. **A CUDA GPU is strongly recommended** — CPU diarization is very slow.
+This uses [pyannote.audio](https://github.com/pyannote/pyannote-audio), an open-source speaker diarization pipeline, running as a subprocess. It requires Python and several large dependencies installed separately. **A CUDA GPU is strongly recommended**; CPU diarization is very slow.
 
 ### Setup (Windows)
 
-1. **Install Python 3.9+** from [python.org](https://www.python.org/downloads/) — tick "Add to PATH" during install
-2. **Install dependencies** — open Command Prompt and run:
+1. Install Python 3.9+ from [python.org](https://www.python.org/downloads/). Tick "Add to PATH" during install.
+2. Install dependencies. Open Command Prompt and run:
    ```
    pip install pyannote.audio torch
    ```
-3. **Get a Hugging Face token:**
+3. Get a Hugging Face token:
    - Create an account at [huggingface.co](https://huggingface.co/join)
    - Accept **all three** model licences (you must click "Agree" on each page while logged in):
      - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
      - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
      - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
-   - Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) — a **Read** token is sufficient
-4. **Optional: Install CUDA** for GPU acceleration — [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
-5. **In Transcriber:** Settings (hamburger menu) > Speaker Diarization > paste your HF token > enable the toggle
+   - Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). A Read token is sufficient.
+4. Optional: install CUDA for GPU acceleration. See [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads).
+5. In Transcriber: Settings (hamburger menu) > Speaker Diarization > paste your HF token > enable the toggle.
 
 ### Setup (Linux)
 
@@ -76,7 +76,7 @@ pip install pyannote.audio torch
 
 Then follow steps 3-5 above.
 
-For detailed setup instructions, GPU configuration, and troubleshooting, see [docs/diarization-setup.md](docs/diarization-setup.md).
+For more detail and troubleshooting, see [docs/diarization-setup.md](docs/diarization-setup.md).
 
 ## For researchers
 
@@ -90,14 +90,14 @@ If you work with sensitive recordings (participant interviews, clinical conversa
 
 **What you can tell your ethics committee:** Transcriber processes audio using machine learning models running on the local CPU. No audio, transcript text, or metadata is transmitted over any network. No third-party data processor is involved. The application makes no network connections after initial model download.
 
-For a detailed architecture description suitable for ethics applications and data management plans, see [docs/privacy-architecture.md](docs/privacy-architecture.md).
+For a description suitable for ethics applications and data management plans, see [docs/privacy-architecture.md](docs/privacy-architecture.md).
 
 ## System requirements
 
 - Modern CPU (Intel or AMD)
 - 4 GB RAM minimum (8 GB+ recommended for larger models)
 - 75 MB – 3 GB disk space per model
-- GPU optional — Vulkan-capable GPU auto-detected for faster transcription; falls back to CPU seamlessly
+- GPU optional. Vulkan-capable GPU auto-detected for faster transcription; falls back to CPU if unavailable.
 - Internet connection for first-time model download only
 
 ## Model sizes
@@ -106,11 +106,15 @@ For a detailed architecture description suitable for ethics applications and dat
 |-------|------|---------------|----------|
 | Tiny / Tiny.en | ~75 MB | Fastest | Quick drafts, clear audio |
 | Base / Base.en | ~142 MB | Fast | Good balance for simple recordings |
-| Small / Small.en | ~500 MB | Moderate | General use |
+| Small / Small.en | ~466 MB | Moderate | General use |
+| Small.en + Speaker ID | ~488 MB | Moderate | Speaker change detection (TinyDiarize) |
 | Medium / Medium.en | ~1.5 GB | Slower | Challenging audio, accents |
-| Large-v3 | ~3 GB | Slowest | Maximum accuracy |
+| Large-v3 Turbo Q5 | ~574 MB | Fast | Good accuracy at a fraction of the size |
+| Large-v3 Q5 | ~1.1 GB | Moderate | Large-v3 accuracy, smaller download |
+| Large-v3 Turbo | ~1.6 GB | Moderate | Close to Large-v3 accuracy, faster |
+| Large-v3 | ~3.1 GB | Slowest | Maximum accuracy |
 
-`.en` models are English-optimised and faster when multilingual support isn't needed.
+`.en` models are English-optimised and faster when multilingual support is not needed. Q5 models use 5-bit quantization to reduce file size, with some quality trade-off.
 
 ## Contributing
 

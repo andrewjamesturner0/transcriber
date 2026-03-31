@@ -21,7 +21,7 @@ ffmpeg -i input.mp3 -ar 16000 -ac 1 -c:a pcm_s16le -y output.wav
 
 FFmpeg is licensed under the GNU Lesser General Public License version 2.1.
 
-Because Transcriber runs FFmpeg as a **separate process** rather than linking it as a library, the LGPL re-linking obligation is satisfied automatically — users can substitute their own FFmpeg binary by replacing the file in `bin/{platform}/`.
+Because Transcriber runs FFmpeg as a **separate process** rather than linking it as a library, the LGPL re-linking obligation is satisfied automatically. Users can substitute their own FFmpeg binary by replacing the file in `bin/{platform}/`.
 
 The pre-built binaries from the sources above are built without `--enable-gpl`, so they remain under LGPL 2.1. Even if a GPL-enabled FFmpeg build were used, this would be compatible with Transcriber's GPLv3 licence.
 

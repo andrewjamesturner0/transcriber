@@ -8,25 +8,25 @@ Transcriber is a desktop application that processes audio and video files locall
 
 ## Data flow
 
-1. **Input:** The user selects an audio or video file from their local filesystem.
-2. **Conversion:** FFmpeg (running as a local process) converts the file to WAV format. The converted file is stored temporarily on the local filesystem.
-3. **Transcription:** whisper.cpp (running as a local process) processes the WAV file using a Whisper model stored on the local filesystem. The transcript is generated in memory and passed to the application.
-4. **Diarisation (optional):** TinyDiarize identifies distinct speakers and labels transcript segments accordingly. This runs locally.
-5. **Output:** The transcript is displayed in the application interface. It remains in application memory until the user copies or exports it.
+1. The user selects an audio or video file from their local filesystem.
+2. FFmpeg (running as a local process) converts the file to WAV format. The converted file is stored temporarily on the local filesystem.
+3. whisper.cpp (running as a local process) processes the WAV file using a Whisper model stored on the local filesystem. The transcript is generated in memory and passed to the application.
+4. If diarisation is enabled, pyannote.audio (or TinyDiarize for the small.en-tdrz model) identifies distinct speakers and labels transcript segments accordingly. This runs locally.
+5. The transcript is displayed in the application interface. It remains in application memory until the user copies or exports it.
 
 **At no point in this process is any data transmitted over a network.**
 
 ## Network activity
 
-Transcriber makes **zero network connections** during normal operation.
+Transcriber makes **no network connections during transcription**. No audio, text, or metadata is transmitted at any point in the transcription process.
 
-The only network activity occurs during initial setup: Whisper model files (75 MB – 3 GB) must be downloaded once. After download, models are stored locally and the application operates fully offline.
+Network activity is limited to:
+- Model downloads (75 MB – 3.1 GB per model, once per model, initiated by the user)
+- An automatic update check on startup (queries GitHub Releases for newer versions; no user data is sent)
 
 The application:
 - Does not transmit audio, text, or metadata
 - Does not collect usage analytics or telemetry
-- Does not check for updates automatically
-- Does not phone home or make heartbeat connections
 - Does not require an internet connection after model download
 - Does not require user accounts or registration
 
@@ -37,7 +37,8 @@ The application:
 | whisper.cpp | Speech-to-text inference | MIT | https://github.com/ggml-org/whisper.cpp |
 | FFmpeg | Audio/video format conversion | LGPL 2.1 | https://ffmpeg.org |
 | Whisper models | Neural network weights | MIT | https://github.com/openai/whisper |
-| TinyDiarize | Speaker identification | MIT | Integrated with whisper.cpp |
+| TinyDiarize | Speaker change detection | MIT | Integrated with whisper.cpp |
+| pyannote.audio | Speaker diarisation (optional) | MIT | https://github.com/pyannote/pyannote-audio |
 | Electron | Application framework | MIT | https://www.electronjs.org |
 
 All components run locally. No component makes network requests during transcription.

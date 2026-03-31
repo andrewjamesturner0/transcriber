@@ -19,7 +19,7 @@ Transcriber can identify individual speakers in a recording using [pyannote.audi
 
 Download Python 3.9+ from [python.org](https://www.python.org/downloads/).
 
-**Important:** Tick **"Add Python to PATH"** during installation. If you forget, you'll need to add it manually or reinstall.
+Tick **"Add Python to PATH"** during installation. If you forget, you will need to add it manually or reinstall.
 
 To verify, open Command Prompt and run:
 
@@ -39,14 +39,14 @@ This downloads PyTorch and pyannote.audio with all dependencies. Expect ~1–2 G
 
 ### 3. Get a Hugging Face token
 
-Pyannote models are hosted on Hugging Face as gated models. You must accept the licence for **both** models — otherwise the download will fail with an authentication error.
+Pyannote models are hosted on Hugging Face as gated models. You must accept the licence for each model listed below, otherwise the download will fail with an authentication error.
 
 1. Create an account at [huggingface.co](https://huggingface.co/join)
-2. Accept the licence at [hf.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) — click **"Agree and access repository"**
-3. Accept the licence at [hf.co/pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) — click **"Agree and access repository"**
-4. Accept the licence at [hf.co/pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) — click **"Agree and access repository"**
+2. Accept the licence at [hf.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) (click "Agree and access repository")
+3. Accept the licence at [hf.co/pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) (click "Agree and access repository")
+4. Accept the licence at [hf.co/pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) (click "Agree and access repository")
 5. Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens):
-   - Token type: **Read** (this is sufficient — no write access needed)
+   - Token type: **Read** (no write access needed)
    - The token should start with `hf_`
 
 ### 4. GPU setup (optional but recommended)
@@ -66,7 +66,7 @@ To enable GPU support:
 
 1. Open Transcriber
 2. Click the hamburger menu (top right)
-3. Under **Speaker Diarization**, check that the status shows "Ready"
+3. Under **Speaker Diarization**, check that the status shows the detected pyannote version (e.g. "pyannote 3.1.1 detected")
 4. Paste your Hugging Face token
 5. Enable the toggle
 6. Optionally set the number of speakers (or leave on "Auto-detect")
@@ -115,7 +115,7 @@ Then follow the Hugging Face token steps above (steps 3–5).
 
 ### Very slow performance
 
-- Diarization on CPU is inherently slow. A CUDA GPU is strongly recommended.
+- Diarization on CPU is slow. A CUDA GPU is strongly recommended.
 - Typical CPU times: 30 min – 4 hours per hour of audio
 - Typical GPU times: 1–5 minutes per hour of audio
 - You can cancel a running job using the Cancel button
@@ -124,4 +124,4 @@ Then follow the Hugging Face token steps above (steps 3–5).
 
 - This means the diarization subprocess errored. Check the debug log (Settings > Debug > Open Log File) for the full error.
 - Common causes: missing token, model licence not accepted, model download failure, out of memory
-- The transcription itself still succeeds — you just won't get speaker labels
+- The transcription itself still succeeds; you just will not get speaker labels
