@@ -14,7 +14,7 @@
     "package:all": "electron-builder --win --linux --mac"
   },
   "devDependencies": {
-    "electron": "^33.0.0",
+    "electron": "^41.3.0",
     "electron-builder": "^25.0.0"
   },
   "dependencies": {
