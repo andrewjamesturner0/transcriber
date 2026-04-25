@@ -76,6 +76,27 @@ jobs:
           check_ffmpeg "linux-amd64" "$FFMPEG_AMD64_URL"
           check_ffmpeg "linux-arm64" "$FFMPEG_ARM64_URL"
 
+          # --- Check Electron ---
+          CURRENT_ELECTRON=$(node -p "require('./$DEPS').electron.version")
+          LATEST_ELECTRON=$(curl -s "https://api.github.com/repos/electron/electron/releases/latest" | node -p "JSON.parse(require('fs').readFileSync(0,'utf8')).tag_name.replace(/^v/, '')")
+
+          if [ "$CURRENT_ELECTRON" != "$LATEST_ELECTRON" ]; then
+            echo "electron: $CURRENT_ELECTRON -> $LATEST_ELECTRON"
+            CHANGES="${CHANGES}electron: ${CURRENT_ELECTRON} -> ${LATEST_ELECTRON}\n"
+            node -e "
+              const fs = require('fs');
+              const deps = JSON.parse(fs.readFileSync('$DEPS', 'utf8'));
+              deps.electron.version = '$LATEST_ELECTRON';
+              fs.writeFileSync('$DEPS', JSON.stringify(deps, null, 2) + '\n');
+            "
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              pkg.devDependencies.electron = '^$LATEST_ELECTRON';
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+          fi
+
           # --- Output results ---
           if [ -n "$CHANGES" ]; then
             echo "has_updates=true" >> "$GITHUB_OUTPUT"
@@ -94,7 +115,7 @@ jobs:
         run: |
           BRANCH="deps/auto-update-$(date +%Y%m%d)"
           git checkout -b "$BRANCH"
-          git add deps.json
+          git add deps.json package.json
           git commit -m "deps: update dependency versions
 
           ${{ steps.check.outputs.summary }}
@@ -124,8 +145,8 @@ jobs:
         if: steps.check.outputs.has_updates == 'false'
         run: |
           # If only checksums were updated (first run or no changes), commit directly
-          if ! git diff --quiet deps.json; then
-            git add deps.json
+          if ! git diff --quiet deps.json package.json; then
+            git add deps.json package.json
             git commit -m "deps: update ffmpeg checksums (no version changes)"
             git push
           else
