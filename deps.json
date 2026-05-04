@@ -24,7 +24,7 @@
     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
   },
   "electron": {
-    "version": "41.3.0"
+    "version": "41.5.0"
   },
   "vulkanSdk": "1.3.290.0",
   "node": "20"
