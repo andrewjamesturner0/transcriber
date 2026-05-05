@@ -66,7 +66,7 @@ The script runs these steps:
 3. Fetches or builds platform-specific binaries into `bin/{win,linux}/{cpu,vulkan}/`
    - **Windows**: pre-built CPU `whisper-cli.exe` + DLLs from [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), `ffmpeg.exe` from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
    - **Linux**: clones whisper.cpp, builds CPU and Vulkan variants with cmake, downloads static ffmpeg from [johnvansickle.com](https://johnvansickle.com/ffmpeg/)
-   - Vulkan binaries are built from source (requires Vulkan SDK); skipped with `--no-gpu`
+   - Vulkan binaries: for Linux, built from source (requires Vulkan SDK); for Windows, Vulkan binaries are built in CI only (local Windows builds download pre-built CPU binaries). Skipped with `--no-gpu`
 4. Runs `electron-builder` to produce the distributable in `dist/`
 
 ## Windows Native Build
@@ -96,7 +96,7 @@ mkdir -p bin\win\cpu
 mkdir -p models
 
 # Download whisper.cpp release
-$WHISPER_VERSION = "v1.8.3"
+$WHISPER_VERSION = "v1.8.4"
 Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
 Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
 Copy-Item whisper-temp\* bin\win\cpu\ -Recurse -Force
@@ -150,7 +150,8 @@ The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Win
 |--------|-------------|
 | `npm start` | Run in development mode (requires `scripts/setup.sh` first on Linux) |
 | `npm run setup` | Alias for `bash scripts/setup.sh` |
-| `npm run package` | Package for Windows |
+| `npm run package` | Package for Windows (same as `package:win`) |
+| `npm run package:win` | Package for Windows |
 | `npm run package:linux` | Package for Linux |
 | `npm run package:mac` | Package for macOS |
 | `npm run package:all` | Package for all platforms |
@@ -165,12 +166,18 @@ renderer/
   index.html         App UI
   renderer.js        UI logic (model picker, file selection, transcription, save)
   style.css          Styles
+  fonts/             Bundled fonts
 lib/
+  diarize-merge.js   Diarisation merge pipeline (shared by main.js and tests)
   diarize.py         Pyannote speaker diarization script (spawned as subprocess)
   requirements.txt   Python dependencies for diarization
+assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
 scripts/
-  build.sh           Full build script (download deps + package distributable)
-  setup.sh           Dev-only setup (build whisper.cpp from source for local testing)
+  build.sh                Full build script (download deps + package distributable)
+  setup.sh                Dev-only setup (build whisper.cpp from source for local testing)
+  test-merge.js           Unit tests for the diarization merge logic (no model needed)
+  test-diarize-pipeline.py  End-to-end diarization test (requires Python + HF token)
+  test-audio-load.py      Checks ffmpeg can load a given audio file
 electron-builder.yml Packaging config (extraResources, targets per platform)
 ```
 
@@ -193,7 +200,7 @@ dist/                Built distributables
 
 - `getPlatformDir()` in `main.js` resolves the `win`/`linux`/`mac` subdirectory for binaries
 - `getResourcePath()` handles dev (`__dirname`) vs packaged (`process.resourcesPath`) paths
-- Transcription flow: ffmpeg converts input to 16kHz mono WAV temp file, then spawns whisper-cli with `--no-timestamps`
+- Transcription flow: ffmpeg converts input to 16kHz mono WAV temp file, then spawns whisper-cli with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw` (pyannote diarization; DTW support probed at startup, disabled if unsupported)
 - Thread count: `Math.max(1, Math.min(os.cpus().length - 1, 8))`
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
 - `MODELS` array in `main.js` defines all available models; the `download-model` IPC streams from Hugging Face with progress events
@@ -209,9 +216,13 @@ Speaker diarization uses [pyannote.audio](https://github.com/pyannote/pyannote-a
 
 ```
 User enables diarization in settings
-    → transcribe IPC handler runs whisper with --output-json (timestamped segments)
+    → transcribe IPC handler runs whisper with --output-json-full (full JSON with token timestamps)
+      (adds --dtw <preset> when the model has a DTW preset and the binary supports it;
+       DTW support is probed at startup and disabled for subsequent runs if it fails)
     → runs lib/diarize.py as subprocess on the same WAV
-    → mergeTranscriptWithDiarization() aligns whisper segments with speaker labels
+    → lib/diarize-merge.js mergeTranscriptWithDiarization() runs the pipeline:
+      mergeDiarizeSegments → groupTokensToWords → assignWordsToSpeakers →
+      refineSpeakerBoundaries → smoothSpeakerAssignments → collapse + mergeShortBlocks
     → renderer displays color-coded speaker output
 ```
 
@@ -232,7 +243,9 @@ cat out.json  # should contain speaker segments
 
 ### Timestamp alignment
 
-Whisper outputs segments with millisecond offsets. Pyannote outputs speaker segments with second-precision timestamps. `mergeTranscriptWithDiarization()` in `main.js` assigns each whisper segment to the pyannote speaker with the greatest temporal overlap, then collapses consecutive same-speaker segments.
+The merge pipeline lives in `lib/diarize-merge.js` (shared between `main.js` and `scripts/test-merge.js`). It runs five stages plus post-collapse short-block merging. See [`docs/diarization.md`](docs/diarization.md) for the full pipeline diagram, stage-by-stage description, config reference, and debug logging (`DIARIZE_DEBUG=1`).
+
+Key implementation notes: `DIARIZE_DEBUG=1` emits per-stage diff logs; DTW support is probed at startup and disabled on failure for all subsequent runs. Overlapping segments from pyannote are handled by `mergeDiarizeSegments()` for same-speaker gaps; different-speaker overlaps are preserved as-is.
 
 ### Cancellation
 
