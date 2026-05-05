@@ -11,10 +11,10 @@ Initial public release.
 ### Added
 
 - Local audio and video transcription powered by whisper.cpp — all processing on-device
-- 9 Whisper model sizes from Tiny (75 MB) to Large-v3 (3.1 GB), with English-optimised variants
+- 13 Whisper model sizes from Tiny (75 MB) to Large-v3 (3.1 GB), with English-optimised variants and quantized options
 - Speaker diarisation via TinyDiarize (Not very good!)
 - Batch processing — queue multiple files and transcribe sequentially
-- 8 supported audio/video formats: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, MP4
+- 15 supported audio/video formats: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM (audio); MP4, MOV, AVI, MKV, WMV, FLV, 3GP (video)
 - In-app model downloader with progress indicator
 - Copy to clipboard and save to file
 - Time estimates per model

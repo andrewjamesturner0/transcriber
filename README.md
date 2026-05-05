@@ -39,7 +39,7 @@ Note: The packages are not signed, so will throw some warnings when installing.
 Your audio/video file
     -> FFmpeg converts to WAV (locally)
     -> whisper.cpp transcribes the audio (locally)
-    -> (If using an appropriate model) TinyDiarize labels speakers (locally)
+    -> (Optional) Speaker diarization labels who said what, using TinyDiarize (built-in) or pyannote.audio (locally)
     -> Your transcript, ready to use
 ```
 
