@@ -36,6 +36,21 @@ const MODELS = [
   { id: 'large-v3-q5_0',       fileName: 'ggml-large-v3-q5_0.bin',       label: 'Large v3 Q5 (Multilingual)', size: '1.1 GB' },
 ];
 
+const DTW_PRESETS = {
+  'tiny':                 'tiny',
+  'tiny.en':              'tiny.en',
+  'base':                 'base',
+  'base.en':              'base.en',
+  'small':                'small',
+  'small.en':             'small.en',
+  'medium':               'medium',
+  'medium.en':            'medium.en',
+  'large-v3':             'large.v3',
+  'large-v3-turbo':       'large.v3.turbo',
+  'large-v3-turbo-q5_0':  'large.v3.turbo',
+  'large-v3-q5_0':        'large.v3',
+};
+
 function getResourcePath(relativePath) {
   if (app.isPackaged) {
     return path.join(process.resourcesPath, relativePath);
@@ -88,6 +103,9 @@ async function findPython() {
 
 // --- GPU backend detection ---
 const gpuState = { setting: 'auto', detected: null, deviceName: null, deviceIndex: null }; // detected: 'vulkan' | 'cpu'
+
+// DTW support state — probed at startup, lazily disabled if a DTW failure occurs
+const dtwState = { supported: null }; // null = unchecked, true/false = known
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 
 function readSettings() {
@@ -164,6 +182,31 @@ async function detectGpuBackend() {
   }
 }
 
+/**
+ * Probe whether the current whisper-cli binary supports --dtw.
+ * Runs --help and looks for the --dtw flag in the output.
+ * Caches the result so it only runs once per session.
+ */
+async function detectDtwSupport() {
+  try {
+    const cpuBinary = getWhisperBinary('cpu');
+    const stderrChunks = [];
+    await new Promise((resolve, reject) => {
+      const proc = spawn(cpuBinary, ['--help'], {
+        timeout: GPU_DETECT_TIMEOUT,
+      });
+      proc.stderr.on('data', (d) => stderrChunks.push(d));
+      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`exit ${code}`)));
+      proc.on('error', reject);
+    });
+    const text = Buffer.concat(stderrChunks).toString();
+    return /--dtw/i.test(text);
+  } catch (err) {
+    logWrite(`[DTW] Probe failed: ${err.message}`);
+    return false;
+  }
+}
+
 function getModelsDir() {
   return getResourcePath('models');
 }
@@ -230,6 +273,12 @@ app.whenReady().then(async () => {
   // Detect GPU support (non-blocking for window creation)
   detectGpuBackend().then(() => {
     logWrite(`[GPU] Active backend: ${getActiveBackend()} (setting=${gpuState.setting}, detected=${gpuState.detected})`);
+  });
+
+  // Probe DTW support — cache whether the current whisper binary accepts --dtw
+  detectDtwSupport().then((supported) => {
+    if (dtwState.supported === null) dtwState.supported = supported;
+    logWrite(`[DTW] Support detected: ${supported}`);
   });
 
   createWindow();
@@ -346,6 +395,46 @@ ipcMain.handle('download-model', async (event, modelId) => {
   return true;
 });
 
+async function runWhisperWithFallbacks(whisperBin, args, signal, backend, logWrite, event) {
+  try {
+    const output = await runProcess(whisperBin, args, { signal });
+    return { output, backend };
+  } catch (err) {
+    if (err.message !== 'Cancelled' && /unknown DTW preset|unrecognized .*--dtw|DTW .* not (?:built|enabled|supported)|whisper_full.*dtw/i.test(err.message)) {
+      // --dtw not supported by this build (or flag not recognised); retry without it
+      logWrite(`[DTW] DTW not supported (${err.message.trim()}), retrying without --dtw`);
+      dtwState.supported = false;
+      const dtw = args.indexOf('--dtw');
+      const argsNoDtw = dtw >= 0 ? args.filter((_, i) => i !== dtw && i !== dtw + 1) : args;
+      try {
+        const output = await runProcess(whisperBin, argsNoDtw, { signal });
+        return { output, backend };
+      } catch (retryErr) {
+        logWrite(`[DTW] Retry without --dtw also failed: ${retryErr.message}`);
+        throw err;
+      }
+    } else if (backend === 'vulkan' && err.message !== 'Cancelled') {
+      logWrite(`[GPU] Vulkan transcription failed (${err.message}), falling back to CPU`);
+      const isOOM = /OutOfDeviceMemory|failed to allocate/i.test(err.message);
+      if (!isOOM) gpuState.detected = 'cpu'; // OOM is model-specific, don't disable GPU for future runs
+      const cpuWhisper = getWhisperBinary('cpu');
+      const fallbackMsg = isOOM
+        ? 'Model too large for GPU memory — retrying with CPU...'
+        : 'GPU unavailable — retrying with CPU...';
+      event.sender.send('transcribe-status', fallbackMsg);
+      try {
+        const output = await runProcess(cpuWhisper, args, { signal });
+        return { output, backend: 'cpu' };
+      } catch (retryErr) {
+        logWrite(`[GPU] CPU fallback also failed: ${retryErr.message}`);
+        throw err;
+      }
+    } else {
+      throw err;
+    }
+  }
+}
+
 ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
   let backend = getActiveBackend();
   logWrite(`=== Transcription started: model=${modelId}, backend=${backend}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
@@ -395,7 +484,11 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
       args.push('--tinydiarize');
     } else if (diarization) {
       // Diarization needs timestamped JSON output for alignment
-      args.push('--output-json', '-of', whisperJsonPrefix);
+      args.push('--output-json-full', '-of', whisperJsonPrefix);
+      if (dtwState.supported !== false) {
+        const dtwPreset = DTW_PRESETS[modelId];
+        if (dtwPreset) args.push('--dtw', dtwPreset);
+      }
     } else {
       args.push('--no-timestamps');
     }
@@ -405,25 +498,11 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
       args.push('-mc', '0', '--temperature', '0.4', '--entropy-thold', '1.8');
     }
 
-    let output;
-    try {
-      output = await runProcess(whisper, args, { signal: abort.signal });
-    } catch (err) {
-      // If Vulkan failed, fall back to CPU and retry
-      if (backend === 'vulkan' && err.message !== 'Cancelled') {
-        logWrite(`[GPU] Vulkan transcription failed (${err.message}), falling back to CPU`);
-        const isOOM = /OutOfDeviceMemory|failed to allocate/i.test(err.message);
-        if (!isOOM) gpuState.detected = 'cpu'; // OOM is model-specific, don't disable GPU for future runs
-        backend = 'cpu';
-        whisper = getWhisperBinary('cpu');
-        const fallbackMsg = isOOM
-          ? 'Model too large for GPU memory — retrying with CPU...'
-          : 'GPU unavailable — retrying with CPU...';
-        event.sender.send('transcribe-status', fallbackMsg);
-        output = await runProcess(whisper, args, { signal: abort.signal });
-      } else {
-        throw err;
-      }
+    const result = await runWhisperWithFallbacks(whisper, args, abort.signal, backend, logWrite, event);
+    const output = result.output;
+    if (result.backend !== backend) {
+      backend = result.backend;
+      whisper = getWhisperBinary(backend);
     }
 
     // Step 3: If diarization enabled, run pyannote and merge
@@ -432,18 +511,13 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
         // Parse whisper JSON for timestamped segments
         const whisperJsonPath = whisperJsonPrefix + '.json';
         const whisperJson = JSON.parse(fs.readFileSync(whisperJsonPath, 'utf-8'));
-        const whisperSegments = (whisperJson.transcription || []).map((seg) => ({
-          start: seg.offsets.from / 1000,
-          end: seg.offsets.to / 1000,
-          text: seg.text,
-        }));
 
         // Run diarization
         event.sender.send('transcribe-status', 'Identifying speakers...');
         const diarizeSegments = await runDiarization(event, tmpWav, options, abort.signal);
 
         // Merge and return speaker-labeled transcript
-        return mergeTranscriptWithDiarization(whisperSegments, diarizeSegments);
+        return mergeTranscriptWithDiarization(whisperJson, diarizeSegments);
       } catch (err) {
         // Fall back to plain whisper output if diarization fails
         logWrite(`[DIARIZE-FAIL] ${err.message}\n${err.stack || ''}`);
@@ -503,54 +577,11 @@ async function runDiarization(event, wavPath, options, signal) {
   }
 }
 
-/**
- * Merge whisper timestamped segments with pyannote speaker segments.
- * For each whisper segment, find the speaker with the most temporal overlap.
- */
-function mergeTranscriptWithDiarization(whisperSegments, diarizeSegments) {
-  // Assign a readable label to each unique speaker (SPEAKER_00 -> Speaker 1, etc.)
-  const speakerIds = [...new Set(diarizeSegments.map((s) => s.speaker))];
-  const speakerLabels = {};
-  speakerIds.forEach((id, i) => { speakerLabels[id] = `Speaker ${i + 1}`; });
-
-  const labeled = whisperSegments.map((ws) => {
-    // Find the diarize speaker with the most overlap
-    let bestSpeaker = null;
-    let bestOverlap = 0;
-
-    for (const ds of diarizeSegments) {
-      const overlapStart = Math.max(ws.start, ds.start);
-      const overlapEnd = Math.min(ws.end, ds.end);
-      const overlap = Math.max(0, overlapEnd - overlapStart);
-      if (overlap > bestOverlap) {
-        bestOverlap = overlap;
-        bestSpeaker = ds.speaker;
-      }
-    }
-
-    return {
-      speaker: bestSpeaker ? speakerLabels[bestSpeaker] : 'Unknown',
-      text: ws.text.trim(),
-    };
-  });
-
-  // Collapse consecutive segments from the same speaker
-  const collapsed = [];
-  for (const seg of labeled) {
-    if (!seg.text) continue;
-    const prev = collapsed[collapsed.length - 1];
-    if (prev && prev.speaker === seg.speaker) {
-      prev.text += ' ' + seg.text;
-    } else {
-      collapsed.push({ ...seg });
-    }
-  }
-
-  const speakerCount = speakerIds.length;
-  const header = `[${speakerCount} speaker${speakerCount !== 1 ? 's' : ''} detected]\n\n`;
-  const body = collapsed.map((s) => `[${s.speaker}] ${s.text}`).join('\n\n');
-  return header + body;
-}
+// Diarisation merge pipeline - imported from shared module.
+// Loaded via getResourcePath because lib/ is configured as extraResources
+// in electron-builder.yml (so the file lives at resources/lib/ in packaged
+// builds, not inside app.asar).
+const { mergeTranscriptWithDiarization } = require(getResourcePath(path.join('lib', 'diarize-merge')));
 
 ipcMain.handle('cancel-transcription', () => {
   if (transcriptionAbort) {
