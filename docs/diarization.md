@@ -52,7 +52,7 @@ Uses a **time-window approach**: for each pyannote speaker change, words within 
 
 Words touched by refinement are flagged so that smoothing does not undo the boundary corrections.
 
-**Third-speaker words at 2-speaker boundaries**: when a word at an A→B boundary is labelled with a third speaker C, the algorithm checks whether C appears elsewhere within `boundaryThirdSpeakerWindowSec` (default 2.0s) around the boundary. If C is isolated (no other C labels nearby), it is likely DTW drift and gets reassigned to A or B. If C appears in a cluster, it is probably a genuine 3-way conversation and is preserved.
+**Third-speaker words at 2-speaker boundaries**: when a word at an A->B boundary is labelled with a third speaker C, the algorithm checks whether C appears elsewhere within `boundaryThirdSpeakerWindowSec` (default 2.0s) around the boundary. If C is isolated (no other C labels nearby), it is likely DTW drift and gets reassigned to A or B. If C appears in a cluster, it is probably a genuine 3-way conversation and is preserved.
 
 ## Stage 4: smoothSpeakerAssignments
 

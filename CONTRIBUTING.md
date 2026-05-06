@@ -35,7 +35,7 @@ There is no automated linter or formatter configured. Follow the conventions in 
 1. Fork the repository
 2. Create a feature branch from `master`
 3. Make your changes
-4. Test manually — run `npm start` and verify the app works as expected
+4. Test manually: run `npm start` and verify the app works as expected
 5. Submit a PR with a clear description of the change and why it's needed
 
 Keep PRs focused on a single change. If you're fixing a bug and want to refactor nearby code, submit them as separate PRs.
@@ -48,7 +48,7 @@ Keep PRs focused on a single change. If you're fixing a bug and want to refactor
 
 ## Good first issues
 
-Look for issues labelled [`good first issue`](https://github.com/andrewjamesturner0/transcriber/labels/good%20first%20issue) — these are specifically chosen for new contributors.
+Look for issues labelled [`good first issue`](https://github.com/andrewjamesturner0/transcriber/labels/good%20first%20issue). These are specifically chosen for new contributors.
 
 ## Licence
 

@@ -89,7 +89,7 @@ Then follow the Hugging Face token steps above (steps 3–5).
 
 - Check that Python is on your PATH: run `python --version` or `python3 --version` in a terminal
 - On Windows, try reinstalling Python with "Add to PATH" ticked
-- On Windows, the Microsoft Store version of Python may not be detected — use the python.org installer instead
+- On Windows, the Microsoft Store version of Python may not be detected; use the python.org installer instead
 
 ### "pyannote not installed"
 
@@ -104,7 +104,7 @@ Then follow the Hugging Face token steps above (steps 3–5).
   - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
 - Check that your token is valid, starts with `hf_`, and has at least **Read** scope
 - If you recently accepted the licences, restart Transcriber and try again
-- The first run downloads ~300 MB of model files — ensure you have an internet connection
+- The first run downloads ~300 MB of model files; ensure you have an internet connection
 - Check the debug log (Settings > Debug > Open Log File) for the exact error from Hugging Face
 
 ### Out of memory

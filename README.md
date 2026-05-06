@@ -74,7 +74,7 @@ This uses [pyannote.audio](https://github.com/pyannote/pyannote-audio), an open-
 pip install pyannote.audio torch
 ```
 
-Then follow steps 3-5 above.
+Then follow steps 3–5 above.
 
 For more detail and troubleshooting, see [docs/diarization-setup.md](docs/diarization-setup.md).
 
