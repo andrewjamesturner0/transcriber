@@ -164,7 +164,8 @@ preload.js           Context bridge between main and renderer
 deps.json            Single source of truth for dependency versions and URLs
 renderer/
   index.html         App UI
-  renderer.js        UI logic (model picker, file selection, transcription, save)
+  renderer.js        UI logic (wires queue model to DOM, IPC handlers)
+  queue.js           Queue state model (pending -> processing -> done/error)
   style.css          Styles
   fonts/             Bundled fonts
 lib/
@@ -181,6 +182,8 @@ scripts/
   test-merge.js                 Unit tests for the diarization merge logic (no model needed)
   test-capabilities.js          Unit tests for lib/capabilities.js (GPU, DTW, Python)
   test-transcription-runner.js  Unit tests for the transcription pipeline (FFmpeg, whisper, fallbacks)
+  test-queue.js                 Unit tests for the queue state model (enqueue, processAll, cancel)
+  test-renderer-smoke.js        Smoke test: loads renderer scripts in a browser-like vm context
   test-packaging.js             Static check: require() consistency vs electron-builder.yml
   test-diarize-pipeline.py End-to-end diarization test (requires Python + HF token)
   test-audio-load.py       Checks ffmpeg can load a given audio file

@@ -44,9 +44,8 @@ let pythonSetup = null;
 
 // --- Queue state ---
 
-let queue = []; // { id, filePath, fileName, status: 'pending'|'processing'|'done'|'error', result, error }
-let nextQueueId = 0;
-let isProcessing = false;
+const queue = createQueue();
+let cancelController = null;
 
 // --- Timer state ---
 
@@ -94,8 +93,9 @@ function onModelChange() {
   const m = models.find((m) => m.id === modelSelect.value);
   if (!m) return;
   btnDownload.hidden = m.downloaded;
-  const hasPendingFiles = queue.some((i) => i.status === 'pending');
-  btnTranscribe.disabled = !m.downloaded || queue.length === 0 || !hasPendingFiles;
+  const s = queue.getSummary();
+  const items = queue.getItems();
+  btnTranscribe.disabled = !m.downloaded || items.length === 0 || s.pending === 0;
   updateEstimateBanner();
 }
 
@@ -189,48 +189,11 @@ function hideTimer() {
 
 // --- Queue management ---
 
-function addToQueue(filePaths) {
-  for (const filePath of filePaths) {
-    const fileName = filePath.split(/[\\/]/).pop();
-    queue.push({
-      id: nextQueueId++,
-      filePath,
-      fileName,
-      status: 'pending',
-      result: null,
-      error: null,
-    });
-  }
-  renderQueue();
-  onModelChange();
-}
+function syncQueueUI() {
+  const items = queue.getItems();
+  const s = queue.getSummary();
 
-function removeFromQueue(id) {
-  queue = queue.filter((item) => item.id !== id || item.status !== 'pending');
-  if (queue.length === 0) hideTimer();
-  renderQueue();
-  onModelChange();
-}
-
-function clearQueue() {
-  if (isProcessing) {
-    queue = queue.filter((item) => item.status === 'processing' || item.status === 'done');
-  } else {
-    queue = [];
-    hideTimer();
-    outputSection.hidden = true;
-    transcriptEl.value = '';
-    transcriptEl.hidden = false;
-    const richEl = document.getElementById('transcript-rich');
-    if (richEl) richEl.remove();
-    btnSave.disabled = true;
-  }
-  renderQueue();
-  onModelChange();
-}
-
-function renderQueue() {
-  if (queue.length === 0) {
+  if (items.length === 0) {
     queueListEl.innerHTML = '';
     queueListEl.hidden = true;
     queueSummaryEl.innerHTML = '';
@@ -241,7 +204,7 @@ function renderQueue() {
   queueListEl.hidden = false;
   queueListEl.innerHTML = '';
 
-  for (const item of queue) {
+  for (const item of items) {
     const li = document.createElement('li');
     li.className = `queue-item ${item.status}`;
     li.innerHTML = `
@@ -252,14 +215,43 @@ function renderQueue() {
     queueListEl.appendChild(li);
   }
 
-  const done = queue.filter((i) => i.status === 'done').length;
-  const total = queue.length;
-  const pending = queue.filter((i) => i.status === 'pending').length;
+  const isProcessing = queue.getActiveItem() !== null;
   queueSummaryEl.hidden = false;
   queueSummaryEl.innerHTML = `
-    <span>${done} of ${total} completed${pending > 0 ? ` \u00b7 ${pending} remaining` : ''}</span>
+    <span>${s.done} of ${s.total} completed${s.pending > 0 ? ` \u00b7 ${s.pending} remaining` : ''}</span>
     <button class="btn-clear-queue">${isProcessing ? 'Clear pending' : 'Clear all'}</button>
   `;
+}
+
+function addToQueue(filePaths) {
+  const files = filePaths.map((fp) => ({ filePath: fp, fileName: fp.split(/[\\/]/).pop() }));
+  queue.enqueue(files);
+  syncQueueUI();
+  onModelChange();
+}
+
+function removeFromQueue(id) {
+  queue.remove(id);
+  if (queue.getItems().length === 0) hideTimer();
+  syncQueueUI();
+  onModelChange();
+}
+
+function clearQueue() {
+  if (queue.getActiveItem() !== null) {
+    queue.clear();
+  } else {
+    queue.clear();
+    hideTimer();
+    outputSection.hidden = true;
+    transcriptEl.value = '';
+    transcriptEl.hidden = false;
+    const richEl = document.getElementById('transcript-rich');
+    if (richEl) richEl.remove();
+    btnSave.disabled = true;
+  }
+  syncQueueUI();
+  onModelChange();
 }
 
 // Event delegation for queue item removal
@@ -337,10 +329,8 @@ document.addEventListener('drop', (e) => e.preventDefault());
 // --- Transcription (serial queue processing) ---
 
 btnTranscribe.addEventListener('click', async () => {
-  const pendingItems = queue.filter((i) => i.status === 'pending');
-  if (pendingItems.length === 0) return;
+  if (queue.getSummary().pending === 0) return;
 
-  isProcessing = true;
   btnTranscribe.disabled = true;
   btnCancel.hidden = false;
   btnSelect.disabled = true;
@@ -352,46 +342,45 @@ btnTranscribe.addEventListener('click', async () => {
   outputSection.hidden = true;
   startTimer();
 
-  const allResults = [];
+  const controller = new AbortController();
+  cancelController = controller;
 
-  for (const item of pendingItems) {
-    item.status = 'processing';
-    renderQueue();
+  await queue.processAll(async (item) => {
     setStatus(`Transcribing ${item.fileName}...`, 'progress');
-
-    try {
-      const options = {
-        antiCorruption: antiCorruptionToggle.checked,
-      };
-      if (diarizeToggle.checked) {
-        options.diarization = true;
-        options.hfToken = hfTokenInput.value || undefined;
-        const speakers = numSpeakersSelect.value;
-        if (speakers !== 'auto') options.numSpeakers = parseInt(speakers, 10);
-      }
-      const text = await window.api.transcribe(item.filePath, modelSelect.value, options);
-      item.status = 'done';
-      item.result = text;
-      item.hasSpeakers = isPyannoteDiarized(text);
-      allResults.push({ fileName: item.fileName, text: formatDiarizedOutput(text), hasSpeakers: item.hasSpeakers });
-    } catch (err) {
-      item.status = 'error';
-      item.error = err.message;
-      allResults.push({ fileName: item.fileName, text: `[Error: ${err.message}]`, hasSpeakers: false });
+    const options = {
+      antiCorruption: antiCorruptionToggle.checked,
+    };
+    if (diarizeToggle.checked) {
+      options.diarization = true;
+      options.hfToken = hfTokenInput.value || undefined;
+      const speakers = numSpeakersSelect.value;
+      if (speakers !== 'auto') options.numSpeakers = parseInt(speakers, 10);
     }
-    renderQueue();
-  }
+    const text = await window.api.transcribe(item.filePath, modelSelect.value, options);
+    item.hasSpeakers = isPyannoteDiarized(text);
+    return text;
+  }, {
+    signal: controller.signal,
+    onChange: () => syncQueueUI(),
+  });
 
   stopTimer();
-  isProcessing = false;
+  cancelController = null;
   btnCancel.hidden = true;
 
-  // Capture raw text before clearing queue
-  const allRawText = queue.filter((i) => i.result).map((i) => i.result).join('');
+  // Build display results from queue items
+  const items = queue.getItems();
+  const doneItems = items.filter((i) => i.status === 'done' && i.result);
+  const allResults = doneItems.map((i) => ({
+    fileName: i.fileName,
+    text: formatDiarizedOutput(i.result),
+    hasSpeakers: i.hasSpeakers || false,
+  }));
+  const allRawText = doneItems.map((i) => i.result).join('');
 
   // Clear completed queue
-  queue = [];
-  renderQueue();
+  queue.clear();
+  syncQueueUI();
 
   // Check if any result has pyannote speaker labels
   const hasPyannoteSpeakers = allResults.some((r) => r.hasSpeakers);
@@ -409,7 +398,6 @@ btnTranscribe.addEventListener('click', async () => {
   }
 
   if (hasPyannoteSpeakers) {
-    // Count unique speakers from pyannote output
     const speakerMatches = allRawText.match(/\[Speaker \d+\]/g) || [];
     const uniqueSpeakers = new Set(speakerMatches);
     const count = uniqueSpeakers.size;
@@ -447,6 +435,7 @@ btnCancel.addEventListener('click', async () => {
   try {
     await window.api.cancelTranscription();
   } catch (_) {}
+  if (cancelController) cancelController.abort();
   btnCancel.disabled = false;
 });
 
