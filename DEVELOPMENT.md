@@ -159,7 +159,7 @@ The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Win
 ## Project Structure
 
 ```
-main.js              Electron main process — IPC handlers, spawns whisper-cli & ffmpeg
+main.js              Electron main process — IPC handlers, window creation, settings
 preload.js           Context bridge between main and renderer
 deps.json            Single source of truth for dependency versions and URLs
 renderer/
@@ -168,18 +168,20 @@ renderer/
   style.css          Styles
   fonts/             Bundled fonts
 lib/
-  paths.js           Shared binary-path resolution (dev vs. packaged, platform dir)
-  capabilities.js    GPU/DTW/Python capability detection (consolidated from main.js)
-  diarize-merge.js   Diarisation merge pipeline (shared by main.js and tests)
-  diarize.py         Pyannote speaker diarization script (spawned as subprocess)
-  requirements.txt   Python dependencies for diarization
+  paths.js                Shared binary-path resolution (dev vs. packaged, platform dir)
+  capabilities.js         GPU/DTW/Python capability detection (consolidated from main.js)
+  transcription-runner.js FFmpeg -> whisper -> diarize pipeline (extracted from main.js)
+  diarize-merge.js        Diarisation merge pipeline (shared by main.js and tests)
+  diarize.py              Pyannote speaker diarization script (spawned as subprocess)
+  requirements.txt        Python dependencies for diarization
 assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
 scripts/
   build.sh                 Full build script (download deps + package distributable)
   setup.sh                 Dev-only setup (build whisper.cpp from source for local testing)
-  test-merge.js            Unit tests for the diarization merge logic (no model needed)
-  test-capabilities.js     Unit tests for lib/capabilities.js (GPU, DTW, Python)
-  test-packaging.js        Static check: require() consistency vs electron-builder.yml
+  test-merge.js                 Unit tests for the diarization merge logic (no model needed)
+  test-capabilities.js          Unit tests for lib/capabilities.js (GPU, DTW, Python)
+  test-transcription-runner.js  Unit tests for the transcription pipeline (FFmpeg, whisper, fallbacks)
+  test-packaging.js             Static check: require() consistency vs electron-builder.yml
   test-diarize-pipeline.py End-to-end diarization test (requires Python + HF token)
   test-audio-load.py       Checks ffmpeg can load a given audio file
 electron-builder.yml Packaging config (extraResources, targets per platform)
@@ -204,6 +206,7 @@ dist/                Built distributables
 
 - `lib/paths.js` owns all binary-path resolution: `getPlatformDir()` resolves `win`/`linux`/`mac`, `getResourcePath()` handles dev vs. packaged, `getWhisperBinary(backend)` and `getFfmpegBinary()` return binary paths
 - `lib/capabilities.js` consolidates GPU backend detection, DTW support probing, and Python/pyannote availability into a single module (formerly scattered global state in main.js)
+- `lib/transcription-runner.js` orchestrates the FFmpeg -> whisper -> diarize pipeline (extracted from the `transcribe` IPC handler). All dependencies (binary paths, spawn, callbacks) are injected via the context object for testability
 - Transcription flow: ffmpeg converts input to 16kHz mono WAV temp file, then spawns whisper-cli with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw` (pyannote diarization; DTW support probed at startup, disabled if unsupported)
 - Thread count: `Math.max(1, Math.min(os.cpus().length - 1, 8))`
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs

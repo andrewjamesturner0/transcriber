@@ -109,6 +109,6 @@ The pipeline requires whisper token timestamps for word-level alignment. These c
 
 ## Pyannote Unavailability
 
-If pyannote is not installed or diarization fails, the app produces a plain (non-speaker-labeled) transcript. This is handled in `main.js`, not in the merge module.
+If pyannote is not installed or diarization fails, the app produces a plain (non-speaker-labeled) transcript. This is handled in `lib/transcription-runner.js`, not in the merge module.
 
 See `README.md` for pyannote installation instructions.

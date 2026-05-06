@@ -12,6 +12,7 @@ const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const paths = require('./lib/paths');
 const Capabilities = require('./lib/capabilities');
+const { runTranscription, runDiarizationOnly } = require('./lib/transcription-runner');
 
 // Initialize path resolver at module load time so it's available for
 // all requires and function calls that follow.
@@ -258,62 +259,20 @@ ipcMain.handle('download-model', async (event, modelId) => {
   return true;
 });
 
-async function runWhisperWithFallbacks(whisperBin, args, signal, backend, logWrite, event) {
-  try {
-    const output = await runProcess(whisperBin, args, { signal });
-    return { output, backend };
-  } catch (err) {
-    if (err.message !== 'Cancelled' && /unknown DTW preset|unrecognized .*--dtw|DTW .* not (?:built|enabled|supported)|whisper_full.*dtw/i.test(err.message)) {
-      // --dtw not supported by this build (or flag not recognised); retry without it
-      logWrite(`[DTW] DTW not supported (${err.message.trim()}), retrying without --dtw`);
-      capabilities.disableDtw();
-      const dtw = args.indexOf('--dtw');
-      const argsNoDtw = dtw >= 0 ? args.filter((_, i) => i !== dtw && i !== dtw + 1) : args;
-      try {
-        const output = await runProcess(whisperBin, argsNoDtw, { signal });
-        return { output, backend };
-      } catch (retryErr) {
-        logWrite(`[DTW] Retry without --dtw also failed: ${retryErr.message}`);
-        throw err;
-      }
-    } else if (backend === 'vulkan' && err.message !== 'Cancelled') {
-      logWrite(`[GPU] Vulkan transcription failed (${err.message}), falling back to CPU`);
-      const isOOM = /OutOfDeviceMemory|failed to allocate/i.test(err.message);
-      if (!isOOM) capabilities.disableGpu(); // OOM is model-specific, don't disable GPU for future runs
-      const cpuWhisper = paths.getWhisperBinary('cpu');
-      const fallbackMsg = isOOM
-        ? 'Model too large for GPU memory — retrying with CPU...'
-        : 'GPU unavailable — retrying with CPU...';
-      event.sender.send('transcribe-status', fallbackMsg);
-      try {
-        const output = await runProcess(cpuWhisper, args, { signal });
-        return { output, backend: 'cpu' };
-      } catch (retryErr) {
-        logWrite(`[GPU] CPU fallback also failed: ${retryErr.message}`);
-        throw err;
-      }
-    } else {
-      throw err;
-    }
-  }
-}
-
 ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
-  let backend = capabilities.getActiveBackend();
+  const backend = capabilities.getActiveBackend();
   logWrite(`=== Transcription started: model=${modelId}, backend=${backend}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
-  const ffmpeg = paths.getFfmpegBinary();
-  let whisper = paths.getWhisperBinary(backend);
+
   const modelConfig = MODELS.find((m) => m.id === (modelId || 'tiny.en'));
   const modelPath = getModelPath(modelId || 'tiny.en');
-  const diarization = options && options.diarization;
+  let whisperBin = paths.getWhisperBinary(backend);
 
   // Validate binaries exist (fall back to CPU if chosen backend missing)
-  if (!fs.existsSync(whisper) && backend === 'vulkan') {
+  if (!fs.existsSync(whisperBin) && backend === 'vulkan') {
     logWrite(`[GPU] Vulkan binary not found, falling back to CPU`);
-    backend = 'cpu';
-    whisper = paths.getWhisperBinary('cpu');
+    whisperBin = paths.getWhisperBinary('cpu');
   }
-  for (const [name, p] of [['whisper-cli', whisper], ['ffmpeg', ffmpeg], ['model', modelPath]]) {
+  for (const [name, p] of [['whisper-cli', whisperBin], ['ffmpeg', paths.getFfmpegBinary()], ['model', modelPath]]) {
     if (!fs.existsSync(p)) {
       throw new Error(`${name} not found at ${p}. Run "npm run setup" first.`);
     }
@@ -322,127 +281,35 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
   const abort = new AbortController();
   transcriptionAbort = abort;
 
-  const tmpWav = path.join(os.tmpdir(), `whisper_input_${Date.now()}.wav`);
-  const whisperJsonPrefix = path.join(os.tmpdir(), `whisper_out_${Date.now()}`);
-
   try {
-    // Step 1: Convert to 16kHz mono WAV
-    const ext = path.extname(filePath).slice(1).toLowerCase();
-    const isVideo = VIDEO_EXTENSIONS.includes(ext);
-    event.sender.send('transcribe-status', isVideo ? 'Extracting audio...' : 'Converting audio...');
-    await runProcess(ffmpeg, ['-i', filePath, '-ar', '16000', '-ac', '1', '-c:a', 'pcm_s16le', '-y', tmpWav], { signal: abort.signal });
-
-    // Step 2: Run whisper
-    const backendLabel = backend === 'vulkan' ? 'Transcribing with GPU...' : 'Transcribing (CPU)...';
-    event.sender.send('transcribe-status', backendLabel);
-    const threads = MAX_THREADS;
-    const args = [
-      '-m', modelPath,
-      '-f', tmpWav,
-      '-t', String(threads),
-    ];
-
-    // TinyDiarize models require timestamps and the --tinydiarize flag
-    if (modelConfig && modelConfig.tdrz) {
-      args.push('--tinydiarize');
-    } else if (diarization) {
-      // Diarization needs timestamped JSON output for alignment
-      args.push('--output-json-full', '-of', whisperJsonPrefix);
-      if (capabilities.isDtwSupported()) {
-        const dtwPreset = DTW_PRESETS[modelId];
-        if (dtwPreset) args.push('--dtw', dtwPreset);
-      }
-    } else {
-      args.push('--no-timestamps');
-    }
-
-    // Anti-corruption: disable context window + adjusted sampling to prevent hallucination loops
-    if (options && options.antiCorruption) {
-      args.push('-mc', '0', '--temperature', '0.4', '--entropy-thold', '1.8');
-    }
-
-    const result = await runWhisperWithFallbacks(whisper, args, abort.signal, backend, logWrite, event);
-    const output = result.output;
-    if (result.backend !== backend) {
-      backend = result.backend;
-      whisper = paths.getWhisperBinary(backend);
-    }
-
-    // Step 3: If diarization enabled, run pyannote and merge
-    if (diarization && !modelConfig?.tdrz) {
-      try {
-        // Parse whisper JSON for timestamped segments
-        const whisperJsonPath = whisperJsonPrefix + '.json';
-        const whisperJson = JSON.parse(fs.readFileSync(whisperJsonPath, 'utf-8'));
-
-        // Run diarization
-        event.sender.send('transcribe-status', 'Identifying speakers...');
-        const diarizeSegments = await runDiarization(event, tmpWav, options, abort.signal);
-
-        // Merge and return speaker-labeled transcript
-        return mergeTranscriptWithDiarization(whisperJson, diarizeSegments);
-      } catch (err) {
-        // Fall back to plain whisper output if diarization fails
-        logWrite(`[DIARIZE-FAIL] ${err.message}\n${err.stack || ''}`);
-        const fallbackMsg = err.message === 'Cancelled' ? 'Cancelled' : err.message;
-        if (err.message === 'Cancelled') throw err;
-        event.sender.send('transcribe-status', `Diarization failed (${fallbackMsg}), using plain transcript`);
-        return output.trim();
-      }
-    }
-
-    return output.trim();
+    const result = await runTranscription(filePath, modelId, options, {
+      ffmpegBinary: paths.getFfmpegBinary(),
+      whisperBinary: whisperBin,
+      cpuWhisperBinary: paths.getWhisperBinary('cpu'),
+      modelPath,
+      modelConfig,
+      dtwPresets: DTW_PRESETS,
+      threads: MAX_THREADS,
+      whisperBackend: backend,
+      onProgress: (msg) => event.sender.send('transcribe-status', msg),
+      onDiarizeProgress: (data) => event.sender.send('diarize-status', data),
+      log: logWrite,
+      isDtwSupported: () => capabilities.isDtwSupported(),
+      disableDtw: () => capabilities.disableDtw(),
+      disableGpu: () => capabilities.disableGpu(),
+      pythonCmd: await capabilities.getPythonCommand(),
+      diarizeScriptPath: paths.getResourcePath(path.join('lib', 'diarize.py')),
+      mergeTranscript: mergeTranscriptWithDiarization,
+      signal: abort.signal,
+      spawn,
+      makeEnvWithLibPath: paths.makeEnvWithLibPath,
+    });
+    return result;
   } finally {
     transcriptionAbort = null;
-    try { fs.unlinkSync(tmpWav); } catch (_) {}
-    try { fs.unlinkSync(whisperJsonPrefix + '.json'); } catch (_) {}
   }
 });
 
-/**
- * Run pyannote diarization on a WAV file. Used internally by the transcribe handler.
- */
-async function runDiarization(event, wavPath, options, signal) {
-  const { hfToken, numSpeakers } = options;
-
-  const pythonCmd = await capabilities.getPythonCommand();
-  if (!pythonCmd) throw new Error('Python not found');
-
-  const scriptPath = paths.getResourcePath(path.join('lib', 'diarize.py'));
-  if (!fs.existsSync(scriptPath)) throw new Error('Diarization script not found');
-
-  const outputJson = path.join(os.tmpdir(), `diarize_${Date.now()}.json`);
-  const pyPrefix = pythonCmd === 'py' ? ['-3'] : [];
-  const args = [...pyPrefix, scriptPath, '--audio', wavPath, '--output', outputJson];
-  if (hfToken) args.push('--hf-token', hfToken);
-  if (numSpeakers) args.push('--num-speakers', String(numSpeakers));
-
-  try {
-    await runProcess(pythonCmd, args, {
-      signal,
-      onStderr: (data) => {
-        for (const line of data.split('\n')) {
-          if (!line.trim()) continue;
-          try {
-            const parsed = JSON.parse(line);
-            if (parsed.error) {
-              event.sender.send('diarize-status', { error: parsed.error });
-            } else if (parsed.message) {
-              event.sender.send('diarize-status', { message: parsed.message, percent: parsed.percent });
-            }
-          } catch (_) { /* not JSON */ }
-        }
-      },
-    });
-    return JSON.parse(fs.readFileSync(outputJson, 'utf-8'));
-  } finally {
-    try { fs.unlinkSync(outputJson); } catch (_) {}
-  }
-}
-
-// Diarisation merge pipeline - imported from shared module.
-// JS modules in lib/ are inside the asar (only diarize.py and
-// requirements.txt are extraResources for Python subprocess access).
 const { mergeTranscriptWithDiarization } = require('./lib/diarize-merge');
 
 ipcMain.handle('cancel-transcription', () => {
@@ -463,7 +330,15 @@ ipcMain.handle('diarize', async (event, wavPath, options = {}) => {
   const abort = new AbortController();
   transcriptionAbort = abort;
   try {
-    return await runDiarization(event, wavPath, options, abort.signal);
+    return await runDiarizationOnly(wavPath, options, {
+      pythonCmd: await capabilities.getPythonCommand(),
+      diarizeScriptPath: paths.getResourcePath(path.join('lib', 'diarize.py')),
+      onDiarizeProgress: (data) => event.sender.send('diarize-status', data),
+      log: logWrite,
+      signal: abort.signal,
+      spawn,
+      makeEnvWithLibPath: paths.makeEnvWithLibPath,
+    });
   } finally {
     transcriptionAbort = null;
   }
@@ -518,53 +393,4 @@ ipcMain.handle('save-transcript', async (event, text) => {
   return true;
 });
 
-function runProcess(cmd, args, { signal, onStderr } = {}) {
-  return new Promise((resolve, reject) => {
-    if (signal && signal.aborted) {
-      return reject(new Error('Cancelled'));
-    }
 
-    const cmdName = path.basename(cmd);
-    const safeArgs = args.map((a, i) => {
-      // Mask HF tokens in logged output
-      if (args[i - 1] === '--hf-token' || (typeof a === 'string' && a.startsWith('hf_'))) return 'hf_***';
-      return a.includes(' ') ? `"${a}"` : a;
-    });
-    logWrite(`[RUN] ${cmdName} ${safeArgs.join(' ')}`);
-
-    const env = paths.makeEnvWithLibPath(path.dirname(cmd));
-    const proc = spawn(cmd, args, { env });
-    let stdout = '';
-    let stderr = '';
-    proc.stdout.on('data', (d) => {
-      const chunk = d.toString();
-      stdout += chunk;
-      logWrite(`[STDOUT:${cmdName}] ${chunk.trimEnd()}`);
-    });
-    proc.stderr.on('data', (d) => {
-      const chunk = d.toString();
-      stderr += chunk;
-      logWrite(`[STDERR:${cmdName}] ${chunk.trimEnd()}`);
-      if (onStderr) onStderr(chunk);
-    });
-    proc.on('close', (code) => {
-      logWrite(`[EXIT:${cmdName}] code=${code}`);
-      if (signal && signal.aborted) reject(new Error('Cancelled'));
-      else if (code === 0) resolve(stdout);
-      else reject(new Error(`Process exited with code ${code}: ${stderr}`));
-    });
-    proc.on('error', (err) => {
-      logWrite(`[ERROR:${cmdName}] ${err.message}`);
-      reject(err);
-    });
-
-    if (signal) {
-      const onAbort = () => {
-        proc.kill();
-        signal.removeEventListener('abort', onAbort);
-      };
-      signal.addEventListener('abort', onAbort);
-      proc.on('close', () => signal.removeEventListener('abort', onAbort));
-    }
-  });
-}

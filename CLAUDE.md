@@ -28,6 +28,7 @@ npm start                            # Launch app in dev mode (Linux only, needs
 - `main.js`: main process — IPC handlers and transcription orchestration
 - `lib/paths.js`: shared binary-path resolution (`getResourcePath`, `getPlatformDir`, `getWhisperBinary`, `getFfmpegBinary`, `makeEnvWithLibPath`)
 - `lib/capabilities.js`: GPU backend detection, DTW support probing, Python/pyannote availability (consolidated from former global state)
+- `lib/transcription-runner.js`: FFmpeg -> whisper -> diarize pipeline (extracted from the `transcribe` IPC handler; all dependencies injected via context for testability)
 - Transcription flow: ffmpeg converts to 16kHz mono WAV, then whisper-cli transcribes with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw <preset>` (pyannote diarization, for word-level speaker alignment via `lib/diarize-merge.js`)
 - `MODELS` array in `main.js` defines available models; `download-model` IPC streams from Hugging Face
 - NSIS installer built via electron-builder (cross-compiles on Linux or runs natively on Windows in CI); produces NSIS `.exe` installer
