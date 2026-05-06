@@ -168,16 +168,20 @@ renderer/
   style.css          Styles
   fonts/             Bundled fonts
 lib/
+  paths.js           Shared binary-path resolution (dev vs. packaged, platform dir)
+  capabilities.js    GPU/DTW/Python capability detection (consolidated from main.js)
   diarize-merge.js   Diarisation merge pipeline (shared by main.js and tests)
   diarize.py         Pyannote speaker diarization script (spawned as subprocess)
   requirements.txt   Python dependencies for diarization
 assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
 scripts/
-  build.sh                Full build script (download deps + package distributable)
-  setup.sh                Dev-only setup (build whisper.cpp from source for local testing)
-  test-merge.js           Unit tests for the diarization merge logic (no model needed)
-  test-diarize-pipeline.py  End-to-end diarization test (requires Python + HF token)
-  test-audio-load.py      Checks ffmpeg can load a given audio file
+  build.sh                 Full build script (download deps + package distributable)
+  setup.sh                 Dev-only setup (build whisper.cpp from source for local testing)
+  test-merge.js            Unit tests for the diarization merge logic (no model needed)
+  test-capabilities.js     Unit tests for lib/capabilities.js (GPU, DTW, Python)
+  test-packaging.js        Static check: require() consistency vs electron-builder.yml
+  test-diarize-pipeline.py End-to-end diarization test (requires Python + HF token)
+  test-audio-load.py       Checks ffmpeg can load a given audio file
 electron-builder.yml Packaging config (extraResources, targets per platform)
 ```
 
@@ -198,8 +202,8 @@ dist/                Built distributables
 
 ## Architecture Notes
 
-- `getPlatformDir()` in `main.js` resolves the `win`/`linux`/`mac` subdirectory for binaries
-- `getResourcePath()` handles dev (`__dirname`) vs packaged (`process.resourcesPath`) paths
+- `lib/paths.js` owns all binary-path resolution: `getPlatformDir()` resolves `win`/`linux`/`mac`, `getResourcePath()` handles dev vs. packaged, `getWhisperBinary(backend)` and `getFfmpegBinary()` return binary paths
+- `lib/capabilities.js` consolidates GPU backend detection, DTW support probing, and Python/pyannote availability into a single module (formerly scattered global state in main.js)
 - Transcription flow: ffmpeg converts input to 16kHz mono WAV temp file, then spawns whisper-cli with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw` (pyannote diarization; DTW support probed at startup, disabled if unsupported)
 - Thread count: `Math.max(1, Math.min(os.cpus().length - 1, 8))`
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs

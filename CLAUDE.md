@@ -25,10 +25,12 @@ npm start                            # Launch app in dev mode (Linux only, needs
 
 - **deps.json** is the single source of truth for dependency versions (whisper.cpp, ffmpeg URLs, Vulkan SDK, Node). Build scripts and CI both read from it.
 - Platform binaries in `bin/{win,linux,mac}/{cpu,vulkan}/`, models in `models/` — all gitignored, created by build scripts
-- `main.js`: main process — `getPlatformDir()` and `getResourcePath()` handle dev vs packaged paths
+- `main.js`: main process — IPC handlers and transcription orchestration
+- `lib/paths.js`: shared binary-path resolution (`getResourcePath`, `getPlatformDir`, `getWhisperBinary`, `getFfmpegBinary`, `makeEnvWithLibPath`)
+- `lib/capabilities.js`: GPU backend detection, DTW support probing, Python/pyannote availability (consolidated from former global state)
 - Transcription flow: ffmpeg converts to 16kHz mono WAV, then whisper-cli transcribes with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw <preset>` (pyannote diarization, for word-level speaker alignment via `lib/diarize-merge.js`)
 - `MODELS` array in `main.js` defines available models; `download-model` IPC streams from Hugging Face
 - NSIS installer built via electron-builder (cross-compiles on Linux or runs natively on Windows in CI); produces NSIS `.exe` installer
 - GPU acceleration via Vulkan backend; CPU and Vulkan binaries in separate subdirs under `bin/{platform}/`
-- Runtime GPU detection: spawns Vulkan binary with `--help` at startup, falls back to CPU if unavailable
+- Runtime GPU detection: spawned by `lib/capabilities.js` at startup, falls back to CPU if unavailable
 - Weekly `dep-check.yml` workflow checks for whisper.cpp releases and ffmpeg checksum changes, auto-opens PRs

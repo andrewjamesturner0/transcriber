@@ -10,6 +10,15 @@ const fs = require('fs');
 const os = require('os');
 const https = require('https');
 const { autoUpdater } = require('electron-updater');
+const paths = require('./lib/paths');
+const Capabilities = require('./lib/capabilities');
+
+// Initialize path resolver at module load time so it's available for
+// all requires and function calls that follow.
+paths.initPaths({
+  isPackaged: app.isPackaged,
+  resourcesPath: app.isPackaged ? process.resourcesPath : __dirname,
+});
 
 // --- Constants ---
 const HF_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
@@ -17,7 +26,6 @@ const AUDIO_EXTENSIONS = ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aa
 const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp'];
 const MEDIA_EXTENSIONS = [...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS];
 const MAX_THREADS = Math.max(1, Math.min(os.cpus().length - 1, 8));
-const GPU_DETECT_TIMEOUT = 5000;
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
 
 const MODELS = [
@@ -51,61 +59,6 @@ const DTW_PRESETS = {
   'large-v3-q5_0':        'large.v3',
 };
 
-function getResourcePath(relativePath) {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, relativePath);
-  }
-  return path.join(__dirname, relativePath);
-}
-
-function getPlatformDir() {
-  if (process.platform === 'win32') return 'win';
-  if (process.platform === 'darwin') return 'mac';
-  return 'linux';
-}
-
-function getWhisperBinary(backend) {
-  const b = backend || getActiveBackend();
-  const name = process.platform === 'win32' ? 'whisper-cli.exe' : 'whisper-cli';
-  return getResourcePath(path.join('bin', getPlatformDir(), b, name));
-}
-
-function getFfmpegBinary() {
-  const name = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
-  return getResourcePath(path.join('bin', getPlatformDir(), name));
-}
-
-function makeEnvWithLibPath(binDir) {
-  const env = { ...process.env };
-  if (process.platform === 'linux') {
-    env.LD_LIBRARY_PATH = binDir + (env.LD_LIBRARY_PATH ? ':' + env.LD_LIBRARY_PATH : '');
-  } else if (process.platform === 'darwin') {
-    env.DYLD_LIBRARY_PATH = binDir + (env.DYLD_LIBRARY_PATH ? ':' + env.DYLD_LIBRARY_PATH : '');
-  }
-  return env;
-}
-
-async function findPython() {
-  if (cachedPythonCmd) return cachedPythonCmd;
-  const candidates = process.platform === 'win32'
-    ? ['python3', 'python', 'py']
-    : ['python3', 'python'];
-  for (const cmd of candidates) {
-    try {
-      const args = cmd === 'py' ? ['-3', '--version'] : ['--version'];
-      await runProcess(cmd, args);
-      cachedPythonCmd = cmd;
-      return cmd;
-    } catch (_) { /* not found */ }
-  }
-  return null;
-}
-
-// --- GPU backend detection ---
-const gpuState = { setting: 'auto', detected: null, deviceName: null, deviceIndex: null }; // detected: 'vulkan' | 'cpu'
-
-// DTW support state — probed at startup, lazily disabled if a DTW failure occurs
-const dtwState = { supported: null }; // null = unchecked, true/false = known
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 
 function readSettings() {
@@ -122,93 +75,8 @@ function writeSettings(data) {
   } catch (_) {}
 }
 
-function getActiveBackend() {
-  if (gpuState.setting === 'vulkan' && fs.existsSync(getWhisperBinary('vulkan'))) return 'vulkan';
-  if (gpuState.setting === 'cpu') return 'cpu';
-  return gpuState.detected || 'cpu';
-}
-
-async function detectGpuBackend() {
-  const vulkanBinary = getWhisperBinary('vulkan');
-  if (!fs.existsSync(vulkanBinary)) {
-    logWrite('[GPU] Vulkan binary not found, using CPU');
-    gpuState.detected = 'cpu';
-    return;
-  }
-
-  try {
-    const stderrChunks = [];
-    await new Promise((resolve, reject) => {
-      const proc = spawn(vulkanBinary, ['--help'], {
-        env: makeEnvWithLibPath(path.dirname(vulkanBinary)),
-        timeout: GPU_DETECT_TIMEOUT,
-      });
-      proc.stderr.on('data', (d) => stderrChunks.push(d));
-      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`exit ${code}`)));
-      proc.on('error', reject);
-    });
-    // Parse all Vulkan devices: ggml_vulkan: N = DEVICE_NAME (driver info) | ...
-    const stderrText = Buffer.concat(stderrChunks).toString();
-    const deviceRegex = /ggml_vulkan:\s*(\d+)\s*=\s*(.+?)(?:\s*\(|$)/gm;
-    const devices = [];
-    let match;
-    while ((match = deviceRegex.exec(stderrText)) !== null) {
-      devices.push({ index: parseInt(match[1]), name: match[2].trim() });
-    }
-    logWrite(`[GPU] Found ${devices.length} Vulkan device(s): ${devices.map(d => `${d.index}=${d.name}`).join(', ')}`);
-
-    // Prefer discrete GPU (non-Intel) over integrated
-    const discrete = devices.find(d => !/\bintel\b/i.test(d.name));
-    const chosen = discrete || devices[0] || null;
-
-    if (chosen && !/\bintel\b/i.test(chosen.name)) {
-      gpuState.deviceName = chosen.name;
-      gpuState.deviceIndex = chosen.index;
-      // Tell ggml which Vulkan device to use
-      process.env.GGML_VK_VISIBLE_DEVICES = String(chosen.index);
-      logWrite(`[GPU] Using Vulkan device ${chosen.index}: ${chosen.name}`);
-      gpuState.detected = 'vulkan';
-    } else if (chosen) {
-      gpuState.deviceName = chosen.name;
-      logWrite(`[GPU] Only Intel integrated GPU found (${chosen.name}), using CPU instead`);
-      gpuState.detected = 'cpu';
-    } else {
-      logWrite('[GPU] No Vulkan devices found, using CPU');
-      gpuState.detected = 'cpu';
-    }
-  } catch (err) {
-    logWrite(`[GPU] Vulkan test failed (${err.message}), using CPU`);
-    gpuState.detected = 'cpu';
-  }
-}
-
-/**
- * Probe whether the current whisper-cli binary supports --dtw.
- * Runs --help and looks for the --dtw flag in the output.
- * Caches the result so it only runs once per session.
- */
-async function detectDtwSupport() {
-  try {
-    const cpuBinary = getWhisperBinary('cpu');
-    const stderrChunks = [];
-    await new Promise((resolve, reject) => {
-      const proc = spawn(cpuBinary, ['--help'], {
-        timeout: GPU_DETECT_TIMEOUT,
-      });
-      proc.stderr.on('data', (d) => stderrChunks.push(d));
-      proc.on('close', (code) => code === 0 ? resolve() : reject(new Error(`exit ${code}`)));
-      proc.on('error', reject);
-    });
-    const text = Buffer.concat(stderrChunks).toString();
-    return /--dtw/i.test(text);
-  } catch (err) {
-    logWrite(`[DTW] Probe failed: ${err.message}`);
-    return false;
-  }
-}
-
 function getModelsDir() {
-  return getResourcePath('models');
+  return paths.getResourcePath('models');
 }
 
 function getModelPath(modelId) {
@@ -219,7 +87,7 @@ function getModelPath(modelId) {
 
 let mainWindow;
 let transcriptionAbort = null;
-let cachedPythonCmd = null;
+let capabilities;
 
 // --- Debug logging ---
 const logDir = path.join(app.getPath('userData'), 'logs');
@@ -266,20 +134,15 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
-  // Load saved GPU backend preference
-  const saved = readSettings();
-  if (saved.gpuBackend) gpuState.setting = saved.gpuBackend;
-
-  // Detect GPU support (non-blocking for window creation)
-  detectGpuBackend().then(() => {
-    logWrite(`[GPU] Active backend: ${getActiveBackend()} (setting=${gpuState.setting}, detected=${gpuState.detected})`);
+  // Create capabilities module with injected settings callbacks
+  capabilities = new Capabilities({
+    getPreference: (key) => readSettings()[key],
+    setPreference: (key, value) => writeSettings({ [key]: value }),
+    logWrite,
   });
 
-  // Probe DTW support — cache whether the current whisper binary accepts --dtw
-  detectDtwSupport().then((supported) => {
-    if (dtwState.supported === null) dtwState.supported = supported;
-    logWrite(`[DTW] Support detected: ${supported}`);
-  });
+  // Eagerly probe all capabilities (non-blocking for window creation)
+  capabilities.detect();
 
   createWindow();
 
@@ -403,7 +266,7 @@ async function runWhisperWithFallbacks(whisperBin, args, signal, backend, logWri
     if (err.message !== 'Cancelled' && /unknown DTW preset|unrecognized .*--dtw|DTW .* not (?:built|enabled|supported)|whisper_full.*dtw/i.test(err.message)) {
       // --dtw not supported by this build (or flag not recognised); retry without it
       logWrite(`[DTW] DTW not supported (${err.message.trim()}), retrying without --dtw`);
-      dtwState.supported = false;
+      capabilities.disableDtw();
       const dtw = args.indexOf('--dtw');
       const argsNoDtw = dtw >= 0 ? args.filter((_, i) => i !== dtw && i !== dtw + 1) : args;
       try {
@@ -416,8 +279,8 @@ async function runWhisperWithFallbacks(whisperBin, args, signal, backend, logWri
     } else if (backend === 'vulkan' && err.message !== 'Cancelled') {
       logWrite(`[GPU] Vulkan transcription failed (${err.message}), falling back to CPU`);
       const isOOM = /OutOfDeviceMemory|failed to allocate/i.test(err.message);
-      if (!isOOM) gpuState.detected = 'cpu'; // OOM is model-specific, don't disable GPU for future runs
-      const cpuWhisper = getWhisperBinary('cpu');
+      if (!isOOM) capabilities.disableGpu(); // OOM is model-specific, don't disable GPU for future runs
+      const cpuWhisper = paths.getWhisperBinary('cpu');
       const fallbackMsg = isOOM
         ? 'Model too large for GPU memory — retrying with CPU...'
         : 'GPU unavailable — retrying with CPU...';
@@ -436,10 +299,10 @@ async function runWhisperWithFallbacks(whisperBin, args, signal, backend, logWri
 }
 
 ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
-  let backend = getActiveBackend();
+  let backend = capabilities.getActiveBackend();
   logWrite(`=== Transcription started: model=${modelId}, backend=${backend}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
-  const ffmpeg = getFfmpegBinary();
-  let whisper = getWhisperBinary(backend);
+  const ffmpeg = paths.getFfmpegBinary();
+  let whisper = paths.getWhisperBinary(backend);
   const modelConfig = MODELS.find((m) => m.id === (modelId || 'tiny.en'));
   const modelPath = getModelPath(modelId || 'tiny.en');
   const diarization = options && options.diarization;
@@ -448,7 +311,7 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
   if (!fs.existsSync(whisper) && backend === 'vulkan') {
     logWrite(`[GPU] Vulkan binary not found, falling back to CPU`);
     backend = 'cpu';
-    whisper = getWhisperBinary('cpu');
+    whisper = paths.getWhisperBinary('cpu');
   }
   for (const [name, p] of [['whisper-cli', whisper], ['ffmpeg', ffmpeg], ['model', modelPath]]) {
     if (!fs.existsSync(p)) {
@@ -485,7 +348,7 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
     } else if (diarization) {
       // Diarization needs timestamped JSON output for alignment
       args.push('--output-json-full', '-of', whisperJsonPrefix);
-      if (dtwState.supported !== false) {
+      if (capabilities.isDtwSupported()) {
         const dtwPreset = DTW_PRESETS[modelId];
         if (dtwPreset) args.push('--dtw', dtwPreset);
       }
@@ -502,7 +365,7 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
     const output = result.output;
     if (result.backend !== backend) {
       backend = result.backend;
-      whisper = getWhisperBinary(backend);
+      whisper = paths.getWhisperBinary(backend);
     }
 
     // Step 3: If diarization enabled, run pyannote and merge
@@ -542,10 +405,10 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
 async function runDiarization(event, wavPath, options, signal) {
   const { hfToken, numSpeakers } = options;
 
-  const pythonCmd = await findPython();
+  const pythonCmd = await capabilities.getPythonCommand();
   if (!pythonCmd) throw new Error('Python not found');
 
-  const scriptPath = getResourcePath(path.join('lib', 'diarize.py'));
+  const scriptPath = paths.getResourcePath(path.join('lib', 'diarize.py'));
   if (!fs.existsSync(scriptPath)) throw new Error('Diarization script not found');
 
   const outputJson = path.join(os.tmpdir(), `diarize_${Date.now()}.json`);
@@ -578,10 +441,9 @@ async function runDiarization(event, wavPath, options, signal) {
 }
 
 // Diarisation merge pipeline - imported from shared module.
-// Loaded via getResourcePath because lib/ is configured as extraResources
-// in electron-builder.yml (so the file lives at resources/lib/ in packaged
-// builds, not inside app.asar).
-const { mergeTranscriptWithDiarization } = require(getResourcePath(path.join('lib', 'diarize-merge')));
+// JS modules in lib/ are inside the asar (only diarize.py and
+// requirements.txt are extraResources for Python subprocess access).
+const { mergeTranscriptWithDiarization } = require('./lib/diarize-merge');
 
 ipcMain.handle('cancel-transcription', () => {
   if (transcriptionAbort) {
@@ -591,67 +453,11 @@ ipcMain.handle('cancel-transcription', () => {
   return false;
 });
 
-ipcMain.handle('check-python', async () => {
-  const result = { pythonFound: false, pythonVersion: null, pyannoteInstalled: false, pyannoteVersion: null, gpuAvailable: false };
+ipcMain.handle('check-python', async () => capabilities.getPythonInfo());
 
-  // Find a working Python >= 3.9
-  const pythonCmd = await findPython();
-  if (pythonCmd) {
-    try {
-      const vArgs = pythonCmd === 'py' ? ['-3', '--version'] : ['--version'];
-      const out = await runProcess(pythonCmd, vArgs);
-      const match = out.match(/Python (\d+)\.(\d+)\.(\d+)/);
-      if (match) {
-        const major = parseInt(match[1], 10);
-        const minor = parseInt(match[2], 10);
-        if (major >= 3 && minor >= 9) {
-          result.pythonFound = true;
-          result.pythonVersion = `${match[1]}.${match[2]}.${match[3]}`;
-        }
-      }
-    } catch (_) { /* version check failed */ }
-  }
+ipcMain.handle('get-gpu-status', () => capabilities.getStatus());
 
-  if (!pythonCmd || !result.pythonFound) return result;
-
-  const pyArgs = (code) => pythonCmd === 'py' ? ['-3', '-c', code] : ['-c', code];
-
-  // Check pyannote.audio
-  try {
-    const out = await runProcess(pythonCmd, pyArgs('import pyannote.audio; print(pyannote.audio.__version__)'));
-    result.pyannoteInstalled = true;
-    result.pyannoteVersion = out.trim();
-  } catch (_) { /* not installed */ }
-
-  // Check GPU (torch + CUDA)
-  try {
-    const out = await runProcess(pythonCmd, pyArgs('import torch; print(torch.cuda.is_available())'));
-    result.gpuAvailable = out.trim() === 'True';
-  } catch (_) { /* torch not installed or no GPU */ }
-
-  return result;
-});
-
-ipcMain.handle('get-gpu-status', () => {
-  const vulkanExists = fs.existsSync(getWhisperBinary('vulkan'));
-  const available = ['cpu'];
-  if (vulkanExists) available.push('vulkan');
-  return {
-    backend: getActiveBackend(),
-    detected: gpuState.detected,
-    deviceName: gpuState.deviceName,
-    setting: gpuState.setting,
-    available,
-  };
-});
-
-ipcMain.handle('set-gpu-backend', (event, backend) => {
-  if (!['auto', 'cpu', 'vulkan'].includes(backend)) return false;
-  gpuState.setting = backend;
-  writeSettings({ gpuBackend: backend });
-  logWrite(`[GPU] Backend preference set to: ${backend} (active: ${getActiveBackend()})`);
-  return true;
-});
+ipcMain.handle('set-gpu-backend', (event, backend) => capabilities.setBackendPreference(backend));
 
 ipcMain.handle('diarize', async (event, wavPath, options = {}) => {
   const abort = new AbortController();
@@ -674,7 +480,7 @@ ipcMain.handle('get-version', () => app.getVersion());
 
 ipcMain.handle('is-debug-build', () => {
   // Debug mode: enabled by --debug build flag (writes .debug-build marker) or DEBUG_BUILD env var
-  const markerPath = getResourcePath('.debug-build');
+  const markerPath = paths.getResourcePath('.debug-build');
   return fs.existsSync(markerPath) || process.env.DEBUG_BUILD === '1';
 });
 
@@ -696,7 +502,7 @@ ipcMain.handle('open-log-folder', async () => {
 ipcMain.handle('install-update', () => autoUpdater.quitAndInstall());
 
 ipcMain.handle('get-licenses', async () => {
-  const licensePath = getResourcePath('THIRD-PARTY-LICENSES.json');
+  const licensePath = paths.getResourcePath('THIRD-PARTY-LICENSES.json');
   const data = fs.readFileSync(licensePath, 'utf-8');
   return JSON.parse(data);
 });
@@ -726,7 +532,7 @@ function runProcess(cmd, args, { signal, onStderr } = {}) {
     });
     logWrite(`[RUN] ${cmdName} ${safeArgs.join(' ')}`);
 
-    const env = makeEnvWithLibPath(path.dirname(cmd));
+    const env = paths.makeEnvWithLibPath(path.dirname(cmd));
     const proc = spawn(cmd, args, { env });
     let stdout = '';
     let stderr = '';

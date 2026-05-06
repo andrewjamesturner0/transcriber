@@ -101,7 +101,7 @@ Each stage logs: input count, output count, and count of items changed. The outp
 
 The pipeline requires whisper token timestamps for word-level alignment. These come from DTW (Dynamic Time Warping) alignment, enabled via `--dtw <preset>` on the whisper-cli command line.
 
-**Detection**: at app startup, `main.js` probes the whisper binary with `--help` to detect whether `--dtw` is supported. The result is cached.
+**Detection**: at app startup, `lib/capabilities.js` probes the whisper binary with `--help` to detect whether `--dtw` is supported. The result is cached.
 
 **Fallback**: if DTW fails at runtime (unknown preset, unrecognised flag, or DTW not built), the app retries without `--dtw` and disables DTW for subsequent runs. When DTW is unavailable, the pipeline falls back to segment-level alignment (each whisper segment assigned as a whole).
 
