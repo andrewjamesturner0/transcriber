@@ -24,7 +24,6 @@ contextBridge.exposeInMainWorld('api', {
   checkPythonSetup: () => ipcRenderer.invoke('check-python'),
   getGpuStatus: () => ipcRenderer.invoke('get-gpu-status'),
   setGpuBackend: (backend) => ipcRenderer.invoke('set-gpu-backend', backend),
-  diarize: (wavPath, options) => ipcRenderer.invoke('diarize', wavPath, options),
   onDiarizeStatus: (callback) => ipcRenderer.on('diarize-status', (_, data) => callback(data)),
   isDebugBuild: () => ipcRenderer.invoke('is-debug-build'),
   getLogPath: () => ipcRenderer.invoke('get-log-path'),

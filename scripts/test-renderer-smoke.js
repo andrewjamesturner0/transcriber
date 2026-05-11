@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Renderer smoke test — loads all renderer scripts in a minimal browser-like
+ * Renderer smoke test - loads all renderer scripts in a minimal browser-like
  * context and verifies they parse and execute without errors.
  *
  * Catches: require()-in-renderer bugs, syntax errors, missing globals,
@@ -100,7 +100,7 @@ function makeBrowserContext() {
   // Stub the preload API (window.api) so renderer.js top-level code
   // doesn't throw on the event-listener registrations or init calls.
   const api = {
-    // Event listeners — just accept a callback
+    // Event listeners - just accept a callback
     onDownloadProgress: noop,
     onStatus: noop,
     onDiarizeStatus: noop,
@@ -168,13 +168,22 @@ test('renderer.js parses without errors', () => {
   const globals = makeBrowserGlobals();
   const sandbox = { window: ctx.window, document: ctx.document, console, ...globals };
 
-  // queue.js must run first (sets window.createQueue)
   vm.createContext(sandbox);
-  vm.runInContext(
-    fs.readFileSync(path.join(RENDERER_DIR, 'queue.js'), 'utf-8'),
-    sandbox,
-    { filename: 'queue.js' },
-  );
+
+  // Load all renderer modules in dependency order
+  const modules = [
+    'queue.js',
+    'media-extensions.js',
+    'time-estimates.js',
+    'transcript-format.js',
+  ];
+  for (const mod of modules) {
+    vm.runInContext(
+      fs.readFileSync(path.join(RENDERER_DIR, mod), 'utf-8'),
+      sandbox,
+      { filename: mod },
+    );
+  }
 
   const src = fs.readFileSync(path.join(RENDERER_DIR, 'renderer.js'), 'utf-8');
   vm.runInContext(src, sandbox, { filename: 'renderer.js' });
@@ -192,13 +201,16 @@ test('queue.js + renderer.js together parse without errors', () => {
   vm.createContext(sandbox);
 
   const queueSrc = fs.readFileSync(path.join(RENDERER_DIR, 'queue.js'), 'utf-8');
+  const mediaSrc = fs.readFileSync(path.join(RENDERER_DIR, 'media-extensions.js'), 'utf-8');
+  const timeSrc = fs.readFileSync(path.join(RENDERER_DIR, 'time-estimates.js'), 'utf-8');
+  const formatSrc = fs.readFileSync(path.join(RENDERER_DIR, 'transcript-format.js'), 'utf-8');
   const rendererSrc = fs.readFileSync(path.join(RENDERER_DIR, 'renderer.js'), 'utf-8');
 
-  // Simulate loading both scripts
-  const combined = `${queueSrc}\n${rendererSrc}`;
+  // Simulate loading all scripts
+  const combined = `${queueSrc}\n${mediaSrc}\n${timeSrc}\n${formatSrc}\n${rendererSrc}`;
   vm.runInContext(combined, sandbox, { filename: 'renderer-combined.js' });
 
-  // If we got here without throwing, both scripts parsed and top-level code ran.
+  // If we got here without throwing, all scripts parsed and top-level code ran.
   assert(true, 'combined scripts loaded without error');
 });
 

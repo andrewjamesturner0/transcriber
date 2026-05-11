@@ -52,22 +52,6 @@ let cancelController = null;
 let timerInterval = null;
 let timerStartTime = null;
 
-// --- Time estimates for tooltip ---
-
-const TIME_ESTIMATES = {
-  tiny:          { ratio: '6x faster than realtime',   example: '~8 min',   quality: 'Fastest' },
-  base:          { ratio: '3x faster than realtime',   example: '~15 min',  quality: 'Fast' },
-  small:         { ratio: '1.5x faster than realtime', example: '~30 min',  quality: 'Balanced' },
-  medium:        { ratio: '2x slower than realtime',   example: '~90 min',  quality: 'Accurate' },
-  'large-turbo': { ratio: 'Near realtime',             example: '~50 min',  quality: 'Fast + accurate' },
-  large:         { ratio: '3x slower than realtime',   example: '~150 min', quality: 'Most accurate' },
-};
-
-const SUPPORTED_EXTENSIONS = new Set([
-  'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac',
-  'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp',
-]);
-
 // --- Model picker ---
 
 async function loadModels() {
@@ -79,7 +63,7 @@ async function loadModels() {
     opt.value = m.id;
     opt.textContent = m.downloaded
       ? `${m.label}  (${m.size})`
-      : `${m.label}  (${m.size}) — not downloaded`;
+      : `${m.label}  (${m.size}) - not downloaded`;
     if (!m.downloaded) opt.className = 'not-downloaded';
     modelSelect.appendChild(opt);
   }
@@ -123,32 +107,27 @@ window.api.onDownloadProgress((data) => {
 
 // --- Time estimate banner ---
 
-function getEstimateKey(modelId) {
-  if (modelId.startsWith('large') && modelId.includes('turbo')) return 'large-turbo';
-  for (const key of ['tiny', 'base', 'small', 'medium', 'large']) {
-    if (modelId.startsWith(key)) return key;
-  }
-  return null;
+function estimateLabel(key) {
+  if (!key) return '';
+  if (key === 'large-turbo') return 'Large Turbo';
+  return key.charAt(0).toUpperCase() + key.slice(1);
 }
 
 function updateEstimateBanner() {
-  const selectedModelId = modelSelect.value;
-  const currentKey = getEstimateKey(selectedModelId);
-  const est = currentKey ? TIME_ESTIMATES[currentKey] : null;
-  const label = currentKey === 'large-turbo' ? 'Large Turbo' : currentKey ? currentKey.charAt(0).toUpperCase() + currentKey.slice(1) : '';
+  const currentKey = window.timeEstimates.getEstimateKey(modelSelect.value);
+  const est = currentKey ? window.timeEstimates.TIME_ESTIMATES[currentKey] : null;
 
   if (est) {
-    estimateCurrentText.innerHTML = `<span class="estimate-model-name">${label}</span> model: ${est.example} for 45 min of audio &mdash; ${est.ratio} <span class="estimate-gpu-note">(CPU, faster with GPU)</span>`;
+    estimateCurrentText.innerHTML = `<span class="estimate-model-name">${estimateLabel(currentKey)}</span> model: ${est.example} for 45 min of audio &mdash; ${est.ratio} <span class="estimate-gpu-note">(CPU, faster with GPU)</span>`;
   } else {
     estimateCurrentText.textContent = 'Select a model to see time estimates';
   }
 
   // Update expanded list
   let html = '';
-  for (const [key, e] of Object.entries(TIME_ESTIMATES)) {
+  for (const [key, e] of Object.entries(window.timeEstimates.TIME_ESTIMATES)) {
     const active = key === currentKey ? ' estimate-active' : '';
-    const keyLabel = key === 'large-turbo' ? 'Large Turbo' : key.charAt(0).toUpperCase() + key.slice(1);
-    html += `<div class="estimate-row${active}"><span>${keyLabel} <span class="estimate-quality">${e.quality}</span></span><span class="estimate-time">${e.example} <span class="estimate-ratio">${e.ratio}</span></span></div>`;
+    html += `<div class="estimate-row${active}"><span>${estimateLabel(key)} <span class="estimate-quality">${e.quality}</span></span><span class="estimate-time">${e.example} <span class="estimate-ratio">${e.ratio}</span></span></div>`;
   }
   html += '<div class="estimate-gpu-footer">CPU estimates &mdash; faster with GPU acceleration</div>';
   estimateAllBody.innerHTML = html;
@@ -238,10 +217,9 @@ function removeFromQueue(id) {
 }
 
 function clearQueue() {
-  if (queue.getActiveItem() !== null) {
-    queue.clear();
-  } else {
-    queue.clear();
+  const isProcessing = queue.getActiveItem() !== null;
+  queue.clear();
+  if (!isProcessing) {
     hideTimer();
     outputSection.hidden = true;
     transcriptEl.value = '';
@@ -281,13 +259,8 @@ btnSelect.addEventListener('click', async () => {
 
 // --- Drag and drop ---
 
-function isValidMediaFile(filename) {
-  const ext = filename.split('.').pop().toLowerCase();
-  return SUPPORTED_EXTENSIONS.has(ext);
-}
-
 function handleDroppedFiles(files) {
-  const validFiles = Array.from(files).filter((f) => isValidMediaFile(f.name));
+  const validFiles = Array.from(files).filter((f) => window.mediaExtensions.isValidMediaFile(f.name));
   if (validFiles.length === 0) {
     setStatus('No supported media files. Supported: MP3, WAV, FLAC, M4A, OGG, WebM, WMA, AAC, MP4, MOV, AVI, MKV', 'error');
     setTimeout(() => setStatus(''), 4000);
@@ -296,17 +269,13 @@ function handleDroppedFiles(files) {
   addToQueue(validFiles.map((f) => window.api.getPathForFile(f)));
 }
 
-btnSelect.addEventListener('dragenter', (e) => {
+function onDragEnterOver(e) {
   e.preventDefault();
   e.stopPropagation();
   btnSelect.classList.add('drag-over');
-});
-
-btnSelect.addEventListener('dragover', (e) => {
-  e.preventDefault();
-  e.stopPropagation();
-  btnSelect.classList.add('drag-over');
-});
+}
+btnSelect.addEventListener('dragenter', onDragEnterOver);
+btnSelect.addEventListener('dragover', onDragEnterOver);
 
 btnSelect.addEventListener('dragleave', (e) => {
   e.preventDefault();
@@ -357,7 +326,7 @@ btnTranscribe.addEventListener('click', async () => {
       if (speakers !== 'auto') options.numSpeakers = parseInt(speakers, 10);
     }
     const text = await window.api.transcribe(item.filePath, modelSelect.value, options);
-    item.hasSpeakers = isPyannoteDiarized(text);
+    item.hasSpeakers = window.transcriptFormat.isPyannoteDiarized(text);
     return text;
   }, {
     signal: controller.signal,
@@ -373,7 +342,7 @@ btnTranscribe.addEventListener('click', async () => {
   const doneItems = items.filter((i) => i.status === 'done' && i.result);
   const allResults = doneItems.map((i) => ({
     fileName: i.fileName,
-    text: formatDiarizedOutput(i.result),
+    text: window.transcriptFormat.formatDiarizedOutput(i.result),
     hasSpeakers: i.hasSpeakers || false,
   }));
   const allRawText = doneItems.map((i) => i.result).join('');
@@ -387,21 +356,8 @@ btnTranscribe.addEventListener('click', async () => {
 
   if (hasPyannoteSpeakers) {
     displayRichTranscript(allResults);
-  } else {
-    if (allResults.length === 1) {
-      transcriptEl.value = allResults[0].text;
-    } else {
-      transcriptEl.value = allResults
-        .map((r) => `=== ${r.fileName} ===\n\n${r.text}`)
-        .join('\n\n\n');
-    }
-  }
-
-  if (hasPyannoteSpeakers) {
-    const speakerMatches = allRawText.match(/\[Speaker \d+\]/g) || [];
-    const uniqueSpeakers = new Set(speakerMatches);
-    const count = uniqueSpeakers.size;
-    const dots = Array.from(uniqueSpeakers).map((s, i) => {
+    const { count, labels } = window.transcriptFormat.countPyannoteSpeakers(allRawText);
+    const dots = labels.map((s, i) => {
       const num = Math.min(i + 1, 8);
       return `<span class="diarize-info-dot speaker-${num}-bg"></span>`;
     }).join('');
@@ -409,7 +365,11 @@ btnTranscribe.addEventListener('click', async () => {
     diarizeInfoEl.className = 'diarize-info diarize-info-speakers';
     diarizeInfoEl.hidden = false;
   } else {
-    const turnCount = (allRawText.match(/\[SPEAKER_TURN\]/g) || []).length;
+    transcriptEl.value = allResults.length === 1
+      ? allResults[0].text
+      : allResults.map((r) => `=== ${r.fileName} ===\n\n${r.text}`).join('\n\n\n');
+
+    const turnCount = window.transcriptFormat.countWhisperSpeakerTurns(allRawText);
     if (turnCount > 0) {
       diarizeInfoEl.textContent = `${turnCount} speaker change${turnCount !== 1 ? 's' : ''} detected \u2014 speaker detection is experimental and may be inaccurate`;
       diarizeInfoEl.className = 'diarize-info';
@@ -483,30 +443,7 @@ function setStatus(msg, type) {
   }
 }
 
-// --- Diarization formatting ---
-
-function isPyannoteDiarized(text) {
-  return /\[\d+ speakers? detected\]/.test(text);
-}
-
-function formatDiarizedOutput(text) {
-  // Pyannote-diarized text already has [Speaker N] labels — pass through
-  if (isPyannoteDiarized(text)) {
-    return text;
-  }
-
-  if (!text.includes('[SPEAKER_TURN]')) {
-    return text;
-  }
-  // Strip whisper timestamp lines like "[00:00:00.000 --> 00:05:00.000]  "
-  text = text.replace(/\[\d{2}:\d{2}:\d{2}\.\d{3} --> \d{2}:\d{2}:\d{2}\.\d{3}\]\s*/g, '');
-
-  return text
-    .split('[SPEAKER_TURN]')
-    .map((part) => part.trim())
-    .filter(Boolean)
-    .join('\n\n--- Speaker Change ---\n\n');
-}
+// --- Rich transcript rendering ---
 
 function displayRichTranscript(results) {
   // Replace textarea with rich div for speaker-colored output
@@ -531,21 +468,13 @@ function displayRichTranscript(results) {
       continue;
     }
 
-    // Parse pyannote-formatted text: "[N speakers detected]\n\n[Speaker X] text"
-    const lines = result.text.replace(/^\[\d+ speakers? detected\]\n\n/, '').split('\n\n');
-
-    for (const line of lines) {
-      const match = line.match(/^\[Speaker (\d+)\]\s*(.*)/s);
-      if (!match) continue;
-
-      const speakerNum = Math.min(parseInt(match[1], 10), 8);
-      const text = match[2].trim();
-      if (!text) continue;
-
-      const seg = document.createElement('div');
-      seg.className = 'transcript-segment';
-      seg.innerHTML = `<span class="speaker-label speaker-${speakerNum}">Speaker ${match[1]}</span><span class="segment-text">${escapeHtml(text)}</span>`;
-      container.appendChild(seg);
+    // Parse pyannote-formatted text using the pure function from transcript-format.js
+    const segments = window.transcriptFormat.parseRichTranscript(result.text);
+    for (const seg of segments) {
+      const div = document.createElement('div');
+      div.className = 'transcript-segment';
+      div.innerHTML = `<span class="speaker-label speaker-${seg.speakerNum}">Speaker ${escapeHtml(seg.speakerLabel)}</span><span class="segment-text">${escapeHtml(seg.text)}</span>`;
+      container.appendChild(div);
     }
   }
 

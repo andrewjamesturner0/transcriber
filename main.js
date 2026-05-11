@@ -7,12 +7,12 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
-const os = require('os');
 const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const paths = require('./lib/paths');
 const Capabilities = require('./lib/capabilities');
-const { runTranscription, runDiarizationOnly } = require('./lib/transcription-runner');
+const models = require('./lib/models');
+const { createTranscriptionRunner } = require('./lib/transcription-runner');
 
 // Initialize path resolver at module load time so it's available for
 // all requires and function calls that follow.
@@ -22,43 +22,11 @@ paths.initPaths({
 });
 
 // --- Constants ---
-const HF_BASE = 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main';
-const AUDIO_EXTENSIONS = ['mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac'];
-const VIDEO_EXTENSIONS = ['mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp'];
-const MEDIA_EXTENSIONS = [...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS];
-const MAX_THREADS = Math.max(1, Math.min(os.cpus().length - 1, 8));
-const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
-
-const MODELS = [
-  { id: 'tiny.en',    fileName: 'ggml-tiny.en.bin',    label: 'Tiny (English)',       size: '75 MB' },
-  { id: 'tiny',       fileName: 'ggml-tiny.bin',       label: 'Tiny (Multilingual)',  size: '75 MB' },
-  { id: 'base.en',    fileName: 'ggml-base.en.bin',    label: 'Base (English)',       size: '142 MB' },
-  { id: 'base',       fileName: 'ggml-base.bin',       label: 'Base (Multilingual)',  size: '142 MB' },
-  { id: 'small.en',   fileName: 'ggml-small.en.bin',   label: 'Small (English)',      size: '466 MB' },
-  { id: 'small',      fileName: 'ggml-small.bin',      label: 'Small (Multilingual)', size: '466 MB' },
-  { id: 'small.en-tdrz', fileName: 'ggml-small.en-tdrz.bin', label: 'Small (English) + Speaker ID', size: '488 MB', tdrz: true, hfRepo: 'akashmjn/tinydiarize-whisper.cpp' },
-  { id: 'medium.en',  fileName: 'ggml-medium.en.bin',  label: 'Medium (English)',     size: '1.5 GB' },
-  { id: 'medium',     fileName: 'ggml-medium.bin',     label: 'Medium (Multilingual)',size: '1.5 GB' },
-  { id: 'large-v3',   fileName: 'ggml-large-v3.bin',   label: 'Large v3 (Multilingual)', size: '3.1 GB' },
-  { id: 'large-v3-turbo',      fileName: 'ggml-large-v3-turbo.bin',      label: 'Large v3 Turbo (Multilingual)', size: '1.6 GB' },
-  { id: 'large-v3-turbo-q5_0', fileName: 'ggml-large-v3-turbo-q5_0.bin', label: 'Large v3 Turbo Q5 (Multilingual)', size: '574 MB' },
-  { id: 'large-v3-q5_0',       fileName: 'ggml-large-v3-q5_0.bin',       label: 'Large v3 Q5 (Multilingual)', size: '1.1 GB' },
+const MEDIA_EXTENSIONS = [
+  'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac',
+  'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp',
 ];
-
-const DTW_PRESETS = {
-  'tiny':                 'tiny',
-  'tiny.en':              'tiny.en',
-  'base':                 'base',
-  'base.en':              'base.en',
-  'small':                'small',
-  'small.en':             'small.en',
-  'medium':               'medium',
-  'medium.en':            'medium.en',
-  'large-v3':             'large.v3',
-  'large-v3-turbo':       'large.v3.turbo',
-  'large-v3-turbo-q5_0':  'large.v3.turbo',
-  'large-v3-q5_0':        'large.v3',
-};
+const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
 
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 
@@ -76,19 +44,10 @@ function writeSettings(data) {
   } catch (_) {}
 }
 
-function getModelsDir() {
-  return paths.getResourcePath('models');
-}
-
-function getModelPath(modelId) {
-  const model = MODELS.find((m) => m.id === modelId);
-  if (!model) throw new Error(`Unknown model: ${modelId}`);
-  return path.join(getModelsDir(), model.fileName);
-}
-
 let mainWindow;
 let transcriptionAbort = null;
 let capabilities;
+let transcriptionRunner;
 
 // --- Debug logging ---
 const logDir = path.join(app.getPath('userData'), 'logs');
@@ -144,6 +103,14 @@ app.whenReady().then(async () => {
 
   // Eagerly probe all capabilities (non-blocking for window creation)
   capabilities.detect();
+
+  // Create the transcription runner singleton (long-lived deps bound once)
+  transcriptionRunner = createTranscriptionRunner({
+    capabilities,
+    paths,
+    spawn,
+    log: logWrite,
+  });
 
   createWindow();
 
@@ -203,25 +170,17 @@ ipcMain.handle('select-files', async () => {
 });
 
 ipcMain.handle('get-models', async () => {
-  const dir = getModelsDir();
-  return MODELS.map((m) => ({
-    ...m,
-    downloaded: fs.existsSync(path.join(dir, m.fileName)),
-  }));
+  return models.listModels();
 });
 
 ipcMain.handle('download-model', async (event, modelId) => {
-  const model = MODELS.find((m) => m.id === modelId);
-  if (!model) throw new Error(`Unknown model: ${modelId}`);
+  const model = models.getModel(modelId);
 
-  const dest = path.join(getModelsDir(), model.fileName);
+  const dest = models.getModelPath(modelId);
   if (fs.existsSync(dest)) return true;
 
-  fs.mkdirSync(getModelsDir(), { recursive: true });
-  const baseUrl = model.hfRepo
-    ? `https://huggingface.co/${model.hfRepo}/resolve/main`
-    : HF_BASE;
-  const url = `${baseUrl}/${model.fileName}`;
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const url = models.getDownloadUrl(modelId);
   const tmpDest = dest + '.download';
 
   await new Promise((resolve, reject) => {
@@ -263,54 +222,23 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
   const backend = capabilities.getActiveBackend();
   logWrite(`=== Transcription started: model=${modelId}, backend=${backend}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
 
-  const modelConfig = MODELS.find((m) => m.id === (modelId || 'tiny.en'));
-  const modelPath = getModelPath(modelId || 'tiny.en');
-  let whisperBin = paths.getWhisperBinary(backend);
-
-  // Validate binaries exist (fall back to CPU if chosen backend missing)
-  if (!fs.existsSync(whisperBin) && backend === 'vulkan') {
-    logWrite(`[GPU] Vulkan binary not found, falling back to CPU`);
-    whisperBin = paths.getWhisperBinary('cpu');
-  }
-  for (const [name, p] of [['whisper-cli', whisperBin], ['ffmpeg', paths.getFfmpegBinary()], ['model', modelPath]]) {
-    if (!fs.existsSync(p)) {
-      throw new Error(`${name} not found at ${p}. Run "npm run setup" first.`);
-    }
-  }
-
   const abort = new AbortController();
   transcriptionAbort = abort;
 
   try {
-    const result = await runTranscription(filePath, modelId, options, {
-      ffmpegBinary: paths.getFfmpegBinary(),
-      whisperBinary: whisperBin,
-      cpuWhisperBinary: paths.getWhisperBinary('cpu'),
-      modelPath,
-      modelConfig,
-      dtwPresets: DTW_PRESETS,
-      threads: MAX_THREADS,
-      whisperBackend: backend,
+    const result = await transcriptionRunner.runTranscription({
+      filePath,
+      modelId,
+      options,
+      signal: abort.signal,
       onProgress: (msg) => event.sender.send('transcribe-status', msg),
       onDiarizeProgress: (data) => event.sender.send('diarize-status', data),
-      log: logWrite,
-      isDtwSupported: () => capabilities.isDtwSupported(),
-      disableDtw: () => capabilities.disableDtw(),
-      disableGpu: () => capabilities.disableGpu(),
-      pythonCmd: await capabilities.getPythonCommand(),
-      diarizeScriptPath: paths.getResourcePath(path.join('lib', 'diarize.py')),
-      mergeTranscript: mergeTranscriptWithDiarization,
-      signal: abort.signal,
-      spawn,
-      makeEnvWithLibPath: paths.makeEnvWithLibPath,
     });
     return result;
   } finally {
     transcriptionAbort = null;
   }
 });
-
-const { mergeTranscriptWithDiarization } = require('./lib/diarize-merge');
 
 ipcMain.handle('cancel-transcription', () => {
   if (transcriptionAbort) {
@@ -326,23 +254,6 @@ ipcMain.handle('get-gpu-status', () => capabilities.getStatus());
 
 ipcMain.handle('set-gpu-backend', (event, backend) => capabilities.setBackendPreference(backend));
 
-ipcMain.handle('diarize', async (event, wavPath, options = {}) => {
-  const abort = new AbortController();
-  transcriptionAbort = abort;
-  try {
-    return await runDiarizationOnly(wavPath, options, {
-      pythonCmd: await capabilities.getPythonCommand(),
-      diarizeScriptPath: paths.getResourcePath(path.join('lib', 'diarize.py')),
-      onDiarizeProgress: (data) => event.sender.send('diarize-status', data),
-      log: logWrite,
-      signal: abort.signal,
-      spawn,
-      makeEnvWithLibPath: paths.makeEnvWithLibPath,
-    });
-  } finally {
-    transcriptionAbort = null;
-  }
-});
 
 ipcMain.handle('open-external', async (event, url) => {
   // Only allow opening https URLs

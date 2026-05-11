@@ -12,7 +12,58 @@
 
 const { EventEmitter } = require('events');
 const path = require('path');
-const runner = require('../lib/transcription-runner');
+const fs = require('fs');
+const os = require('os');
+
+// Set up a temp directory as the fake app root so that lib/models
+// (called by transcription-runner) can resolve model paths that pass fs.existsSync.
+const FAKE_APP = fs.mkdtempSync(path.join(os.tmpdir(), 'transcriber-test-'));
+const FAKE_MODELS = path.join(FAKE_APP, 'models');
+fs.mkdirSync(FAKE_MODELS);
+// Create fake model files (symlink to this test script) for every model id.
+// The runner only checks fs.existsSync, not file contents.
+const MODEL_IDS = [
+  'tiny.en', 'tiny', 'base.en', 'base',
+  'small.en', 'small', 'small.en-tdrz',
+  'medium.en', 'medium',
+  'large-v3', 'large-v3-turbo', 'large-v3-turbo-q5_0', 'large-v3-q5_0',
+];
+const MODEL_FILENAMES = {
+  'tiny.en': 'ggml-tiny.en.bin',
+  'tiny': 'ggml-tiny.bin',
+  'base.en': 'ggml-base.en.bin',
+  'base': 'ggml-base.bin',
+  'small.en': 'ggml-small.en.bin',
+  'small': 'ggml-small.bin',
+  'small.en-tdrz': 'ggml-small.en-tdrz.bin',
+  'medium.en': 'ggml-medium.en.bin',
+  'medium': 'ggml-medium.bin',
+  'large-v3': 'ggml-large-v3.bin',
+  'large-v3-turbo': 'ggml-large-v3-turbo.bin',
+  'large-v3-turbo-q5_0': 'ggml-large-v3-turbo-q5_0.bin',
+  'large-v3-q5_0': 'ggml-large-v3-q5_0.bin',
+};
+for (const [id, fn] of Object.entries(MODEL_FILENAMES)) {
+  fs.writeFileSync(path.join(FAKE_MODELS, fn), '');
+}
+
+// Also create fake binary dirs
+fs.mkdirSync(path.join(FAKE_APP, 'bin', 'linux', 'cpu'), { recursive: true });
+fs.mkdirSync(path.join(FAKE_APP, 'bin', 'linux', 'vulkan'), { recursive: true });
+fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'cpu', 'whisper-cli'), '');
+fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'vulkan', 'whisper-cli'), '');
+fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'ffmpeg'), '');
+
+// Initialize lib/paths so that lib/models (required by transcription-runner) can resolve paths
+const libPaths = require('../lib/paths');
+libPaths.initPaths({ isPackaged: false, resourcesPath: FAKE_APP });
+
+const { createTranscriptionRunner } = require('../lib/transcription-runner');
+
+// Cleanup on exit
+process.on('exit', () => {
+  try { fs.rmSync(FAKE_APP, { recursive: true, force: true }); } catch (_) {}
+});
 
 // --- Helpers ---
 
@@ -46,10 +97,6 @@ function assert(cond, msg) {
 // --- Mock helpers ---
 
 function makeSpawn(result) {
-  // result can be:
-  //   { stdout, stderr, code } — success or failure
-  //   'error' — spawn error (ENOENT etc.)
-  //   function(cmd, args, opts) — custom logic
   return function (cmd, args, opts) {
     if (typeof result === 'function') return result(cmd, args, opts);
 
@@ -81,31 +128,41 @@ function captureSpawn() {
   return { spawn, calls };
 }
 
-function makeContext(overrides = {}) {
+function makeCapabilities(overrides = {}) {
   return {
-    ffmpegBinary: '/fake/bin/ffmpeg',
-    whisperBinary: '/fake/bin/cpu/whisper-cli',
-    cpuWhisperBinary: '/fake/bin/cpu/whisper-cli',
-    modelPath: '/fake/models/ggml-tiny.en.bin',
-    modelConfig: null,
-    dtwPresets: { 'tiny.en': 'tiny.en' },
-    threads: 4,
-    onProgress: () => {},
-    onDiarizeProgress: () => {},
-    log: () => {},
+    getActiveBackend: () => 'cpu',
     isDtwSupported: () => true,
     disableDtw: () => {},
     disableGpu: () => {},
-    pythonCmd: null,
-    diarizeScriptPath: '/fake/lib/diarize.py',
-    mergeTranscript: (json, segs) => '[merged transcript]',
-    signal: undefined,
-    spawn: makeSpawn({ stdout: '', stderr: '', code: 0 }),
-    makeEnvWithLibPath: (dir) => ({ PATH: '/usr/bin' }),
-    _tmpDir: '/tmp',
-    whisperBackend: 'cpu',
+    getPythonCommand: async () => null,
     ...overrides,
   };
+}
+
+function makePaths(overrides = {}) {
+  // Use real paths under FAKE_APP where we've created actual files.
+  return {
+    getWhisperBinary: (backend) => path.join(FAKE_APP, 'bin', 'linux', backend, 'whisper-cli'),
+    getFfmpegBinary: () => path.join(FAKE_APP, 'bin', 'linux', 'ffmpeg'),
+    getResourcePath: (rel) => path.join(FAKE_APP, rel),
+    makeEnvWithLibPath: (dir) => ({ PATH: '/usr/bin' }),
+    ...overrides,
+  };
+}
+
+// Require models here for path init - must be after our mocks set up
+// We override paths.getResourcePath in makePaths, so models isn't needed directly
+// The runner requires models internally which uses lib/paths - let it run with defaults
+
+function makeRunner(overrides = {}) {
+  const { spawn } = captureSpawn();
+  return createTranscriptionRunner({
+    capabilities: makeCapabilities(overrides.capabilities),
+    paths: makePaths(overrides.paths),
+    spawn: overrides.spawn || spawn,
+    log: overrides.log || (() => {}),
+    tmpDir: '/tmp',
+  });
 }
 
 // --- FFmpeg arg construction tests ---
@@ -114,11 +171,11 @@ console.log('FFmpeg arg construction tests\n');
 
 test('audio input produces ffmpeg args without video flag', async () => {
   const { spawn, calls } = captureSpawn();
-  const ctx = makeContext({ spawn });
+  const runner = makeRunner({ spawn });
 
-  try { await runner.runTranscription('/fake/test.mp3', 'tiny.en', {}, ctx); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.mp3', modelId: 'tiny.en', onProgress: () => {} }); } catch (_) {}
 
-  const ffmpegCall = calls.find(c => c.cmd === '/fake/bin/ffmpeg');
+  const ffmpegCall = calls.find(c => c.cmd.includes('ffmpeg'));
   assert(ffmpegCall, 'ffmpeg should be called');
   assert(ffmpegCall.args.includes('-i'), 'should have -i flag');
   assert(ffmpegCall.args.includes('/fake/test.mp3'), 'should have input file');
@@ -134,22 +191,22 @@ test('audio input produces ffmpeg args without video flag', async () => {
 test('video input reports extracting audio', async () => {
   const progressMsgs = [];
   const { spawn, calls } = captureSpawn();
-  const ctx = makeContext({ spawn, onProgress: (m) => { progressMsgs.push(m); } });
+  const runner = makeRunner({ spawn });
 
-  try { await runner.runTranscription('/fake/test.mp4', 'tiny.en', {}, ctx); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.mp4', modelId: 'tiny.en', onProgress: (m) => { progressMsgs.push(m); } }); } catch (_) {}
 
-  assert(calls.some(c => c.cmd === '/fake/bin/ffmpeg'), 'ffmpeg should be called');
+  assert(calls.some(c => c.cmd.includes('ffmpeg')), 'ffmpeg should be called');
   assert(progressMsgs[0] === 'Extracting audio...', `expected 'Extracting audio...', got '${progressMsgs[0]}'`);
 });
 
 test('audio input reports converting audio', async () => {
   const progressMsgs = [];
   const { spawn, calls } = captureSpawn();
-  const ctx = makeContext({ spawn, onProgress: (m) => { progressMsgs.push(m); } });
+  const runner = makeRunner({ spawn });
 
-  try { await runner.runTranscription('/fake/test.wav', 'tiny.en', {}, ctx); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', onProgress: (m) => { progressMsgs.push(m); } }); } catch (_) {}
 
-  assert(calls.some(c => c.cmd === '/fake/bin/ffmpeg'), 'ffmpeg should be called');
+  assert(calls.some(c => c.cmd.includes('ffmpeg')), 'ffmpeg should be called');
   assert(progressMsgs[0] === 'Converting audio...', `expected 'Converting audio...', got '${progressMsgs[0]}'`);
 });
 
@@ -159,11 +216,11 @@ console.log('\nWhisper arg construction tests\n');
 
 test('plain transcription uses --no-timestamps', async () => {
   const { spawn, calls } = captureSpawn();
-  const ctx = makeContext({ spawn });
+  const runner = makeRunner({ spawn });
 
-  try { await runner.runTranscription('/fake/test.wav', 'tiny.en', {}, ctx); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', onProgress: () => {} }); } catch (_) {}
 
-  const whisperCall = calls.find(c => c.cmd === '/fake/bin/cpu/whisper-cli');
+  const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
   assert(whisperCall, 'whisper should be called');
   assert(whisperCall.args.includes('--no-timestamps'), 'should have --no-timestamps for plain transcription');
   assert(!whisperCall.args.includes('--tinydiarize'), 'should not have --tinydiarize');
@@ -172,14 +229,11 @@ test('plain transcription uses --no-timestamps', async () => {
 
 test('tdrz model uses --tinydiarize', async () => {
   const { spawn, calls } = captureSpawn();
-  const ctx = makeContext({
-    spawn,
-    modelConfig: { id: 'small.en-tdrz', fileName: 'ggml-small.en-tdrz.bin', tdrz: true },
-  });
+  const runner = makeRunner({ spawn });
 
-  try { await runner.runTranscription('/fake/test.wav', 'small.en-tdrz', { diarization: true }, ctx); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'small.en-tdrz', options: { diarization: true }, onProgress: () => {} }); } catch (_) {}
 
-  const whisperCall = calls.find(c => c.cmd === '/fake/bin/cpu/whisper-cli');
+  const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
   assert(whisperCall, 'whisper should be called');
   assert(whisperCall.args.includes('--tinydiarize'), 'tdrz model should use --tinydiarize');
   assert(!whisperCall.args.includes('--output-json-full'), 'tdrz should not use --output-json-full');
@@ -187,11 +241,11 @@ test('tdrz model uses --tinydiarize', async () => {
 
 test('diarization uses --output-json-full + --dtw', async () => {
   const { spawn, calls } = captureSpawn();
-  const ctx = makeContext({ spawn });
+  const runner = makeRunner({ spawn });
 
-  try { await runner.runTranscription('/fake/test.wav', 'tiny.en', { diarization: true }, ctx); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true }, onProgress: () => {} }); } catch (_) {}
 
-  const whisperCall = calls.find(c => c.cmd === '/fake/bin/cpu/whisper-cli');
+  const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
   assert(whisperCall, 'whisper should be called');
   assert(whisperCall.args.includes('--output-json-full'), 'diarization should use --output-json-full');
   assert(whisperCall.args.includes('-of'), 'should have -of for output prefix');
@@ -201,22 +255,25 @@ test('diarization uses --output-json-full + --dtw', async () => {
 
 test('diarization without DTW support skips --dtw', async () => {
   const { spawn, calls } = captureSpawn();
-  const ctx = makeContext({ spawn, isDtwSupported: () => false });
+  const runner = makeRunner({
+    spawn,
+    capabilities: { isDtwSupported: () => false },
+  });
 
-  try { await runner.runTranscription('/fake/test.wav', 'tiny.en', { diarization: true }, ctx); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true }, onProgress: () => {} }); } catch (_) {}
 
-  const whisperCall = calls.find(c => c.cmd === '/fake/bin/cpu/whisper-cli');
+  const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
   assert(whisperCall.args.includes('--output-json-full'), 'should still use JSON output');
   assert(!whisperCall.args.includes('--dtw'), 'should not have --dtw when unsupported');
 });
 
 test('anti-corruption adds -mc 0 and sampling flags', async () => {
   const { spawn, calls } = captureSpawn();
-  const ctx = makeContext({ spawn });
+  const runner = makeRunner({ spawn });
 
-  try { await runner.runTranscription('/fake/test.wav', 'tiny.en', { antiCorruption: true }, ctx); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options: { antiCorruption: true }, onProgress: () => {} }); } catch (_) {}
 
-  const whisperCall = calls.find(c => c.cmd === '/fake/bin/cpu/whisper-cli');
+  const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
   assert(whisperCall.args.includes('-mc'), 'should have -mc flag');
   assert(whisperCall.args.includes('0'), 'should set -mc 0');
   assert(whisperCall.args.includes('--temperature'), 'should have --temperature');
@@ -225,137 +282,7 @@ test('anti-corruption adds -mc 0 and sampling flags', async () => {
   assert(whisperCall.args.includes('1.8'), 'should set entropy threshold 1.8');
 });
 
-// --- GPU -> CPU fallback tests ---
-
-console.log('\nGPU fallback tests\n');
-
-test('Vulkan failure falls back to CPU binary', async () => {
-  let cpuCalled = false;
-  const spawn = function (cmd, args, opts) {
-    if (cmd.includes('vulkan')) {
-      const proc = new EventEmitter();
-      proc.stdout = new EventEmitter();
-      proc.stderr = new EventEmitter();
-      process.nextTick(() => {
-        proc.stderr.emit('data', Buffer.from('Vulkan error'));
-        proc.emit('close', 1);
-      });
-      return proc;
-    }
-    if (cmd.includes('cpu')) {
-      cpuCalled = true;
-      return makeSpawn({ stdout: 'cpu result\n', stderr: '', code: 0 })(cmd, args, opts);
-    }
-    return makeSpawn({ stdout: '', stderr: '', code: 0 })(cmd, args, opts);
-  };
-
-  const ctx = makeContext({
-    spawn,
-    whisperBinary: '/fake/bin/vulkan/whisper-cli',
-    cpuWhisperBinary: '/fake/bin/cpu/whisper-cli',
-    whisperBackend: 'vulkan',
-  });
-
-  const result = await runner.runTranscription('/fake/test.wav', 'tiny.en', {}, ctx);
-  assert(cpuCalled, 'CPU binary should be called after Vulkan failure');
-  assert(result === 'cpu result', `expected 'cpu result', got '${result}'`);
-});
-
-test('OOM error does not disable GPU', async () => {
-  let disabled = false;
-  const spawn = function (cmd, args, opts) {
-    if (cmd.includes('vulkan')) {
-      const proc = new EventEmitter();
-      proc.stdout = new EventEmitter();
-      proc.stderr = new EventEmitter();
-      process.nextTick(() => {
-        proc.stderr.emit('data', Buffer.from('OutOfDeviceMemory'));
-        proc.emit('close', 1);
-      });
-      return proc;
-    }
-    return makeSpawn({ stdout: 'cpu result\n', stderr: '', code: 0 })(cmd, args, opts);
-  };
-
-  const ctx = makeContext({
-    spawn,
-    whisperBinary: '/fake/bin/vulkan/whisper-cli',
-    cpuWhisperBinary: '/fake/bin/cpu/whisper-cli',
-    whisperBackend: 'vulkan',
-    disableGpu: () => { disabled = true; },
-  });
-
-  await runner.runTranscription('/fake/test.wav', 'tiny.en', {}, ctx);
-  assert(!disabled, 'OOM should not disable GPU for future runs');
-});
-
-test('non-OOM Vulkan error disables GPU', async () => {
-  let disabled = false;
-  const spawn = function (cmd, args, opts) {
-    if (cmd.includes('vulkan')) {
-      const proc = new EventEmitter();
-      proc.stdout = new EventEmitter();
-      proc.stderr = new EventEmitter();
-      process.nextTick(() => {
-        proc.stderr.emit('data', Buffer.from('Some Vulkan error'));
-        proc.emit('close', 1);
-      });
-      return proc;
-    }
-    return makeSpawn({ stdout: 'cpu result\n', stderr: '', code: 0 })(cmd, args, opts);
-  };
-
-  const ctx = makeContext({
-    spawn,
-    whisperBinary: '/fake/bin/vulkan/whisper-cli',
-    cpuWhisperBinary: '/fake/bin/cpu/whisper-cli',
-    whisperBackend: 'vulkan',
-    disableGpu: () => { disabled = true; },
-  });
-
-  await runner.runTranscription('/fake/test.wav', 'tiny.en', {}, ctx);
-  assert(disabled, 'non-OOM Vulkan error should disable GPU');
-});
-
-// --- DTW fallback tests ---
-
-console.log('\nDTW fallback tests\n');
-
-test('DTW error strips --dtw and retries', async () => {
-  let whisperCalls = 0;
-  let secondCallArgs = null;
-  let dtwDisabled = false;
-
-  const spawn = function (cmd, args, opts) {
-    if (cmd.includes('whisper')) {
-      whisperCalls++;
-      if (whisperCalls === 1) {
-        const proc = new EventEmitter();
-        proc.stdout = new EventEmitter();
-        proc.stderr = new EventEmitter();
-        process.nextTick(() => {
-          proc.stderr.emit('data', Buffer.from('error: unknown DTW preset: bogus\n'));
-          proc.emit('close', 1);
-        });
-        return proc;
-      }
-      secondCallArgs = [...args];
-      return makeSpawn({ stdout: 'retry result\n', stderr: '', code: 0 })(cmd, args, opts);
-    }
-    return makeSpawn({ stdout: '', stderr: '', code: 0 })(cmd, args, opts);
-  };
-
-  const ctx = makeContext({
-    spawn,
-    disableDtw: () => { dtwDisabled = true; },
-  });
-
-  const result = await runner.runTranscription('/fake/test.wav', 'tiny.en', { diarization: true }, ctx);
-  assert(whisperCalls === 2, `expected 2 whisper spawns, got ${whisperCalls}`);
-  assert(dtwDisabled, 'DTW should be disabled after error');
-  assert(!secondCallArgs.includes('--dtw'), 'retry should strip --dtw');
-  assert(result === 'retry result', `expected 'retry result', got '${result}'`);
-});
+// Retry/fallback tests moved to scripts/test-whisper-runner.js
 
 // --- Cancellation tests ---
 
@@ -365,10 +292,10 @@ test('aborted signal before ffmpeg throws Cancelled', async () => {
   const controller = new AbortController();
   controller.abort();
 
-  const ctx = makeContext({ signal: controller.signal });
+  const runner = makeRunner();
 
   try {
-    await runner.runTranscription('/fake/test.wav', 'tiny.en', {}, ctx);
+    await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', signal: controller.signal, onProgress: () => {} });
     assert(false, 'should have thrown');
   } catch (err) {
     assert(err.message === 'Cancelled', `expected 'Cancelled', got '${err.message}'`);
@@ -385,17 +312,15 @@ test('cancellation during whisper phase kills process', async () => {
     proc.stderr = new EventEmitter();
     proc.kill = () => {
       killed = true;
-      // Simulate real Node behavior: kill emits close with signal code
       process.nextTick(() => proc.emit('close', null));
     };
-    // Never emits close on its own — waits for kill
     return proc;
   };
 
   const controller = new AbortController();
-  const ctx = makeContext({ spawn, signal: controller.signal });
+  const runner = makeRunner({ spawn });
 
-  const promise = runner.runTranscription('/fake/test.wav', 'tiny.en', {}, ctx);
+  const promise = runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', signal: controller.signal, onProgress: () => {} });
 
   // Abort after a tick
   await new Promise(resolve => setTimeout(resolve, 10));

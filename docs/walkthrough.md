@@ -39,17 +39,17 @@ Three constraints define the architecture:
 
 The main process (`main.js`) owns the IPC handlers and transcription orchestration. The renderer (`renderer/renderer.js` + `renderer/queue.js`) owns the UI and queue state. The two communicate through Electron's context bridge (`preload.js`), which exposes a flat `window.api` object. The renderer never touches Node APIs directly; the main process never touches the DOM.
 
-The `lib/` directory holds shared modules used by the main process and the test scripts: path resolution (`paths.js`), capability detection (`capabilities.js`), the transcription pipeline (`transcription-runner.js`), and the diarization merge algorithm (`diarize-merge.js`).
+The `lib/` directory holds shared modules used by the main process and the test scripts: path resolution (`paths.js`), capability detection (`capabilities.js`), model metadata (`models.js`), the transcription pipeline (`transcription-runner.js`) and the whisper invocation/retry sub-module it composes (`whisper-runner.js`), a shared subprocess helper (`_subprocess.js`), and the diarization merge algorithm (`diarize-merge.js`).
 
 ## 3. The transcription pipeline
 
-The transcription pipeline is the core of the application. It lives in `lib/transcription-runner.js`, extracted from what was previously a large inline function in `main.js`'s `transcribe` IPC handler. The extraction injects all dependencies (binary paths, spawn, callbacks) through a context object so the pipeline can be unit-tested without spawning real processes.
+The transcription pipeline is the core of the application. It lives in `lib/transcription-runner.js`, extracted from what was previously a large inline function in `main.js`'s `transcribe` IPC handler. The extraction binds long-lived dependencies (capabilities, paths, spawn, log) once at construction time and accepts a small per-call object so the pipeline can be unit-tested without spawning real processes.
 
 ### 3.1 lib/transcription-runner.js -- the orchestrator
 
-This module exports two functions: `runTranscription(filePath, modelId, options, context)` returns the transcript string; `runDiarizationOnly(wavPath, options, context)` runs diarization on an already-converted WAV file. Both accept a context object that carries every external dependency.
+This module exports a factory: `createTranscriptionRunner({ capabilities, paths, spawn, log, tmpDir? })` returns `{ runTranscription }`. Each call takes `{ filePath, modelId, options, signal, onProgress, onDiarizeProgress }` and returns the transcript text. `main.js` builds the runner once at startup and reuses it across every `transcribe` IPC invocation.
 
-The dependency-injection pattern serves two purposes. First, it makes the pipeline testable: `scripts/test-transcription-runner.js` passes mock spawn functions, fake binary paths, and fake capability callbacks to exercise GPU fallback, DTW fallback, and cancellation without touching the filesystem. Second, it isolates the pipeline from the Electron main process -- the pipeline does not `require('electron')` and does not know about `ipcMain`. It receives `onProgress(msg)` and `onDiarizeProgress(data)` callbacks; `main.js` wires those to `event.sender.send(...)`.
+The dependency-injection pattern serves two purposes. First, it makes the pipeline testable: `scripts/test-transcription-runner.js` passes mock spawn functions, fake binary paths, and fake capability callbacks to exercise orchestration and cancellation without touching the filesystem. Second, it isolates the pipeline from the Electron main process -- the pipeline does not `require('electron')` and does not know about `ipcMain`. It receives `onProgress(msg)` and `onDiarizeProgress(data)` callbacks; `main.js` wires those to `event.sender.send(...)`.
 
 The pipeline runs three sequential steps:
 
@@ -65,11 +65,13 @@ The pipeline runs three sequential steps:
 
 3. **Optional diarization.** If pyannote diarization is enabled (and the model is not tdrz), the pipeline spawns `lib/diarize.py` as a Python subprocess on the same WAV file, then merges the result with whisper's JSON output using `lib/diarize-merge.js`.
 
-The pipeline handles two fallback chains:
+The whisper step is delegated to `lib/whisper-runner.js`, which owns arg construction, backend resolution, and two fallback chains:
 
-- **GPU to CPU fallback.** If `whisperBackend` is `'vulkan'` and whisper exits non-zero, the pipeline retries with the CPU binary. It distinguishes OOM errors (`OutOfDeviceMemory`, `failed to allocate`) from other Vulkan failures: OOM doesn't disable GPU for future runs (the next file might be shorter and fit), but non-OOM errors call `disableGpu()` which sets GPU to 'cpu' for the remainder of the session.
+- **GPU to CPU fallback.** If the active backend is `'vulkan'` and whisper exits non-zero, the runner retries with the CPU binary. It distinguishes OOM errors (`OutOfDeviceMemory`, `failed to allocate`) from other Vulkan failures: OOM doesn't disable GPU for future runs (the next file might be shorter and fit), but non-OOM errors call `capabilities.disableGpu()` which pins the session to CPU.
 
-- **DTW to no-DTW fallback.** If whisper fails with a DTW-related error (`unknown DTW preset`, `DTW ... not built`), the pipeline strips `--dtw` and retries. After a DTW failure, `disableDtw()` is called so subsequent diarization runs skip `--dtw` entirely, avoiding the failure for every file in a batch.
+- **DTW to no-DTW fallback.** If whisper fails with a DTW-related error (`unknown DTW preset`, `DTW ... not built`), the runner strips `--dtw` and retries. After a DTW failure, `capabilities.disableDtw()` is called so subsequent diarization runs skip `--dtw` entirely, avoiding the failure for every file in a batch.
+
+Keeping the retry policy in `whisper-runner.js` means `runTranscription` reads as a clean three-step composition (ffmpeg -> whisperRunner.transcribe -> optional diarize+merge) with no retry-aware branching. Subprocess spawning, logging, abort wiring, and HF-token redaction live in `lib/_subprocess.js`, shared by ffmpeg, whisper, and the diarization step.
 
 Cancellation works through a single `AbortSignal` shared across all subprocesses. Each `_runProcess` call registers an `abort` event listener that calls `proc.kill()`. The `cancel-transcription` IPC handler calls `abort()` on the controller. Because ffmpeg and whisper run sequentially (not in parallel), killing whichever process is currently running is sufficient.
 
@@ -126,9 +128,9 @@ There is no schema enforcement or migration logic because there is only one key 
 
 ### 4.2 Models (`models/`)
 
-Model files are `.bin` files downloaded from Hugging Face. The `MODELS` array in `main.js` defines 13 models with their IDs, filenames, labels, and sizes. The `hfRepo` field (present only on `small.en-tdrz`) overrides the default Hugging Face repo for models hosted outside `ggerganov/whisper.cpp`.
+Model files are `.bin` files downloaded from Hugging Face. `lib/models.js` owns the canonical list (13 entries) along with every per-model fact: filename, label, size, DTW preset, the optional `tdrz` flag, and the optional `hfRepo` override (only `small.en-tdrz` uses it, to pull from `akashmjn/tinydiarize-whisper.cpp` instead of the default `ggerganov/whisper.cpp`). Adding a model is a single-entry edit; the `download-model` IPC handler and the transcription runner both consult the same module via `models.getModel(id)`, `models.getModelPath(id)`, and `models.getDownloadUrl(id)`.
 
-Model download state is computed at runtime: `get-models` IPC maps the `MODELS` array, adding a `downloaded` boolean by checking `fs.existsSync()` on each model's path. There is no separate download-state store. If a model file exists, it's downloaded; if not, it isn't.
+Model download state is computed at runtime: `models.listModels()` maps the spec array, adding a `downloaded` boolean by checking `fs.existsSync()` on each model's path. There is no separate download-state store. If a model file exists, it's downloaded; if not, it isn't.
 
 ### 4.3 Log file (`transcriber.log`)
 
@@ -136,7 +138,7 @@ A plain text append-only log at `app.getPath('userData')/logs/transcriber.log`. 
 
 ## 5. The UI layer
 
-The renderer consists of two scripts loaded in `index.html`: `queue.js` and `renderer.js`. There is no framework, no build step, and no bundler. The constraints that drove this: (a) the UI is a single screen with no routing, so a framework adds complexity without benefit; (b) avoiding a build step means contributors can change the renderer code and reload the app without running a watcher; (c) the UI is simple enough (a model picker, a file queue, a transcript output) that vanilla DOM manipulation is sufficient.
+The renderer consists of five scripts loaded in `index.html`, in order: `queue.js`, `media-extensions.js`, `time-estimates.js`, `transcript-format.js`, then `renderer.js`. The first four are pure modules (no DOM, no IPC) using the same dual `module.exports` / `window.<namespace>` pattern as `queue.js`, so they are testable in plain Node. `renderer.js` consumes them through `window.mediaExtensions`, `window.timeEstimates`, and `window.transcriptFormat`. There is no framework, no build step, and no bundler. The constraints that drove this: (a) the UI is a single screen with no routing, so a framework adds complexity without benefit; (b) avoiding a build step means contributors can change the renderer code and reload the app without running a watcher; (c) the UI is simple enough (a model picker, a file queue, a transcript output) that vanilla DOM manipulation is sufficient.
 
 ### 5.1 renderer/queue.js -- the queue state model
 
@@ -153,7 +155,7 @@ Wires the DOM elements to user actions and IPC events. Key behaviours:
 - **File selection** works through both a click-to-browse button (native dialog via `dialog.showOpenDialog`) and drag-and-drop. Dropped files are filtered against a whitelist of 15 extensions. Files that don't match are rejected with a status message.
 - **Model download** streams progress from the main process via `download-progress` events. The download button appears only for undownloaded models, determined by the `downloaded` boolean from `get-models`.
 - **Transcription** is kicked off by the Transcribe button, which calls `queue.processAll` with a callback that invokes `window.api.transcribe`. The UI shows a progress spinner, an elapsed timer, and a cancel button. After processing, the queue is cleared (completed items are discarded from the UI -- transcripts are shown in the output area, not retained in the queue).
-- **Rich display for diarized output:** when pyannote diarization succeeds (detected by the `[N speakers detected]` header), the renderer replaces the plain textarea with a `div.transcript-rich` containing speaker-colored spans. Eight CSS classes (`speaker-1` through `speaker-8`) provide distinct colors. The textarea is kept in sync (hidden) as the plain-text copy/save source.
+- **Rich display for diarized output:** when pyannote diarization succeeds (detected by `transcriptFormat.isPyannoteDiarized`, a `[N speakers detected]` header check), the renderer replaces the plain textarea with a `div.transcript-rich` containing speaker-colored spans. The block parsing is done by `transcriptFormat.parseRichTranscript`, which clamps speaker numbers above 8 to the highest CSS class. Eight CSS classes (`speaker-1` through `speaker-8`) provide distinct colors. The textarea is kept in sync (hidden) as the plain-text copy/save source.
 - **Settings menu** (hamburger icon) contains the anti-corruption toggle, diarization setup, and an optional debug panel. The diarization section disables the enable toggle if Python or pyannote is not found, and shows CUDA detection status.
 - **Auto-update** uses `electron-updater`'s GitHub provider. The renderer listens for `update-available` (shows "Downloading...") and `update-downloaded` (shows "Update ready -- click to restart"). Version comparison prevents offering downgrades.
 
@@ -205,9 +207,13 @@ The single build script handles dependency fetching and packaging. It reads `dep
 |------|--------------|----------------|
 | `scripts/test-merge.js` | All 5 stages of the diarization merge pipeline plus post-collapse merging; ~40 test cases covering segment-level fallback, word-level token assignment, boundary refinement, smoothing, short-block merge, and config overrides | After any change to `lib/diarize-merge.js` |
 | `scripts/test-capabilities.js` | GPU detection fallback, DTW probe caching, Python detection caching, preference persistence; ~15 tests using mock spawn and stubs | After any change to `lib/capabilities.js` |
-| `scripts/test-transcription-runner.js` | FFmpeg and whisper arg construction, GPU->CPU fallback, DTW->no-DTW fallback, OOM vs non-OOM GPU handling, cancellation via AbortSignal; ~10 tests using mock spawn | After any change to `lib/transcription-runner.js` |
+| `scripts/test-transcription-runner.js` | Pipeline orchestration: FFmpeg arg construction, whisper-is-called wiring, cancellation via AbortSignal; ~10 tests using mock spawn | After any change to `lib/transcription-runner.js` |
+| `scripts/test-whisper-runner.js` | Whisper arg construction, GPU->CPU fallback, DTW->no-DTW fallback, OOM vs non-OOM classification, cancellation during retry; ~12 tests | After any change to `lib/whisper-runner.js` |
+| `scripts/test-models.js` | `getModel` lookup and unknown-id error, `getModelPath`, `getDownloadUrl` default vs `hfRepo` override, `listModels` shape; ~9 tests | After any change to `lib/models.js` |
 | `scripts/test-queue.js` | Queue enqueue/remove/clear/getActiveItem, serial processing, error isolation (one failure doesn't stop the batch), cancellation; ~15 tests | After any change to `renderer/queue.js` |
-| `scripts/test-renderer-smoke.js` | Loads `queue.js` and `renderer.js` in a minimal browser-like vm context to catch require()-in-renderer bugs, missing globals, and syntax errors | Before any release or PR that touches renderer code |
+| `scripts/test-transcript-format.js` | Pyannote detection regex, tinydiarize split-and-join formatting, rich-transcript parsing with speaker-number clamping, speaker counting; ~21 tests | After any change to `renderer/transcript-format.js` |
+| `scripts/test-time-estimates.js` | Model-id to time-estimate bucket mapping including the `large-turbo` special case; ~16 tests | After any change to `renderer/time-estimates.js` |
+| `scripts/test-renderer-smoke.js` | Loads every renderer script (`queue.js`, `media-extensions.js`, `time-estimates.js`, `transcript-format.js`, `renderer.js`) in a minimal browser-like vm context to catch require()-in-renderer bugs, missing globals, and syntax errors | Before any release or PR that touches renderer code |
 | `scripts/test-packaging.js` | Verifies that every `require('./lib/...')` in `main.js` resolves to an existing file, that `lib/` is not in top-level `extraResources` (which would move JS modules outside the asar), and that `lib/diarize.py` IS in `extraResources` | Before packaging a release |
 | `scripts/test-audio-load.py` | Checks that ffmpeg can load a given audio file | Ad-hoc, when debugging ffmpeg issues |
 | `scripts/test-diarize-pipeline.py` | End-to-end diarization test requiring Python, pyannote, and a Hugging Face token | After changes to `lib/diarize.py` or when setting up diarization |
@@ -225,24 +231,26 @@ All JavaScript tests follow the same plain-Node pattern: no test framework, no a
 | `deps.json` as single source of truth for versions | Both `scripts/build.sh` and CI workflows read the same file. A weekly CI job (`dep-check.yml`) checks for upstream updates and auto-opens PRs. Manual updates require changing one file |
 | No ORM, no database | Single-user app with no structured query needs. Settings fit in one JSON file. The model list is a hardcoded array. Transcripts live in memory until the user saves them |
 | Python subprocess for diarization rather than a bundled runtime | Pyannote's dependency tree (PyTorch, transformers, torchaudio) is too large to bundle. The subprocess pattern matches ffmpeg and whisper-cli. Users install Python and pyannote themselves if they want diarization |
-| Context-injection for the transcription pipeline (`lib/transcription-runner.js`) | Makes the pipeline testable without spawning real processes. Every external dependency (ffmpeg path, spawn, callbacks, capability flags) arrives through a single context object |
+| Factory + per-call interface for the transcription pipeline (`lib/transcription-runner.js`) | Long-lived dependencies (capabilities, paths, spawn, log) are bound once at startup; each call passes only job parameters (file, model, options, callbacks, signal). Makes the pipeline testable without spawning real processes and shrinks the `transcribe` IPC handler to a thin adapter |
 
 ## 9. How to orient yourself in the repo
 
 1. **`deps.json`** -- the single source of truth for dependency versions. Read this first to understand what the app bundles.
 
-2. **`main.js`** -- the main process: IPC handlers, model list, settings read/write, auto-update wiring. Look at the `transcribe` handler to see how the pipeline context is assembled and passed to `runTranscription`.
+2. **`main.js`** -- the main process: IPC handlers, settings read/write, auto-update wiring. The `transcribe` handler is now a thin adapter that delegates to the runner built at startup by `createTranscriptionRunner`.
 
 3. **`lib/paths.js`** -- platform abstraction: how `getWhisperBinary('vulkan')` resolves to `bin/linux/vulkan/whisper-cli` on Linux and `bin/win/vulkan/whisper-cli.exe` on Windows.
 
-4. **`lib/transcription-runner.js`** -- the FFmpeg -> whisper -> diarize pipeline. Follow `runTranscription` to see the three-step flow. The context object at the top documents every injectable dependency.
+4. **`lib/models.js`** -- canonical model metadata. One entry per model with filename, label, size, DTW preset, and optional `tdrz`/`hfRepo` flags. Add a model here and every consumer (download handler, runner) sees it.
 
-5. **`lib/capabilities.js`** -- GPU, DTW, and Python detection. `detect()` runs three probes at startup. `getActiveBackend()` shows how user preference and hardware detection combine.
+5. **`lib/transcription-runner.js`** + **`lib/whisper-runner.js`** -- the FFmpeg -> whisper -> diarize pipeline. `runTranscription` is the three-step composition; `whisper-runner` owns arg construction and the GPU/DTW retry policy. `lib/_subprocess.js` is the shared spawn helper.
 
-6. **`lib/diarize-merge.js`** -- the five-stage merge pipeline plus post-collapse short-block merge. The `DEFAULTS` object documents every tunable threshold. The `mergeTranscriptWithDiarization` orchestrator wires them together.
+6. **`lib/capabilities.js`** -- GPU, DTW, and Python detection. `detect()` runs three probes at startup. `getActiveBackend()` shows how user preference and hardware detection combine.
 
-7. **`renderer/queue.js`** and **`renderer/renderer.js`** -- the UI side: queue state model and DOM wiring. Look at `processAll` for serial processing and `displayRichTranscript` for the speaker-colored output.
+7. **`lib/diarize-merge.js`** -- the five-stage merge pipeline plus post-collapse short-block merge. The `DEFAULTS` object documents every tunable threshold. The `mergeTranscriptWithDiarization` orchestrator wires them together.
 
-8. **`scripts/build.sh`** and **`electron-builder.yml`** -- how the app becomes a Windows NSIS installer or Linux AppImage. `electron-builder.yml` defines `extraResources` (what goes outside the asar) and `nsis`/`AppImage` target settings.
+8. **`renderer/queue.js`** and **`renderer/renderer.js`** -- the UI side: queue state model and DOM wiring. Look at `processAll` for serial processing and `displayRichTranscript` for the speaker-colored output. Pure helpers live alongside: `renderer/transcript-format.js` (pyannote detection, tinydiarize formatting, rich parsing), `renderer/media-extensions.js`, and `renderer/time-estimates.js`.
+
+9. **`scripts/build.sh`** and **`electron-builder.yml`** -- how the app becomes a Windows NSIS installer or Linux AppImage. `electron-builder.yml` defines `extraResources` (what goes outside the asar) and `nsis`/`AppImage` target settings.
 
 That is the whole project.
