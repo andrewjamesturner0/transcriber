@@ -6,7 +6,7 @@ Local audio and video transcription powered by OpenAI's Whisper. All processing 
 
 Transcriber is a desktop application that transcribes audio and video files using the Whisper speech recognition model. All processing happens locally. No audio is sent anywhere and no accounts are needed.
 
-**Download:** [Windows & Linux — GitHub Releases](https://github.com/andrewjamesturner0/transcriber/releases)
+**Download:** [Windows & Linux; GitHub Releases](https://github.com/andrewjamesturner0/transcriber/releases)
 
 ---
 
@@ -126,15 +126,15 @@ Transcriber is free software. If it's useful to you, consider [sponsoring develo
 
 ## Built with
 
-- [whisper.cpp](https://github.com/ggml-org/whisper.cpp) — C/C++ Whisper inference (MIT)
-- [OpenAI Whisper](https://github.com/openai/whisper) — speech recognition models (MIT)
-- [FFmpeg](https://ffmpeg.org) — multimedia processing (LGPL 2.1)
-- [Electron](https://www.electronjs.org) — desktop framework (MIT)
-- [ggml](https://github.com/ggml-org/ggml) — tensor library (MIT)
-- [pyannote.audio](https://github.com/pyannote/pyannote-audio) — speaker diarization (MIT)
-- [PyTorch](https://pytorch.org) — machine learning framework (BSD-3-Clause)
-- [NumPy](https://numpy.org) — numerical computing (BSD-3-Clause)
+- [whisper.cpp](https://github.com/ggml-org/whisper.cpp): C/C++ Whisper inference (MIT)
+- [OpenAI Whisper](https://github.com/openai/whisper): speech recognition models (MIT)
+- [FFmpeg](https://ffmpeg.org): multimedia processing (LGPL 2.1)
+- [Electron](https://www.electronjs.org): desktop framework (MIT)
+- [ggml](https://github.com/ggml-org/ggml): tensor library (MIT)
+- [pyannote.audio](https://github.com/pyannote/pyannote-audio): speaker diarization (MIT)
+- [PyTorch](https://pytorch.org): machine learning framework (BSD-3-Clause)
+- [NumPy](https://numpy.org): numerical computing (BSD-3-Clause)
 
 ## Licence
 
-[GPLv3](LICENSE) — free to use, modify, and distribute. Derivative works must also be open-source under GPLv3.
+[GPLv3](LICENSE): free to use, modify, and distribute. Derivative works must also be open-source under GPLv3.

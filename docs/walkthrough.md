@@ -49,7 +49,7 @@ The transcription pipeline is the core of the application. It lives in `lib/tran
 
 This module exports a factory: `createTranscriptionRunner({ capabilities, paths, spawn, log, tmpDir? })` returns `{ runTranscription }`. Each call takes `{ filePath, modelId, options, signal, onProgress, onDiarizeProgress }` and returns the transcript text. `main.js` builds the runner once at startup and reuses it across every `transcribe` IPC invocation.
 
-The dependency-injection pattern serves two purposes. First, it makes the pipeline testable: `scripts/test-transcription-runner.js` passes mock spawn functions, fake binary paths, and fake capability callbacks to exercise orchestration and cancellation without touching the filesystem. Second, it isolates the pipeline from the Electron main process -- the pipeline does not `require('electron')` and does not know about `ipcMain`. It receives `onProgress(msg)` and `onDiarizeProgress(data)` callbacks; `main.js` wires those to `event.sender.send(...)`.
+The dependency-injection pattern has two purposes. First, it makes the pipeline testable: `scripts/test-transcription-runner.js` passes mock spawn functions, fake binary paths, and fake capability callbacks to exercise orchestration and cancellation without touching the filesystem. Second, it isolates the pipeline from the Electron main process -- the pipeline does not `require('electron')` and does not know about `ipcMain`. It receives `onProgress(msg)` and `onDiarizeProgress(data)` callbacks; `main.js` wires those to `event.sender.send(...)`.
 
 The pipeline runs three sequential steps:
 
@@ -144,7 +144,7 @@ The renderer consists of five scripts loaded in `index.html`, in order: `queue.j
 
 A pure state model with no DOM dependencies. Exports a `createQueue()` factory that returns an object with `enqueue`, `remove`, `clear`, `getItems`, `getSummary`, `getActiveItem`, and `processAll`. Items flow through states: `pending` -> `processing` -> `done` | `error`.
 
-`processAll` processes pending items serially. It accepts an `AbortSignal` and an `onChange` callback. After each item completes or fails, `onChange` fires so the renderer can update the queue list. Error in one item does not stop the queue -- the next pending item proceeds. This is intentional: a corrupt file that crashes ffmpeg shouldn't prevent the rest of the batch from transcribing.
+`processAll` processes pending items serially. It accepts an `AbortSignal` and an `onChange` callback. After each item completes or fails, `onChange` fires so the renderer can update the queue list. Error in one item does not stop the queue -- the next pending item proceeds. A corrupt file that crashes ffmpeg should not prevent the rest of the batch from transcribing.
 
 The module runs in both Node (test scripts) and the browser (renderer) via the `if (typeof module !== 'undefined')` check at the bottom.
 
@@ -161,7 +161,7 @@ Wires the DOM elements to user actions and IPC events. Key behaviours:
 
 ### 5.3 preload.js -- the context bridge
 
-A flat list of `contextBridge.exposeInMainWorld` calls. Each function maps to an `ipcRenderer.invoke` or `ipcRenderer.on` call. There is no wrapper or abstraction layer -- the renderer calls `window.api.transcribe(...)` directly. This is deliberate: with only ~20 IPC channels and a single window, indirection through a typed API layer would add maintenance cost without reducing coupling.
+A flat list of `contextBridge.exposeInMainWorld` calls. Each function maps to an `ipcRenderer.invoke` or `ipcRenderer.on` call. There is no wrapper or abstraction layer -- the renderer calls `window.api.transcribe(...)` directly. With only ~20 IPC channels and a single window, indirection through a typed API layer would add maintenance cost without reducing coupling.
 
 ## 6. Packaging and deployment
 
@@ -218,7 +218,7 @@ The single build script handles dependency fetching and packaging. It reads `dep
 | `scripts/test-audio-load.py` | Checks that ffmpeg can load a given audio file | Ad-hoc, when debugging ffmpeg issues |
 | `scripts/test-diarize-pipeline.py` | End-to-end diarization test requiring Python, pyannote, and a Hugging Face token | After changes to `lib/diarize.py` or when setting up diarization |
 
-All JavaScript tests follow the same plain-Node pattern: no test framework, no assertions library. A `test(name, fn)` function queues tests; `assert(cond, msg)` throws on failure. The test runner prints `PASS`/`FAIL` per test and exits with code 1 on any failure. This avoids adding a dev dependency that would need to be maintained across Electron version bumps.
+All JavaScript tests follow the same plain-Node pattern: no test framework, no assertions library. A `test(name, fn)` function queues tests; `assert(cond, msg)` throws on failure. The test runner prints `PASS`/`FAIL` per test and exits with code 1 on any failure. No dev dependency is added that would need maintenance across Electron version bumps.
 
 ## 8. Tech choice summary
 

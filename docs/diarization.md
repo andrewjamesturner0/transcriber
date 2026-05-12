@@ -1,6 +1,6 @@
 # Speaker Diarization Pipeline
 
-This document describes the diarization pipeline in `lib/diarize-merge.js` — the shared module used by both `main.js` and `scripts/test-merge.js` to merge whisper word-level timestamps with pyannote speaker segments.
+This document describes the diarization pipeline in `lib/diarize-merge.js`, the shared module used by both `main.js` and `scripts/test-merge.js` to merge whisper word-level timestamps with pyannote speaker segments.
 
 ## Pipeline Overview
 
@@ -105,7 +105,7 @@ The pipeline requires whisper token timestamps for word-level alignment. These c
 
 **Fallback**: if DTW fails at runtime (unknown preset, unrecognised flag, or DTW not built), the app retries without `--dtw` and disables DTW for subsequent runs. When DTW is unavailable, the pipeline falls back to segment-level alignment (each whisper segment assigned as a whole).
 
-**Manual test**: to verify the fallback, rename a DTW preset to a bogus value in `main.js`'s `DTW_PRESETS` map and re-run a diarization. The app should log the fallback and produce a segment-level transcript.
+**Manual test**: to verify the fallback, rename a `dtwPreset` to a bogus value in `lib/models.js` and re-run a diarization. The app should log the fallback and produce a segment-level transcript.
 
 ## Pyannote Unavailability
 

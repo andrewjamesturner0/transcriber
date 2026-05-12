@@ -42,9 +42,9 @@ Keep PRs focused on a single change. If you're fixing a bug and want to refactor
 
 ## Issues
 
-- **Bug reports** — use the [bug report template](https://github.com/andrewjamesturner0/transcriber/issues/new?template=bug_report.md)
-- **Feature requests** — use the [feature request template](https://github.com/andrewjamesturner0/transcriber/issues/new?template=feature_request.md)
-- **Questions** — use [GitHub Discussions](https://github.com/andrewjamesturner0/transcriber/discussions), not Issues
+- **Bug reports**: use the [bug report template](https://github.com/andrewjamesturner0/transcriber/issues/new?template=bug_report.md)
+- **Feature requests**: use the [feature request template](https://github.com/andrewjamesturner0/transcriber/issues/new?template=feature_request.md)
+- **Questions**: use [GitHub Discussions](https://github.com/andrewjamesturner0/transcriber/discussions), not Issues
 
 ## Good first issues
 

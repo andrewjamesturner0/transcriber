@@ -75,15 +75,15 @@ Build and run the app directly on Windows without cross-compiling from Linux.
 
 ### Prerequisites
 
-1. **Node.js** >= 18 — [Download](https://nodejs.org/)
-2. **Git for Windows** — [Download](https://git-scm.com/download/win)
+1. **Node.js** >= 18: [Download](https://nodejs.org/)
+2. **Git for Windows**: [Download](https://git-scm.com/download/win)
 3. **Visual Studio Build Tools** (for compiling whisper.cpp):
    - Download [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
    - Select **"Desktop development with C++"** workload
-4. **CMake** (if not using Visual Studio's bundled version) — [Download](https://cmake.org/download/)
+4. **CMake** (if not using Visual Studio's bundled version): [Download](https://cmake.org/download/)
 
 Optional for GPU acceleration:
-- **CUDA Toolkit** — [Download](https://developer.nvidia.com/cuda-downloads) (for NVIDIA GPU support)
+- **CUDA Toolkit**: [Download](https://developer.nvidia.com/cuda-downloads) (for NVIDIA GPU support)
 
 ### Option A: Pre-built binaries (recommended)
 
@@ -132,7 +132,7 @@ cd ..
 Copy-Item .build-whisper\build\bin\Release\whisper-cli.exe bin\win\cpu\
 Copy-Item .build-whisper\build\bin\Release\*.dll bin\win\cpu\
 
-# Still need ffmpeg and model — see Option A for download commands
+# Still need ffmpeg and model; see Option A for download commands
 ```
 
 ### Run and package
@@ -159,20 +159,26 @@ The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Win
 ## Project Structure
 
 ```
-main.js              Electron main process — IPC handlers, window creation, settings
+main.js              Electron main process; IPC handlers, window creation, settings
 preload.js           Context bridge between main and renderer
 deps.json            Single source of truth for dependency versions and URLs
 renderer/
   index.html         App UI
   renderer.js        UI logic (wires queue model to DOM, IPC handlers)
   queue.js           Queue state model (pending -> processing -> done/error)
+  media-extensions.js Supported file extensions whitelist
+  time-estimates.js  Model-id to time-estimate bucket mapping
+  transcript-format.js Diarization output formatting and rich-transcript parsing
   style.css          Styles
   fonts/             Bundled fonts
 lib/
   paths.js                Shared binary-path resolution (dev vs. packaged, platform dir)
   capabilities.js         GPU/DTW/Python capability detection (consolidated from main.js)
-  transcription-runner.js FFmpeg -> whisper -> diarize pipeline (extracted from main.js)
-  diarize-merge.js        Diarisation merge pipeline (shared by main.js and tests)
+  models.js               Canonical model metadata (filenames, DTW presets, download URLs)
+  transcription-runner.js FFmpeg -> whisper -> diarize pipeline factory (composes whisper-runner)
+  whisper-runner.js       Whisper-cli arg construction, backend resolution, GPU/DTW fallback retry
+  _subprocess.js          Shared subprocess spawn helper (used by ffmpeg, whisper, diarization)
+  diarize-merge.js        Diarisation merge pipeline (shared by transcription-runner and tests)
   diarize.py              Pyannote speaker diarization script (spawned as subprocess)
   requirements.txt        Python dependencies for diarization
 assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
@@ -182,6 +188,8 @@ scripts/
   test-merge.js                 Unit tests for the diarization merge logic (no model needed)
   test-capabilities.js          Unit tests for lib/capabilities.js (GPU, DTW, Python)
   test-transcription-runner.js  Unit tests for the transcription pipeline (FFmpeg, whisper, fallbacks)
+  test-whisper-runner.js        Unit tests for whisper arg construction and retry policy
+  test-models.js                Unit tests for model metadata module
   test-queue.js                 Unit tests for the queue state model (enqueue, processAll, cancel)
   test-renderer-smoke.js        Smoke test: loads renderer scripts in a browser-like vm context
   test-packaging.js             Static check: require() consistency vs electron-builder.yml
@@ -209,11 +217,11 @@ dist/                Built distributables
 
 - `lib/paths.js` owns all binary-path resolution: `getPlatformDir()` resolves `win`/`linux`/`mac`, `getResourcePath()` handles dev vs. packaged, `getWhisperBinary(backend)` and `getFfmpegBinary()` return binary paths
 - `lib/capabilities.js` consolidates GPU backend detection, DTW support probing, and Python/pyannote availability into a single module (formerly scattered global state in main.js)
-- `lib/transcription-runner.js` orchestrates the FFmpeg -> whisper -> diarize pipeline (extracted from the `transcribe` IPC handler). All dependencies (binary paths, spawn, callbacks) are injected via the context object for testability
+- `lib/transcription-runner.js` orchestrates the FFmpeg -> whisper -> diarize pipeline via a `createTranscriptionRunner` factory. Long-lived dependencies (binary paths, spawn, capabilities) are bound at construction time; per-call job parameters (file, model, options, callbacks, signal) are passed to `runTranscription`. Composes `lib/whisper-runner.js` for the whisper step.
 - Transcription flow: ffmpeg converts input to 16kHz mono WAV temp file, then spawns whisper-cli with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw` (pyannote diarization; DTW support probed at startup, disabled if unsupported)
 - Thread count: `Math.max(1, Math.min(os.cpus().length - 1, 8))`
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
-- `MODELS` array in `main.js` defines all available models; the `download-model` IPC streams from Hugging Face with progress events
+- `lib/models.js` defines the canonical model list (13 entries) with filenames, DTW presets, and per-model flags; the `download-model` IPC streams from Hugging Face with progress events
 - GPU acceleration: ships both CPU and Vulkan whisper-cli binaries; at startup, tests the Vulkan binary with `--help` (5s timeout) and caches the result. If Vulkan fails mid-transcription, transparently retries with CPU
 - Backend preference stored in `settings.json` in `app.getPath('userData')`
 - macOS builds require building on macOS with `bin/mac/` populated manually
@@ -239,10 +247,10 @@ User enables diarization in settings
 ### Subprocess protocol
 
 `lib/diarize.py` communicates with Electron via:
-- **stderr**: JSON progress lines — `{"message": "Loading model...", "percent": 10}`
-- **stderr**: JSON error lines — `{"error": "Authentication failed..."}`
-- **stdout**: Final summary — `{"segments": 42}`
-- **output file**: JSON array of segments — `[{"start": 0.0, "end": 3.5, "speaker": "SPEAKER_00"}, ...]`
+- **stderr**: JSON progress lines: `{"message": "Loading model...", "percent": 10}`
+- **stderr**: JSON error lines: `{"error": "Authentication failed..."}`
+- **stdout**: Final summary: `{"segments": 42}`
+- **output file**: JSON array of segments: `[{"start": 0.0, "end": 3.5, "speaker": "SPEAKER_00"}, ...]`
 
 ### Testing standalone
 
@@ -253,7 +261,7 @@ cat out.json  # should contain speaker segments
 
 ### Timestamp alignment
 
-The merge pipeline lives in `lib/diarize-merge.js` (shared between `main.js` and `scripts/test-merge.js`). It runs five stages plus post-collapse short-block merging. See [`docs/diarization.md`](docs/diarization.md) for the full pipeline diagram, stage-by-stage description, config reference, and debug logging (`DIARIZE_DEBUG=1`).
+The merge pipeline lives in `lib/diarize-merge.js` (shared between `lib/transcription-runner.js` and `scripts/test-merge.js`). It runs five stages plus post-collapse short-block merging. See [`docs/diarization.md`](docs/diarization.md) for the full pipeline diagram, stage-by-stage description, config reference, and debug logging (`DIARIZE_DEBUG=1`).
 
 Key implementation notes: `DIARIZE_DEBUG=1` emits per-stage diff logs; DTW support is probed at startup and disabled on failure for all subsequent runs. Overlapping segments from pyannote are handled by `mergeDiarizeSegments()` for same-speaker gaps; different-speaker overlaps are preserved as-is.
 

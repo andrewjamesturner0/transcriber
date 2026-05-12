@@ -4,16 +4,16 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.1.0] — 2026-02-27
+## [0.1.0] - 2026-02-27
 
 Initial public release.
 
 ### Added
 
-- Local audio and video transcription powered by whisper.cpp — all processing on-device
+- Local audio and video transcription powered by whisper.cpp; all processing on-device
 - 13 Whisper model sizes from Tiny (75 MB) to Large-v3 (3.1 GB), with English-optimised variants and quantized options
-- Speaker diarisation via TinyDiarize (Not very good!)
-- Batch processing — queue multiple files and transcribe sequentially
+- Speaker diarisation via TinyDiarize (Not very good.)
+- Batch processing; queue multiple files and transcribe sequentially
 - 15 supported audio/video formats: MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM (audio); MP4, MOV, AVI, MKV, WMV, FLV, 3GP (video)
 - In-app model downloader with progress indicator
 - Copy to clipboard and save to file

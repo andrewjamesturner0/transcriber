@@ -60,7 +60,7 @@ To enable GPU support:
    ```
    pip install torch --index-url https://download.pytorch.org/whl/cu121
    ```
-   (Replace `cu121` with your CUDA version — check with `nvcc --version`)
+   (Replace `cu121` with your CUDA version; check with `nvcc --version`)
 
 ### 5. Configure in Transcriber
 

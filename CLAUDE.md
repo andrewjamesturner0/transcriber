@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Transcriber — Electron desktop app wrapping [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for local audio-to-text transcription. No cloud services; all processing is on-device. Licensed under GPLv3. Windows is the primary target.
+Transcriber, an Electron desktop app wrapping [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for local audio-to-text transcription. No cloud services; all processing is on-device. Licensed under GPLv3. Windows is the primary target.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions, project structure, and architecture details.
 
@@ -24,13 +24,16 @@ npm start                            # Launch app in dev mode (Linux only, needs
 ## Key Details
 
 - **deps.json** is the single source of truth for dependency versions (whisper.cpp, ffmpeg URLs, Vulkan SDK, Node). Build scripts and CI both read from it.
-- Platform binaries in `bin/{win,linux,mac}/{cpu,vulkan}/`, models in `models/` — all gitignored, created by build scripts
-- `main.js`: main process — IPC handlers and transcription orchestration
+- Platform binaries in `bin/{win,linux,mac}/{cpu,vulkan}/`, models in `models/`; all gitignored, created by build scripts
+- `main.js`: main process; IPC handlers and transcription orchestration
 - `lib/paths.js`: shared binary-path resolution (`getResourcePath`, `getPlatformDir`, `getWhisperBinary`, `getFfmpegBinary`, `makeEnvWithLibPath`)
 - `lib/capabilities.js`: GPU backend detection, DTW support probing, Python/pyannote availability (consolidated from former global state)
-- `lib/transcription-runner.js`: FFmpeg -> whisper -> diarize pipeline (extracted from the `transcribe` IPC handler; all dependencies injected via context for testability)
+- `lib/transcription-runner.js`: FFmpeg -> whisper -> diarize pipeline (factory `createTranscriptionRunner` with dependency injection; composes `lib/whisper-runner.js` and `lib/models.js`)
+- `lib/whisper-runner.js`: whisper-cli arg construction, backend resolution, GPU/DTW fallback retry policy (factory `createWhisperRunner`)
+- `lib/_subprocess.js`: shared subprocess spawn helper used by both pipeline modules
+- `lib/models.js`: canonical model metadata; 13 entries with filenames, labels, sizes, DTW presets, and per-model flags
 - Transcription flow: ffmpeg converts to 16kHz mono WAV, then whisper-cli transcribes with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw <preset>` (pyannote diarization, for word-level speaker alignment via `lib/diarize-merge.js`)
-- `MODELS` array in `main.js` defines available models; `download-model` IPC streams from Hugging Face
+- `lib/models.js` defines the canonical model list; `download-model` IPC streams from Hugging Face
 - NSIS installer built via electron-builder (cross-compiles on Linux or runs natively on Windows in CI); produces NSIS `.exe` installer
 - GPU acceleration via Vulkan backend; CPU and Vulkan binaries in separate subdirs under `bin/{platform}/`
 - Runtime GPU detection: spawned by `lib/capabilities.js` at startup, falls back to CPU if unavailable
