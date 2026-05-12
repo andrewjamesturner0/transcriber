@@ -7,7 +7,6 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
-const https = require('https');
 const { autoUpdater } = require('electron-updater');
 const paths = require('./lib/paths');
 const Capabilities = require('./lib/capabilities');
@@ -174,48 +173,10 @@ ipcMain.handle('get-models', async () => {
 });
 
 ipcMain.handle('download-model', async (event, modelId) => {
-  const model = models.getModel(modelId);
-
-  const dest = models.getModelPath(modelId);
-  if (fs.existsSync(dest)) return true;
-
-  fs.mkdirSync(path.dirname(dest), { recursive: true });
-  const url = models.getDownloadUrl(modelId);
-  const tmpDest = dest + '.download';
-
-  await new Promise((resolve, reject) => {
-    const download = (downloadUrl) => {
-      https.get(downloadUrl, (res) => {
-        if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-          return download(res.headers.location);
-        }
-        if (res.statusCode !== 200) {
-          return reject(new Error(`Download failed: HTTP ${res.statusCode}`));
-        }
-        const total = parseInt(res.headers['content-length'], 10) || 0;
-        let received = 0;
-        const file = fs.createWriteStream(tmpDest);
-        res.on('data', (chunk) => {
-          received += chunk.length;
-          if (total > 0) {
-            event.sender.send('download-progress', {
-              modelId,
-              percent: Math.round((received / total) * 100),
-              received,
-              total,
-            });
-          }
-        });
-        res.pipe(file);
-        file.on('finish', () => { file.close(resolve); });
-        file.on('error', (err) => { fs.unlinkSync(tmpDest); reject(err); });
-      }).on('error', reject);
-    };
-    download(url);
+  models.getModel(modelId); // validates id; throws on unknown
+  return models.downloadModel(modelId, models.getModelPath(modelId), (data) => {
+    event.sender.send('download-progress', data);
   });
-
-  fs.renameSync(tmpDest, dest);
-  return true;
 });
 
 ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
