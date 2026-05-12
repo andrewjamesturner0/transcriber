@@ -160,6 +160,7 @@ The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Win
 
 ```
 main.js              Electron main process; IPC handlers, window creation, settings
+cli.js               Command-line entry point; same pipeline as the GUI, no Electron
 preload.js           Context bridge between main and renderer
 deps.json            Single source of truth for dependency versions and URLs
 renderer/
@@ -190,6 +191,7 @@ scripts/
   test-transcription-runner.js  Unit tests for the transcription pipeline (FFmpeg, whisper, fallbacks)
   test-whisper-runner.js        Unit tests for whisper arg construction and retry policy
   test-models.js                Unit tests for model metadata module
+  test-cli.js                   Subprocess tests for cli.js (arg parsing, exit codes, output streams)
   test-queue.js                 Unit tests for the queue state model (enqueue, processAll, cancel)
   test-renderer-smoke.js        Smoke test: loads renderer scripts in a browser-like vm context
   test-packaging.js             Static check: require() consistency vs electron-builder.yml

@@ -26,6 +26,7 @@ npm start                            # Launch app in dev mode (Linux only, needs
 - **deps.json** is the single source of truth for dependency versions (whisper.cpp, ffmpeg URLs, Vulkan SDK, Node). Build scripts and CI both read from it.
 - Platform binaries in `bin/{win,linux,mac}/{cpu,vulkan}/`, models in `models/`; all gitignored, created by build scripts
 - `main.js`: main process; IPC handlers and transcription orchestration
+- `cli.js`: command-line entry point (`node cli.js <subcommand>`), runs the same pipeline as the GUI without launching Electron; see [docs/cli.md](docs/cli.md)
 - `lib/paths.js`: shared binary-path resolution (`getResourcePath`, `getPlatformDir`, `getWhisperBinary`, `getFfmpegBinary`, `makeEnvWithLibPath`)
 - `lib/capabilities.js`: GPU backend detection, DTW support probing, Python/pyannote availability (consolidated from former global state)
 - `lib/transcription-runner.js`: FFmpeg -> whisper -> diarize pipeline (factory `createTranscriptionRunner` with dependency injection; composes `lib/whisper-runner.js` and `lib/models.js`)

@@ -116,6 +116,16 @@ For a description suitable for ethics applications and data management plans, se
 
 `.en` models are English-optimised and faster when multilingual support is not needed. Q5 models use 5-bit quantization to reduce file size, with some quality trade-off.
 
+## CLI
+
+Transcriber also has a command-line interface that runs the same pipeline without launching the GUI. It is useful on headless servers and for batch or agent workflows. The entry point is `node cli.js`; subcommands cover transcription, model download, model listing, and GPU detection. Output goes to stdout, progress goes to stderr, exit codes are 0 for success and non-zero for failure (130 on Ctrl+C).
+
+```bash
+node cli.js transcribe interview.mp3 --model small.en > interview.txt
+```
+
+See [docs/cli.md](docs/cli.md) for the full reference.
+
 ## Contributing
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup instructions, coding style, and the PR process.

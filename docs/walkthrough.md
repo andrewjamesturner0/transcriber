@@ -19,7 +19,7 @@ Three constraints define the architecture:
 ```
   media file on disk
       |
-      | [ main.js: transcribe IPC handler ]
+      | [ main.js: transcribe IPC handler  -- OR --  cli.js: transcribe subcommand ]
       v
   ffmpeg (child process) ──> temp 16kHz mono WAV
       |
@@ -34,12 +34,12 @@ Three constraints define the architecture:
       |                   diarize-merge.js ──> speaker-labeled transcript
       |
       v
-  renderer: textarea or rich HTML display
+  renderer: textarea or rich HTML display  -- OR --  stdout (CLI)
 ```
 
-The main process (`main.js`) owns the IPC handlers and transcription orchestration. The renderer (`renderer/renderer.js` + `renderer/queue.js`) owns the UI and queue state. The two communicate through Electron's context bridge (`preload.js`), which exposes a flat `window.api` object. The renderer never touches Node APIs directly; the main process never touches the DOM.
+The main process (`main.js`) owns the IPC handlers and transcription orchestration for the GUI. A parallel entry point (`cli.js`) runs the same pipeline from the command line, without launching Electron, for use on headless servers and in batch or agent workflows; see [docs/cli.md](cli.md) for the reference. The renderer (`renderer/renderer.js` + `renderer/queue.js`) owns the UI and queue state. The two communicate through Electron's context bridge (`preload.js`), which exposes a flat `window.api` object. The renderer never touches Node APIs directly; the main process never touches the DOM.
 
-The `lib/` directory holds shared modules used by the main process and the test scripts: path resolution (`paths.js`), capability detection (`capabilities.js`), model metadata (`models.js`), the transcription pipeline (`transcription-runner.js`) and the whisper invocation/retry sub-module it composes (`whisper-runner.js`), a shared subprocess helper (`_subprocess.js`), and the diarization merge algorithm (`diarize-merge.js`).
+The `lib/` directory holds shared modules used by the main process, the CLI, and the test scripts: path resolution (`paths.js`), capability detection (`capabilities.js`), model metadata and download (`models.js`), the transcription pipeline (`transcription-runner.js`) and the whisper invocation/retry sub-module it composes (`whisper-runner.js`), a shared subprocess helper (`_subprocess.js`), and the diarization merge algorithm (`diarize-merge.js`). The CLI is structurally constrained to never `require('electron')` and never read or write the GUI's `settings.json`; configuration comes entirely from flags and environment variables.
 
 ## 3. The transcription pipeline
 
@@ -47,7 +47,7 @@ The transcription pipeline is the core of the application. It lives in `lib/tran
 
 ### 3.1 lib/transcription-runner.js -- the orchestrator
 
-This module exports a factory: `createTranscriptionRunner({ capabilities, paths, spawn, log, tmpDir? })` returns `{ runTranscription }`. Each call takes `{ filePath, modelId, options, signal, onProgress, onDiarizeProgress }` and returns the transcript text. `main.js` builds the runner once at startup and reuses it across every `transcribe` IPC invocation.
+This module exports a factory: `createTranscriptionRunner({ capabilities, paths, spawn, log, tmpDir? })` returns `{ runTranscription }`. Each call takes `{ filePath, modelId, options, signal, onProgress, onDiarizeProgress }` and resolves to `{ text, json? }` -- `text` is the formatted transcript (with `[Speaker N]` labels when diarisation is on), and `json` is the full whisper JSON output, included only when `options.outputJson` is true. `main.js` builds the runner once at startup, destructures `text` from the result, and returns that to the renderer (which expects a plain string); the CLI uses the `json` field for `--format json`.
 
 The dependency-injection pattern has two purposes. First, it makes the pipeline testable: `scripts/test-transcription-runner.js` passes mock spawn functions, fake binary paths, and fake capability callbacks to exercise orchestration and cancellation without touching the filesystem. Second, it isolates the pipeline from the Electron main process -- the pipeline does not `require('electron')` and does not know about `ipcMain`. It receives `onProgress(msg)` and `onDiarizeProgress(data)` callbacks; `main.js` wires those to `event.sender.send(...)`.
 
@@ -210,6 +210,7 @@ The single build script handles dependency fetching and packaging. It reads `dep
 | `scripts/test-transcription-runner.js` | Pipeline orchestration: FFmpeg arg construction, whisper-is-called wiring, cancellation via AbortSignal; ~10 tests using mock spawn | After any change to `lib/transcription-runner.js` |
 | `scripts/test-whisper-runner.js` | Whisper arg construction, GPU->CPU fallback, DTW->no-DTW fallback, OOM vs non-OOM classification, cancellation during retry; ~12 tests | After any change to `lib/whisper-runner.js` |
 | `scripts/test-models.js` | `getModel` lookup and unknown-id error, `getModelPath`, `getDownloadUrl` default vs `hfRepo` override, `listModels` shape; ~9 tests | After any change to `lib/models.js` |
+| `scripts/test-cli.js` | CLI argument parsing for every subcommand (`transcribe`, `download-model`, `list-models`, `gpu-status`), help output, error messages, exit codes, stdout/stderr separation; ~26 subprocess-based tests | After any change to `cli.js` |
 | `scripts/test-queue.js` | Queue enqueue/remove/clear/getActiveItem, serial processing, error isolation (one failure doesn't stop the batch), cancellation; ~15 tests | After any change to `renderer/queue.js` |
 | `scripts/test-transcript-format.js` | Pyannote detection regex, tinydiarize split-and-join formatting, rich-transcript parsing with speaker-number clamping, speaker counting; ~21 tests | After any change to `renderer/transcript-format.js` |
 | `scripts/test-time-estimates.js` | Model-id to time-estimate bucket mapping including the `large-turbo` special case; ~16 tests | After any change to `renderer/time-estimates.js` |
