@@ -187,7 +187,7 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
   transcriptionAbort = abort;
 
   try {
-    const result = await transcriptionRunner.runTranscription({
+    const { text } = await transcriptionRunner.runTranscription({
       filePath,
       modelId,
       options,
@@ -195,7 +195,7 @@ ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
       onProgress: (msg) => event.sender.send('transcribe-status', msg),
       onDiarizeProgress: (data) => event.sender.send('diarize-status', data),
     });
-    return result;
+    return text;
   } finally {
     transcriptionAbort = null;
   }

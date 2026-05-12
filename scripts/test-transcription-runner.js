@@ -282,6 +282,77 @@ test('anti-corruption adds -mc 0 and sampling flags', async () => {
   assert(whisperCall.args.includes('1.8'), 'should set entropy threshold 1.8');
 });
 
+test('outputJson without diarization uses --output-json-full and not --no-timestamps', async () => {
+  const { spawn, calls } = captureSpawn();
+  const runner = makeRunner({ spawn });
+
+  try {
+    await runner.runTranscription({
+      filePath: '/fake/test.wav',
+      modelId: 'tiny.en',
+      options: { outputJson: true },
+      onProgress: () => {},
+    });
+  } catch (_) {}
+
+  const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
+  assert(whisperCall, 'whisper should be called');
+  assert(whisperCall.args.includes('--output-json-full'), 'should have --output-json-full when outputJson is true');
+  assert(whisperCall.args.includes('-of'), 'should have -of for output prefix');
+  assert(!whisperCall.args.includes('--no-timestamps'), 'should not have --no-timestamps when JSON mode is on');
+  assert(!whisperCall.args.includes('--dtw'), 'should not have --dtw without diarization');
+});
+
+test('runner returns { text } shape by default', async () => {
+  const { spawn } = captureSpawn();
+  const runner = makeRunner({ spawn });
+
+  let result;
+  try {
+    result = await runner.runTranscription({
+      filePath: '/fake/test.wav',
+      modelId: 'tiny.en',
+      onProgress: () => {},
+    });
+  } catch (_) {}
+
+  assert(result && typeof result === 'object', 'result should be an object');
+  assert(typeof result.text === 'string', 'result.text should be a string');
+  assert(!('json' in result), 'result should not include json without outputJson');
+});
+
+test('runner reads whisper JSON when outputJson is true', async () => {
+  // Spawn that writes a JSON file at the path passed via `-of`
+  const writingSpawn = function (cmd, args, opts) {
+    if (cmd.includes('whisper-cli')) {
+      const ofIdx = args.indexOf('-of');
+      if (ofIdx >= 0) {
+        fs.writeFileSync(args[ofIdx + 1] + '.json', JSON.stringify({ transcription: [{ text: 'hello' }] }));
+      }
+    }
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    process.nextTick(() => {
+      proc.stdout.emit('data', Buffer.from('hello\n'));
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+  const runner = makeRunner({ spawn: writingSpawn });
+
+  const result = await runner.runTranscription({
+    filePath: '/fake/test.wav',
+    modelId: 'tiny.en',
+    options: { outputJson: true },
+    onProgress: () => {},
+  });
+
+  assert(result.text === 'hello', `expected text 'hello', got '${result.text}'`);
+  assert(result.json && Array.isArray(result.json.transcription), 'result.json should be parsed whisper JSON');
+  assert(result.json.transcription[0].text === 'hello', 'json content preserved');
+});
+
 // Retry/fallback tests moved to scripts/test-whisper-runner.js
 
 // --- Cancellation tests ---
