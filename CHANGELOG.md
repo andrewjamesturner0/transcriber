@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+
+- Support for Olympus/Philips `.dss` (Digital Speech Standard) input files (Standard Play only; DSS Pro/DSS2 not supported)
+
 ## [0.1.0] - 2026-02-27
 
 Initial public release.

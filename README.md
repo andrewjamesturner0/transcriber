@@ -16,7 +16,7 @@ Transcriber is a desktop application that transcribes audio and video files usin
 - Speaker diarisation, with built-in speaker change detection and optional advanced speaker identification via [pyannote.audio](#speaker-diarization-advanced)
 - 13 Whisper models, from Tiny (fastest) to Large-v3 (most accurate), including turbo and quantized variants. English-optimised models available.
 - GPU acceleration via Vulkan, with automatic detection and CPU fallback
-- Audio and video input: 8 audio formats (MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM) and 7 video formats (MP4, MOV, AVI, MKV, WMV, FLV, 3GP)
+- Audio and video input: 9 audio formats (MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM, DSS) and 7 video formats (MP4, MOV, AVI, MKV, WMV, FLV, 3GP). DSS is the Olympus/Philips dictation format (Standard Play only; DSS Pro/DSS2 not supported).
 - Batch processing. Queue multiple files and transcribe them sequentially.
 - Windows and Linux
 

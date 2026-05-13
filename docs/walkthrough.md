@@ -53,7 +53,7 @@ The dependency-injection pattern has two purposes. First, it makes the pipeline 
 
 The pipeline runs three sequential steps:
 
-1. **FFmpeg conversion.** The input file (audio or video) is converted to 16 kHz mono WAV (`pcm_s16le`) in a temp directory. A 15-format extension whitelist (8 audio, 7 video) controls which files pass the UI, but the pipeline itself trusts the extension to detect video vs. audio for the "Extracting audio..." / "Converting audio..." status message.
+1. **FFmpeg conversion.** The input file (audio or video) is converted to 16 kHz mono WAV (`pcm_s16le`) in a temp directory. A 16-format extension whitelist (9 audio, 7 video) controls which files pass the UI, but the pipeline itself trusts the extension to detect video vs. audio for the "Extracting audio..." / "Converting audio..." status message.
 
 2. **Whisper transcription.** The whisper-cli binary is spawned with arguments that depend on the model type and diarization mode:
 
@@ -152,7 +152,7 @@ The module runs in both Node (test scripts) and the browser (renderer) via the `
 
 Wires the DOM elements to user actions and IPC events. Key behaviours:
 
-- **File selection** works through both a click-to-browse button (native dialog via `dialog.showOpenDialog`) and drag-and-drop. Dropped files are filtered against a whitelist of 15 extensions. Files that don't match are rejected with a status message.
+- **File selection** works through both a click-to-browse button (native dialog via `dialog.showOpenDialog`) and drag-and-drop. Dropped files are filtered against a whitelist of 16 extensions. Files that don't match are rejected with a status message.
 - **Model download** streams progress from the main process via `download-progress` events. The download button appears only for undownloaded models, determined by the `downloaded` boolean from `get-models`.
 - **Transcription** is kicked off by the Transcribe button, which calls `queue.processAll` with a callback that invokes `window.api.transcribe`. The UI shows a progress spinner, an elapsed timer, and a cancel button. After processing, the queue is cleared (completed items are discarded from the UI -- transcripts are shown in the output area, not retained in the queue).
 - **Rich display for diarized output:** when pyannote diarization succeeds (detected by `transcriptFormat.isPyannoteDiarized`, a `[N speakers detected]` header check), the renderer replaces the plain textarea with a `div.transcript-rich` containing speaker-colored spans. The block parsing is done by `transcriptFormat.parseRichTranscript`, which clamps speaker numbers above 8 to the highest CSS class. Eight CSS classes (`speaker-1` through `speaker-8`) provide distinct colors. The textarea is kept in sync (hidden) as the plain-text copy/save source.
