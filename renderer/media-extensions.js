@@ -9,7 +9,7 @@
  */
 
 const SUPPORTED_EXTENSIONS = new Set([
-  'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac',
+  'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac', 'dss',
   'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp',
 ]);
 

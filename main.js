@@ -22,7 +22,7 @@ paths.initPaths({
 
 // --- Constants ---
 const MEDIA_EXTENSIONS = [
-  'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac',
+  'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac', 'dss',
   'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp',
 ];
 const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB

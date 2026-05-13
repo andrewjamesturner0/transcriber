@@ -214,5 +214,19 @@ test('queue.js + renderer.js together parse without errors', () => {
   assert(true, 'combined scripts loaded without error');
 });
 
+test('media-extensions.js accepts .dss files', () => {
+  const ctx = makeBrowserContext();
+  const globals = makeBrowserGlobals();
+  const sandbox = { window: ctx.window, document: ctx.document, console, ...globals };
+
+  vm.createContext(sandbox);
+
+  const mediaSrc = fs.readFileSync(path.join(RENDERER_DIR, 'media-extensions.js'), 'utf-8');
+  vm.runInContext(mediaSrc, sandbox, { filename: 'media-extensions.js' });
+
+  assert(sandbox.window.mediaExtensions.isValidMediaFile('recording.dss') === true, '.dss should be valid');
+  assert(sandbox.window.mediaExtensions.isValidMediaFile('recording.ds2') === false, '.ds2 should not be valid');
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
