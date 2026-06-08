@@ -1,6 +1,6 @@
 {
   "whisper": {
-    "version": "v1.8.4",
+    "version": "v1.8.6",
     "repo": "ggml-org/whisper.cpp",
     "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/download/${version}",
     "winCpuAsset": "whisper-bin-x64.zip"
@@ -24,7 +24,7 @@
     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
   },
   "electron": {
-    "version": "42.0.1"
+    "version": "42.3.3"
   },
   "vulkanSdk": "1.3.290.0",
   "node": "22"
