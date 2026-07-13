@@ -1,6 +1,6 @@
 {
   "whisper": {
-    "version": "v1.8.4",
+    "version": "v1.9.1",
     "repo": "ggml-org/whisper.cpp",
     "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/download/${version}",
     "winCpuAsset": "whisper-bin-x64.zip"
@@ -8,7 +8,7 @@
   "ffmpeg": {
     "win": {
       "url": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
-      "sha256": "6f58ce889f59c311410f7d2b18895b33c03456463486f3b1ebc93d97a0f54541"
+      "sha256": "db580001caa24ac104c8cb856cd113a87b0a443f7bdf47d8c12b1d740584a2ec"
     },
     "linux-amd64": {
       "url": "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz",
@@ -24,7 +24,7 @@
     "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
   },
   "electron": {
-    "version": "42.0.1"
+    "version": "43.1.0"
   },
   "vulkanSdk": "1.3.290.0",
   "node": "22"
