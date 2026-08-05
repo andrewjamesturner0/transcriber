@@ -1,0 +1,49 @@
+{
+  "models": [
+    { "id": "tiny.en", "canTranslate": false, "languageMode": "fixed", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "tiny", "canTranslate": true, "languageMode": "select-or-auto", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "base.en", "canTranslate": false, "languageMode": "fixed", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "base", "canTranslate": true, "languageMode": "select-or-auto", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "small.en", "canTranslate": false, "languageMode": "fixed", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "small", "canTranslate": true, "languageMode": "select-or-auto", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "medium.en", "canTranslate": false, "languageMode": "fixed", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "medium", "canTranslate": true, "languageMode": "select-or-auto", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "large-v3", "canTranslate": true, "languageMode": "select-or-auto", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "large-v3-turbo", "canTranslate": true, "languageMode": "select-or-auto", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "large-v3-turbo-q5_0", "canTranslate": true, "languageMode": "select-or-auto", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "large-v3-q5_0", "canTranslate": true, "languageMode": "select-or-auto", "speakerLabels": "pyannote", "expectedSpeakers": true, "reduceRepeatedText": true, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "parakeet-tdt-ctc-110m", "canTranslate": false, "languageMode": "fixed", "speakerLabels": "unavailable", "expectedSpeakers": false, "reduceRepeatedText": false, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "moonshine-tiny", "canTranslate": false, "languageMode": "fixed", "speakerLabels": "unavailable", "expectedSpeakers": false, "reduceRepeatedText": false, "gated": false, "audioLimitSeconds": null, "resultLevel": "text" },
+    { "id": "nemotron-3.5-0.6b", "canTranslate": false, "languageMode": "select-or-auto", "speakerLabels": "unavailable", "expectedSpeakers": false, "reduceRepeatedText": false, "gated": false, "audioLimitSeconds": null, "resultLevel": "word" },
+    { "id": "qwen3-asr-0.6b", "canTranslate": false, "languageMode": "auto-only", "speakerLabels": "unavailable", "expectedSpeakers": false, "reduceRepeatedText": false, "gated": false, "audioLimitSeconds": null, "resultLevel": "text" },
+    { "id": "canary-180m-flash", "canTranslate": true, "languageMode": "required", "speakerLabels": "unavailable", "expectedSpeakers": false, "reduceRepeatedText": false, "gated": false, "audioLimitSeconds": null, "resultLevel": "text" },
+    { "id": "medasr", "canTranslate": false, "languageMode": "fixed", "speakerLabels": "unavailable", "expectedSpeakers": false, "reduceRepeatedText": false, "gated": true, "audioLimitSeconds": 400, "resultLevel": "word" },
+    { "id": "moss-transcribe-diarize", "canTranslate": false, "languageMode": "select-or-auto", "speakerLabels": "built-in", "expectedSpeakers": false, "reduceRepeatedText": false, "gated": false, "audioLimitSeconds": 7200, "resultLevel": "segment-speaker" }
+  ],
+  "results": [
+    {
+      "id": "text-only",
+      "input": { "text": "hello", "model": "moonshine-tiny", "engine": "transcribe.cpp", "backend": "cpu" },
+      "present": ["text", "model", "engine", "backend"],
+      "absent": ["segments", "words", "tokens", "timings", "truncated"]
+    },
+    {
+      "id": "segment-timed",
+      "input": { "text": "hello", "model": "example-segments", "engine": "transcribe.cpp", "backend": "cpu", "segments": [{ "text": "hello", "start": 0, "end": 1.2 }] },
+      "present": ["segments"],
+      "absent": ["words", "tokens"]
+    },
+    {
+      "id": "word-timed",
+      "input": { "text": "hello", "model": "parakeet-tdt-ctc-110m", "engine": "transcribe.cpp", "backend": "vulkan", "detectedLanguage": "en", "words": [{ "text": "hello", "start": 0, "end": 0.5 }] },
+      "present": ["detectedLanguage", "words"],
+      "absent": ["segments", "tokens"]
+    },
+    {
+      "id": "built-in-speakers",
+      "input": { "text": "[0.1][S01]Hello[0.8]", "model": "moss-transcribe-diarize", "engine": "transcribe.cpp", "backend": "cpu", "segments": [{ "text": "Hello", "speaker": "S01", "start": 0.1, "end": 0.8 }] },
+      "present": ["segments"],
+      "absent": ["words", "tokens"]
+    }
+  ]
+}

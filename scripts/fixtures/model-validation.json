@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "sources": [
+    {
+      "id": "librispeech",
+      "name": "LibriSpeech ASR corpus",
+      "url": "https://www.openslr.org/12",
+      "licence": "CC BY 4.0"
+    },
+    {
+      "id": "google-fleurs",
+      "name": "Google FLEURS",
+      "url": "https://huggingface.co/datasets/google/fleurs",
+      "licence": "CC BY 4.0"
+    }
+  ],
+  "durationRoles": ["short", "10-minute", "60-minute", "120-minute"],
+  "languages": ["en-GB", "en-US", "de", "es", "fr", "cmn-Hans"],
+  "taskChoices": [
+    {
+      "task": "general-purpose",
+      "modelId": "small",
+      "family": "whisper",
+      "status": "recommended",
+      "evidenceIds": ["whisper-small-release-baseline"]
+    },
+    {
+      "task": "fast-english",
+      "modelId": "parakeet-tdt-ctc-110m",
+      "family": "parakeet",
+      "status": "candidate",
+      "evidenceIds": ["parakeet-english-omission", "parakeet-word-timing", "parakeet-long-audio", "parakeet-package-matrix"]
+    },
+    {
+      "task": "small-download",
+      "modelId": "moonshine-tiny",
+      "family": "moonshine",
+      "status": "candidate",
+      "evidenceIds": ["moonshine-english-omission", "moonshine-long-audio", "moonshine-package-matrix"]
+    },
+    {
+      "task": "multilingual",
+      "modelId": "nemotron-3.5-0.6b",
+      "family": "nemotron",
+      "status": "candidate",
+      "evidenceIds": ["nemotron-language-matrix", "nemotron-word-timing", "nemotron-long-audio", "nemotron-memory", "nemotron-licence", "nemotron-package-matrix"]
+    },
+    {
+      "task": "translation",
+      "modelId": "large-v3",
+      "family": "whisper",
+      "status": "recommended",
+      "evidenceIds": ["whisper-large-v3-translation-baseline"]
+    },
+    {
+      "task": "accuracy-first",
+      "modelId": "large-v3",
+      "family": "whisper",
+      "status": "recommended",
+      "evidenceIds": ["whisper-large-v3-release-baseline"]
+    }
+  ],
+  "expandedModels": [
+    { "modelId": "qwen3-asr-0.6b", "family": "qwen3-asr", "status": "experimental", "evidenceIds": ["qwen-language-auto", "qwen-long-audio", "qwen-package-matrix"] },
+    { "modelId": "canary-180m-flash", "family": "canary", "status": "experimental", "evidenceIds": ["canary-language-translation", "canary-long-audio", "canary-package-matrix"] },
+    { "modelId": "medasr", "family": "medasr", "status": "experimental", "evidenceIds": ["medasr-medical-english", "medasr-399-second", "medasr-401-second-rejection", "medasr-licence"] },
+    { "modelId": "moss-transcribe-diarize", "family": "moss", "status": "experimental", "evidenceIds": ["moss-speaker-labels", "moss-memory-growth", "moss-long-audio", "moss-package-matrix"] }
+  ],
+  "evidenceResults": [
+    { "id": "whisper-small-release-baseline", "passed": true },
+    { "id": "whisper-large-v3-translation-baseline", "passed": true },
+    { "id": "whisper-large-v3-release-baseline", "passed": true }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "representativeModels": [
+    "small",
+    "moonshine-tiny",
+    "qwen3-asr-0.6b",
+    "canary-180m-flash",
+    "medasr",
+    "moss-transcribe-diarize"
+  ],
+  "medasrDurations": {
+    "accepted": 400,
+    "rejected": 401,
+    "limitLabel": "6 minutes 40 seconds",
+    "rejectedLabel": "6 minutes 41 seconds"
+  }
+}
