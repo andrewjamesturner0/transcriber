@@ -11,3 +11,6 @@ research.md
 TODO.md
 Examples/
 AGENT_NOTES.md
+__pycache__/
+.agent-docs/*
+!.agent-docs/LESSONS.md
