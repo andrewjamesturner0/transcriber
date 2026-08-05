@@ -18,6 +18,7 @@ const paths = require('../lib/paths');
 paths.initPaths({ isPackaged: false, resourcesPath: '/fake/app' });
 
 const models = require('../lib/models');
+const catalogue = require('../lib/model-catalogue');
 
 // --- Helpers ---
 
@@ -81,23 +82,25 @@ test('getModelPath returns a path ending in the model fileName', () => {
   assert(p.includes('models'), 'path should include models directory');
 });
 
-test('getDownloadUrl uses hfRepo when present', () => {
-  const url = models.getDownloadUrl('small.en-tdrz');
-  assert(url.includes('akashmjn/tinydiarize-whisper.cpp'), `expected custom repo, got ${url}`);
-  assert(url.includes('ggml-small.en-tdrz.bin'), 'url should include fileName');
+test('getDownloadUrl uses the pinned repository and revision', () => {
+  const url = models.getDownloadUrl('moonshine-tiny');
+  assert(url.includes('handy-computer/moonshine-tiny-gguf'), `expected model repo, got ${url}`);
+  assert(url.includes('f5c11906eba3f44cf305eed30feb9cbfb0b4b9d0'), 'url should include immutable revision');
+  assert(url.includes('moonshine-tiny-Q8_0.gguf'), 'url should include fileName');
   assert(url.startsWith('https://huggingface.co/'), 'url should be HTTPS');
 });
 
-test('getDownloadUrl uses default repo when hfRepo absent', () => {
+test('getDownloadUrl pins retained Whisper downloads', () => {
   const url = models.getDownloadUrl('tiny.en');
   assert(url.includes('ggerganov/whisper.cpp'), `expected default repo, got ${url}`);
+  assert(url.includes('5359861c739e955e79d9a303bcbc70fb988958b1'), 'url should include immutable revision');
   assert(url.includes('ggml-tiny.en.bin'), 'url should include fileName');
 });
 
 test('listModels returns array with downloaded flags', () => {
   const all = models.listModels();
   assert(Array.isArray(all), 'should return an array');
-  assert(all.length === 13, `expected 13 models, got ${all.length}`);
+  assert(all.length === 19, `expected 19 models, got ${all.length}`);
 
   for (const m of all) {
     assert(typeof m.id === 'string', 'each model should have id');
@@ -105,13 +108,20 @@ test('listModels returns array with downloaded flags', () => {
     assert(typeof m.label === 'string', 'each model should have label');
     assert(typeof m.size === 'string', 'each model should have size');
     assert(typeof m.downloaded === 'boolean', 'each model should have downloaded boolean');
+    assert(/^[a-f0-9]{40}$/.test(m.revision), `${m.id} should have an immutable revision`);
+    assert(/^[a-f0-9]{64}$/.test(m.sha256), `${m.id} should have a SHA-256`);
+    assert(typeof m.engine === 'string', `${m.id} should have an engine`);
+    assert(typeof m.licence === 'string', `${m.id} should have a licence`);
+    assert(Array.isArray(m.backends), `${m.id} should have backends`);
   }
 });
 
-test('tdrz model has tdrz flag and no dtwPreset', () => {
-  const m = models.getModel('small.en-tdrz');
-  assert(m.tdrz === true, 'tdrz model should have tdrz: true');
-  assert(!('dtwPreset' in m), 'tdrz model should not have dtwPreset');
+test('TinyDiarize is absent and the seven new-family models are present', () => {
+  const ids = models.listModels().map((m) => m.id);
+  assert(!ids.includes('small.en-tdrz'), 'TinyDiarize must be absent');
+  for (const id of ['parakeet-tdt-ctc-110m', 'moonshine-tiny', 'nemotron-3.5-0.6b', 'qwen3-asr-0.6b', 'canary-180m-flash', 'medasr', 'moss-transcribe-diarize']) {
+    assert(ids.includes(id), `expected ${id}`);
+  }
 });
 
 test('non-tdrz model has dtwPreset', () => {
@@ -126,6 +136,38 @@ test('non-tdrz model has dtwPreset', () => {
 
   const largeQ5 = models.getModel('large-v3-q5_0');
   assert(largeQ5.dtwPreset === 'large.v3', `expected 'large.v3', got '${largeQ5.dtwPreset}'`);
+});
+
+test('new-family recommendation state matches the validation gate', () => {
+  for (const model of models.listModels().filter((entry) => entry.family !== 'whisper')) {
+    assert(['candidate', 'experimental'].includes(model.status), `${model.id} must not be recommended before evidence passes`);
+  }
+});
+
+test('presentation models omit download checksums and repository internals', () => {
+  const model = models.listPresentationModels().find((entry) => entry.id === 'medasr');
+  assert(model.sourceRevision, 'presentation record should retain a traceable source revision');
+  assert(!('sha256' in model), 'presentation record should omit checksum');
+  assert(!('repository' in model), 'presentation record should omit repository internals');
+});
+
+test('public catalogue records and nested capability data are deeply frozen', () => {
+  const direct = catalogue.getCatalogueModel('canary-180m-flash');
+  const listed = catalogue.listCatalogueModels().find((entry) => entry.id === direct.id);
+  const presented = catalogue.listPresentationModels().find((entry) => entry.id === direct.id);
+  const converted = catalogue.toPresentationModel(direct);
+
+  for (const record of [direct, listed, presented, converted]) {
+    assert(Object.isFrozen(record), 'catalogue record should be frozen');
+    assert(Object.isFrozen(record.languages), 'languages should be frozen');
+    assert(Object.isFrozen(record.backends), 'backends should be frozen');
+    assert(Object.isFrozen(record.knownIssues), 'known issues should be frozen');
+    assert(Object.isFrozen(record.translationPairs), 'translation pairs should be frozen');
+    assert(Object.isFrozen(record.translationPairs[0]), 'translation pair records should be frozen');
+  }
+  assert(Object.isFrozen(catalogue.MODELS), 'canonical catalogue array should be frozen');
+  assert(Object.isFrozen(catalogue.listCatalogueModels()), 'catalogue list should be frozen');
+  assert(Object.isFrozen(catalogue.listPresentationModels()), 'presentation list should be frozen');
 });
 
 runAll();
