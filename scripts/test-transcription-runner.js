@@ -24,7 +24,7 @@ fs.mkdirSync(FAKE_MODELS);
 // The runner only checks fs.existsSync, not file contents.
 const MODEL_IDS = [
   'tiny.en', 'tiny', 'base.en', 'base',
-  'small.en', 'small', 'small.en-tdrz',
+  'small.en', 'small',
   'medium.en', 'medium',
   'large-v3', 'large-v3-turbo', 'large-v3-turbo-q5_0', 'large-v3-q5_0',
 ];
@@ -35,13 +35,13 @@ const MODEL_FILENAMES = {
   'base': 'ggml-base.bin',
   'small.en': 'ggml-small.en.bin',
   'small': 'ggml-small.bin',
-  'small.en-tdrz': 'ggml-small.en-tdrz.bin',
   'medium.en': 'ggml-medium.en.bin',
   'medium': 'ggml-medium.bin',
   'large-v3': 'ggml-large-v3.bin',
   'large-v3-turbo': 'ggml-large-v3-turbo.bin',
   'large-v3-turbo-q5_0': 'ggml-large-v3-turbo-q5_0.bin',
   'large-v3-q5_0': 'ggml-large-v3-q5_0.bin',
+  'medasr': 'medasr-Q8_0.gguf',
 };
 for (const [id, fn] of Object.entries(MODEL_FILENAMES)) {
   fs.writeFileSync(path.join(FAKE_MODELS, fn), '');
@@ -53,12 +53,18 @@ fs.mkdirSync(path.join(FAKE_APP, 'bin', 'linux', 'vulkan'), { recursive: true })
 fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'cpu', 'whisper-cli'), '');
 fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'vulkan', 'whisper-cli'), '');
 fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'ffmpeg'), '');
+fs.mkdirSync(path.join(FAKE_APP, 'worker'), { recursive: true });
+fs.writeFileSync(path.join(FAKE_APP, 'worker', 'transcribe-worker.mjs'), '');
 
 // Initialize lib/paths so that lib/models (required by transcription-runner) can resolve paths
 const libPaths = require('../lib/paths');
 libPaths.initPaths({ isPackaged: false, resourcesPath: FAKE_APP });
 
-const { createTranscriptionRunner } = require('../lib/transcription-runner');
+const {
+  createTranscriptionRunner,
+  createTranscriptionJobController,
+  _makeTemporaryPath,
+} = require('../lib/transcription-runner');
 
 // Cleanup on exit
 process.on('exit', () => {
@@ -144,6 +150,8 @@ function makePaths(overrides = {}) {
   return {
     getWhisperBinary: (backend) => path.join(FAKE_APP, 'bin', 'linux', backend, 'whisper-cli'),
     getFfmpegBinary: () => path.join(FAKE_APP, 'bin', 'linux', 'ffmpeg'),
+    getTranscribeWorkerPath: () => path.join(FAKE_APP, 'worker', 'transcribe-worker.mjs'),
+    getTranscribeWorkerLaunch: () => ({ command: process.execPath, args: ['/fake/worker.mjs'], env: process.env }),
     getResourcePath: (rel) => path.join(FAKE_APP, rel),
     makeEnvWithLibPath: (dir) => ({ PATH: '/usr/bin' }),
     ...overrides,
@@ -227,18 +235,6 @@ test('plain transcription uses --no-timestamps', async () => {
   assert(!whisperCall.args.includes('--output-json-full'), 'should not have --output-json-full');
 });
 
-test('tdrz model uses --tinydiarize', async () => {
-  const { spawn, calls } = captureSpawn();
-  const runner = makeRunner({ spawn });
-
-  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'small.en-tdrz', options: { diarization: true }, onProgress: () => {} }); } catch (_) {}
-
-  const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
-  assert(whisperCall, 'whisper should be called');
-  assert(whisperCall.args.includes('--tinydiarize'), 'tdrz model should use --tinydiarize');
-  assert(!whisperCall.args.includes('--output-json-full'), 'tdrz should not use --output-json-full');
-});
-
 test('diarization uses --output-json-full + --dtw', async () => {
   const { spawn, calls } = captureSpawn();
   const runner = makeRunner({ spawn });
@@ -318,6 +314,9 @@ test('runner returns { text } shape by default', async () => {
 
   assert(result && typeof result === 'object', 'result should be an object');
   assert(typeof result.text === 'string', 'result.text should be a string');
+  assert(result.result.engine === 'whisper.cpp', 'normal result should identify the engine');
+  assert(result.result.model === 'tiny.en', 'normal result should identify the model');
+  assert(result.result.backend === 'cpu', 'normal result should identify the backend');
   assert(!('json' in result), 'result should not include json without outputJson');
 });
 
@@ -407,6 +406,81 @@ test('cancellation during whisper phase kills process', async () => {
 
   assert(killed, 'process should be killed on abort');
   assert(aborted, 'should reject with Cancelled');
+});
+
+test('unsupported pyannote fails before any subprocess work', async () => {
+  const { spawn, calls } = captureSpawn();
+  const runner = makeRunner({ spawn });
+  let error;
+  try {
+    await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'moonshine-tiny', options: { diarization: true }, onProgress: () => {} });
+  } catch (caught) { error = caught; }
+  assert(error && error.code === 'SPEAKER_LABELS_UNSUPPORTED');
+  assert(calls.length === 0, 'no subprocess should start for invalid options');
+});
+
+test('MedASR rejects an over-limit converted WAV before model inference', async () => {
+  const calls = [];
+  const spawn = function (cmd, args, opts) {
+    calls.push({ cmd, args: [...args], opts });
+    if (cmd.includes('ffmpeg')) {
+      const wavPath = args[args.length - 1];
+      const durationSeconds = 401;
+      const byteRate = 16000 * 2;
+      const header = Buffer.alloc(44);
+      header.write('RIFF', 0, 'ascii');
+      header.writeUInt32LE(36 + durationSeconds * byteRate, 4);
+      header.write('WAVEfmt ', 8, 'ascii');
+      header.writeUInt32LE(16, 16);
+      header.writeUInt16LE(1, 20);
+      header.writeUInt16LE(1, 22);
+      header.writeUInt32LE(16000, 24);
+      header.writeUInt32LE(byteRate, 28);
+      header.writeUInt16LE(2, 32);
+      header.writeUInt16LE(16, 34);
+      header.write('data', 36, 'ascii');
+      header.writeUInt32LE(durationSeconds * byteRate, 40);
+      fs.writeFileSync(wavPath, header);
+    }
+    return makeSpawn({ stdout: '', stderr: '', code: 0 })(cmd, args, opts);
+  };
+  const runner = makeRunner({ spawn });
+  let error;
+  try {
+    await runner.runTranscription({ filePath: '/fake/medical.wav', modelId: 'medasr', onProgress: () => {} });
+  } catch (caught) { error = caught; }
+  assert(error && error.code === 'AUDIO_LIMIT_EXCEEDED', error && error.message);
+  assert(calls.length === 1 && calls[0].cmd.includes('ffmpeg'), 'only FFmpeg should run');
+});
+
+test('runner exposes idempotent worker shutdown', async () => {
+  const runner = makeRunner();
+  assert(typeof runner.shutdown === 'function', 'shutdown should be exposed');
+  await Promise.all([runner.shutdown(), runner.shutdown()]);
+});
+
+test('transcription job controller rejects overlap and only matching finish clears', async () => {
+  const jobs = createTranscriptionJobController();
+  const first = jobs.begin();
+  let overlapError;
+  try { jobs.begin(); } catch (caught) { overlapError = caught; }
+  assert(overlapError && overlapError.code === 'TRANSCRIPTION_BUSY', 'overlap should have stable code');
+  assert(jobs.cancel() === true, 'active job should cancel');
+  assert(first.controller.signal.aborted, 'cancel should abort the active controller');
+  first.finish();
+  const second = jobs.begin();
+  first.finish();
+  assert(jobs.hasActiveJob(), 'stale finish must not clear the newer job');
+  second.finish();
+  assert(!jobs.hasActiveJob(), 'matching finish should clear the job');
+  assert(jobs.cancel() === false, 'cancel without a job should report false');
+});
+
+test('temporary paths are collision safe', () => {
+  const first = _makeTemporaryPath('/tmp', 'whisper_input', '.wav');
+  const second = _makeTemporaryPath('/tmp', 'whisper_input', '.wav');
+  assert(first !== second, 'separate jobs must use different paths');
+  assert(first.endsWith('.wav') && second.endsWith('.wav'), 'extension should be preserved');
 });
 
 // ---------------------------------------------------------------------------

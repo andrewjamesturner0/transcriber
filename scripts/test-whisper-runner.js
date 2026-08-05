@@ -194,7 +194,7 @@ test('diarization + DTW unsupported skips --dtw', async () => {
   assert(!wcall.args.includes('--dtw'), 'should not have --dtw when unsupported');
 });
 
-test('anti-corruption adds sampling flags', async () => {
+test('legacy anti-corruption alias adds sampling flags', async () => {
   const { spawn, calls } = captureSpawn();
   const runner = makeRunner({ spawn });
 
@@ -213,6 +213,88 @@ test('anti-corruption adds sampling flags', async () => {
   assert(wcall.args.includes('0.4'), 'should set temperature 0.4');
   assert(wcall.args.includes('--entropy-thold'), 'should have --entropy-thold');
   assert(wcall.args.includes('1.8'), 'should set entropy threshold 1.8');
+});
+
+test('GUI reduce repeated text option adds sampling flags', async () => {
+  const { spawn, calls } = captureSpawn();
+  const runner = makeRunner({ spawn });
+
+  await runner.transcribe({
+    modelSpec: MODEL_SPEC,
+    modelPath: '/fake/models/ggml-tiny.en.bin',
+    wavPath: '/fake/test.wav',
+    options: { reduceRepeatedText: true },
+    onProgress: () => {},
+  });
+
+  assert(calls[0].args.includes('-mc'), 'should add repetition sampling flags');
+  assert(calls[0].args.includes('--temperature'), 'should set repetition temperature');
+  assert(calls[0].args.includes('--entropy-thold'), 'should set repetition entropy threshold');
+});
+
+test('false and absent reduce repeated text options omit sampling flags', async () => {
+  for (const options of [{ reduceRepeatedText: false }, undefined]) {
+    const { spawn, calls } = captureSpawn();
+    const runner = makeRunner({ spawn });
+    await runner.transcribe({
+      modelSpec: MODEL_SPEC,
+      modelPath: '/fake/models/ggml-tiny.en.bin',
+      wavPath: '/fake/test.wav',
+      options,
+      onProgress: () => {},
+    });
+    assert(!calls[0].args.includes('-mc'), 'should omit repetition sampling flags');
+    assert(!calls[0].args.includes('--temperature'), 'should omit repetition temperature');
+    assert(!calls[0].args.includes('--entropy-thold'), 'should omit repetition entropy threshold');
+  }
+});
+
+test('explicit false reduce repeated text option overrides the legacy alias', async () => {
+  const { spawn, calls } = captureSpawn();
+  const runner = makeRunner({ spawn });
+  await runner.transcribe({
+    modelSpec: MODEL_SPEC,
+    modelPath: '/fake/models/ggml-tiny.en.bin',
+    wavPath: '/fake/test.wav',
+    options: { reduceRepeatedText: false, antiCorruption: true },
+    onProgress: () => {},
+  });
+  assert(!calls[0].args.includes('-mc'), 'GUI option should take precedence over the alias');
+});
+
+test('translation and explicit source language add whisper flags', async () => {
+  const { spawn, calls } = captureSpawn();
+  const runner = makeRunner({ spawn });
+
+  await runner.transcribe({
+    modelSpec: MODEL_SPEC,
+    modelPath: '/fake/models/ggml-tiny.bin',
+    wavPath: '/fake/test.wav',
+    options: { jobMode: 'translate', sourceLanguage: 'fr', targetLanguage: 'en' },
+    onProgress: () => {},
+  });
+
+  const wcall = calls[0];
+  assert(wcall.args.includes('--translate'), 'should enable translation');
+  const languageIndex = wcall.args.indexOf('--language');
+  assert(languageIndex >= 0, 'should set an explicit source language');
+  assert(wcall.args[languageIndex + 1] === 'fr', 'should pass the selected source language');
+});
+
+test('automatic source language does not add a whisper language flag', async () => {
+  const { spawn, calls } = captureSpawn();
+  const runner = makeRunner({ spawn });
+
+  await runner.transcribe({
+    modelSpec: MODEL_SPEC,
+    modelPath: '/fake/models/ggml-tiny.bin',
+    wavPath: '/fake/test.wav',
+    options: { sourceLanguage: 'auto' },
+    onProgress: () => {},
+  });
+
+  assert(!calls[0].args.includes('--language'), 'should let Whisper detect the language');
+  assert(!calls[0].args.includes('--translate'), 'should remain in transcription mode');
 });
 
 // --- DTW fallback tests ---

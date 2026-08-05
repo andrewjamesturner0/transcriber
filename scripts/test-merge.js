@@ -867,5 +867,28 @@ test('smoothing does not use an isSegLevel entry as the flanking anchor', () => 
   assert(result[1].speaker === 'SPEAKER_01', `isSegLevel left anchor must be skipped, got ${result[1].speaker}`);
 });
 
+test('normalized word records merge without raw Whisper JSON', () => {
+  const transcript = {
+    text: 'hello there',
+    words: [
+      { text: 'hello', startMs: 100, endMs: 500 },
+      { text: 'there', startMs: 600, endMs: 1000 },
+    ],
+  };
+  const diarize = [{ start: 0, end: 2, speaker: 'SPEAKER_00' }];
+  const result = mergeTranscriptWithDiarization(transcript, diarize);
+  assert(result.includes('[Speaker 1] hello there'), result);
+});
+
+test('normalized segment records use segment fallback without invented words', () => {
+  const transcript = {
+    text: 'whole segment',
+    segments: [{ text: 'whole segment', startMs: 0, endMs: 1000 }],
+  };
+  const diarize = [{ start: 0, end: 2, speaker: 'SPEAKER_00' }];
+  const result = mergeTranscriptWithDiarization(transcript, diarize);
+  assert(result.includes('[Speaker 1] whole segment'), result);
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
