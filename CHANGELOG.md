@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Added a curated catalogue of 19 models: 12 retained Whisper models and seven Candidate or Experimental transcribe.cpp entries.
+- Added an isolated Node 22 transcribe.cpp worker, engine-neutral transcript results, Job options based on model capabilities, a progressive model chooser, checksummed downloads, and writable per-user model storage.
+- Added CLI options for job mode, language, speakers and repetition control, plus authenticated downloads, JSON model listings, and engine-neutral JSON results.
+
+### Changed
+
+- Kept whisper.cpp as the reliable engine for the retained Whisper catalogue while routing supported new-family models through transcribe.cpp.
+- Moved current-job controls out of Settings and into Job options. Settings now holds processing-device preference, pyannote and Hugging Face setup, and logs.
+- Removed TinyDiarize and `small.en-tdrz` from the current catalogue. MOSS remains visible but deferred until a compatible transcribe.cpp runtime is published.
+
 ## [0.3.0] - 2026-05-13
 
 ### Added

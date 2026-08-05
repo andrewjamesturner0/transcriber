@@ -4,9 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What This Is
 
-Transcriber, an Electron desktop app wrapping [whisper.cpp](https://github.com/ggml-org/whisper.cpp) for local audio-to-text transcription. No cloud services; all processing is on-device. Licensed under GPLv3. Windows is the primary target.
+Transcriber is an Electron desktop app for local audio-to-text transcription. It keeps whisper.cpp as the reliable engine and runs additional curated model families through an isolated transcribe.cpp worker. There is no cloud inference. Licensed under GPLv3. Windows x64 and Linux x64 are the supported targets.
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions, project structure, and architecture details.
+
+Before changing existing behaviour, check `.agent-docs/LESSONS.md` for durable gotchas and deliberate behaviours maintained by `/lesson`.
 
 ## Commands
 
@@ -24,17 +26,18 @@ npm start                            # Launch app in dev mode (Linux only, needs
 ## Key Details
 
 - **deps.json** is the single source of truth for dependency versions (whisper.cpp, ffmpeg URLs, Vulkan SDK, Node). Build scripts and CI both read from it.
-- Platform binaries in `bin/{win,linux,mac}/{cpu,vulkan}/`, models in `models/`; all gitignored, created by build scripts
+- whisper.cpp binaries are in `bin/{win,linux}/{cpu,vulkan}/`. The bundled fallback model is staged from `models/`, while downloads go to writable per-user model storage.
 - `main.js`: main process; IPC handlers and transcription orchestration
 - `cli.js`: command-line entry point (`node cli.js <subcommand>`), runs the same pipeline as the GUI without launching Electron; see [docs/cli.md](docs/cli.md)
 - `lib/paths.js`: shared binary-path resolution (`getResourcePath`, `getPlatformDir`, `getWhisperBinary`, `getFfmpegBinary`, `makeEnvWithLibPath`)
 - `lib/capabilities.js`: GPU backend detection, DTW support probing, Python/pyannote availability (consolidated from former global state)
-- `lib/transcription-runner.js`: FFmpeg -> whisper -> diarize pipeline (factory `createTranscriptionRunner` with dependency injection; composes `lib/whisper-runner.js` and `lib/models.js`)
+- `lib/transcription-runner.js`: FFmpeg -> selected engine -> optional pyannote pipeline (factory `createTranscriptionRunner` with dependency injection)
 - `lib/whisper-runner.js`: whisper-cli arg construction, backend resolution, GPU/DTW fallback retry policy (factory `createWhisperRunner`)
+- `lib/transcribe-runner.js`, `lib/transcribe-worker-client.js`, and `worker/transcribe-worker.mjs`: transcribe.cpp adapter and isolated native worker
 - `lib/_subprocess.js`: shared subprocess spawn helper used by both pipeline modules
-- `lib/models.js`: canonical model metadata; 13 entries with filenames, labels, sizes, DTW presets, and per-model flags
-- Transcription flow: ffmpeg converts to 16kHz mono WAV, then whisper-cli transcribes with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw <preset>` (pyannote diarization, for word-level speaker alignment via `lib/diarize-merge.js`)
-- `lib/models.js` defines the canonical model list; `download-model` IPC streams from Hugging Face
+- `lib/model-catalogue.js`: canonical 19-model metadata and shared job-option validation; `lib/models.js` owns paths and secure downloads
+- Transcription flow: FFmpeg converts to 16 kHz mono WAV, then the selected whisper.cpp or transcribe.cpp adapter returns an engine-neutral result. Validated Whisper word timing can feed the optional pyannote merge.
+- Model downloads are user initiated, checksummed, and installed atomically. Hugging Face tokens are sent only to approved Hugging Face HTTPS hosts.
 - NSIS installer built via electron-builder (cross-compiles on Linux or runs natively on Windows in CI); produces NSIS `.exe` installer
 - GPU acceleration via Vulkan backend; CPU and Vulkan binaries in separate subdirs under `bin/{platform}/`
 - Runtime GPU detection: spawned by `lib/capabilities.js` at startup, falls back to CPU if unavailable

@@ -1,69 +1,76 @@
 # Privacy architecture
 
-This document describes Transcriber's data processing architecture for use in ethics applications, IRB submissions, data management plans, and institutional data governance reviews.
+This document describes Transcriber's data processing boundary for ethics applications, IRB submissions, data management plans, and institutional reviews.
 
 ## Summary
 
-Transcriber is a desktop application that processes audio and video files locally on the user's computer. **No data is transmitted over any network during transcription.** There is no cloud component, no remote API, no telemetry, and no user accounts.
+Transcriber processes audio and video locally. No audio, transcript text, or transcription metadata is sent to a cloud inference service. There is no telemetry and no Transcriber account system.
 
-## Data flow
+Transcription can run without internet once the required runtime, selected speech model, and optional pyannote assets are local. The application can make separate network requests: an automatic update check can occur on startup and may download an available update, model downloads are user-initiated, and optional pyannote may fetch missing model assets.
 
-1. The user selects an audio or video file from their local filesystem.
-2. FFmpeg (running as a local process) converts the file to WAV format. The converted file is stored temporarily on the local filesystem.
-3. whisper.cpp (running as a local process) processes the WAV file using a Whisper model stored on the local filesystem. The transcript is generated in memory and passed to the application.
-4. If diarisation is enabled, pyannote.audio (or TinyDiarize for the small.en-tdrz model) identifies distinct speakers and labels transcript segments accordingly. This runs locally.
-5. The transcript is displayed in the application interface. It remains in application memory until the user copies or exports it.
+## Local transcription flow
 
-**At no point in this process is any data transmitted over a network.**
+1. The user selects a local audio or video file.
+2. Bundled FFmpeg runs as a local child process and creates a temporary 16 kHz mono WAV.
+3. The selected local engine processes the WAV:
+   - one of the 12 retained Whisper models runs through a local whisper.cpp child process; or
+   - a supported new-family model runs through an isolated local Node 22 transcribe.cpp worker.
+4. If speaker labels are enabled for a validated model, local pyannote.audio processes the same WAV and `lib/diarize-merge.js` combines its speaker segments with local word timing.
+5. The transcript returns to the application and remains in memory until it is replaced or cleared, or the app exits. Copying or saving it does not clear it.
+6. Temporary conversion and result files are removed after the job.
+
+TinyDiarize is not part of the current catalogue. Pyannote is enabled only for models whose word timing has been validated with Transcriber's speaker merge. At present, that is the retained Whisper catalogue. MOSS has a built-in speaker experiment in the catalogue but is unavailable with the pinned runtime.
 
 ## Network activity
 
-Transcriber makes **no network connections during transcription**. No audio, text, or metadata is transmitted at any point in the transcription process.
+Local inference does not transmit audio, transcript text, or transcription metadata. Other application network activity is limited to:
 
-Network activity is limited to:
-- Model downloads (75 MB – 3.1 GB per model, once per model, initiated by the user)
-- An automatic update check on startup (queries GitHub Releases for newer versions; no user data is sent)
+- speech model downloads started by the user;
+- pyannote model downloads when its external cache does not contain the required assets;
+- automatic update checks on startup and update downloads through GitHub Releases.
 
-The application:
-- Does not transmit audio, text, or metadata
-- Does not collect usage analytics or telemetry
-- Does not require an internet connection after model download
-- Does not require user accounts or registration
+Speech model downloads come from pinned Hugging Face revisions. Downloads use HTTPS, a temporary file, SHA-256 verification, and atomic installation. A saved Hugging Face bearer token is attached only to approved Hugging Face hosts; redirects to external storage do not receive it. MedASR is gated and requires accepted upstream access. MOSS cannot currently be downloaded.
 
-## Technical components
+These requests do not upload the selected audio, generated transcript, or transcription options. An update check necessarily sends ordinary network connection data such as the application's IP address and request headers to the update host. Hugging Face receives equivalent connection data during a model download.
 
-| Component | Role | Licence | Source |
-|-----------|------|---------|--------|
-| whisper.cpp | Speech-to-text inference | MIT | https://github.com/ggml-org/whisper.cpp |
-| FFmpeg | Audio/video format conversion | LGPL 2.1 | https://ffmpeg.org |
-| Whisper models | Neural network weights | MIT | https://github.com/openai/whisper |
-| TinyDiarize | Speaker change detection | MIT | Integrated with whisper.cpp |
-| pyannote.audio | Speaker diarisation (optional) | MIT | https://github.com/pyannote/pyannote-audio |
-| Electron | Application framework | MIT | https://www.electronjs.org |
+## Local storage
 
-All components run locally. No component makes network requests during transcription.
+The GUI stores application data under Electron's per-user `userData` directory:
 
-## Source code
+- `settings.json` stores processing-device preference and an optional Hugging Face token;
+- `models/` stores downloaded model files;
+- `logs/transcriber.log` stores local diagnostic logs and rotates at 5 MB.
 
-Transcriber is free and open-source software released under the GNU General Public License v3.0. The complete source code is available at:
+The renderer never receives the saved token. Runner logs redact the saved token. The standalone CLI does not read GUI settings: it accepts a token from `--hf-token` or `HF_TOKEN` and stores models in its writable per-user data directory (or `TRANSCRIBER_MODEL_DIR`).
 
-https://github.com/andrewjamesturner0/transcriber
+The build includes the tiny.en model as a bundled fallback in read-only application resources. The other 11 retained Whisper model files are optional separate downloads. Writable downloaded models take priority.
 
-The source code can be audited to verify the claims made in this document.
+## Components
 
-## Verification
+| Component | Local role | Licence |
+| --- | --- | --- |
+| whisper.cpp | Inference for 12 retained Whisper models | MIT |
+| transcribe.cpp | Inference runtime for supported new-family models | MIT |
+| Node worker and Koffi | Isolated transcribe.cpp process and native binding | Node licence / MIT |
+| FFmpeg | Audio and video conversion | GPLv3 for the bundled static builds |
+| Speech model files | Local neural-network weights | Per-model terms shown in the catalogue and notices |
+| pyannote.audio | Optional local speaker analysis | MIT |
+| Electron | Desktop application framework | MIT |
 
-Because Transcriber is open-source (GPLv3), the architecture described here can be independently verified by:
-1. Inspecting the source code
-2. Monitoring network activity during operation (the application makes no connections)
-3. Running the application in a network-isolated environment (it functions identically)
+For exact model licences and attribution, see the in-app model details, `NOTICE`, and `THIRD-PARTY-LICENSES.json`.
 
-## Use in ethics applications
+## Verification boundary
 
-Suggested language for ethics board submissions:
+The source can be inspected to check local processing, worker isolation, download allowlisting, and token redaction. A network monitor can check that a transcription job makes no network connection after the required assets are installed.
 
-> Audio recordings will be transcribed using Transcriber (https://github.com/andrewjamesturner0/transcriber), a free, open-source desktop application that processes audio locally on the researcher's computer. No audio data is transmitted to cloud services or third parties during transcription. The software's source code is publicly available under the GNU General Public License v3.0 and can be audited to verify this claim. A detailed privacy architecture document is available at https://github.com/andrewjamesturner0/transcriber/blob/master/docs/privacy-architecture.md.
+The full Windows/Linux installed-app and offline-network acceptance matrix is still a release gate for the model playground. Do not treat development-only or limited local tests as evidence that every candidate model, platform, or Vulkan device has passed acceptance.
 
-## Contact
+## Suggested wording for ethics applications
 
-For questions about Transcriber's architecture or data handling, open an issue on the [GitHub repository](https://github.com/andrewjamesturner0/transcriber/issues).
+> Audio recordings will be transcribed using Transcriber (https://github.com/andrewjamesturner0/transcriber), a free, open-source desktop application that runs speech recognition locally on the researcher's computer. Inference does not transmit audio, transcript text, or transcription metadata. Separate network access may be used for a software update check on startup, user-initiated model downloads, and missing optional pyannote assets. Once all assets selected for a job are local, transcription can run without internet access. The source is available under GPLv3 for audit.
+
+## Source code and contact
+
+Source: https://github.com/andrewjamesturner0/transcriber
+
+For questions about architecture or data handling, open an issue on the [GitHub repository](https://github.com/andrewjamesturner0/transcriber/issues).

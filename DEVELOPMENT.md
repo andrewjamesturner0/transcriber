@@ -1,300 +1,235 @@
 # Development Guide
 
+## Supported development targets
+
+The model playground supports Windows x64 and Linux x64. Both targets use CPU and the existing Vulkan path. macOS, ARM Linux, CUDA, Metal, and Intel Vulkan acceptance are outside the current feature scope, even where a script or upstream package mentions them.
+
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) >= 18
+- [Node.js](https://nodejs.org/) 22 or newer
 - [Git](https://git-scm.com/)
-- `curl` and `unzip` (available by default on most systems)
+- `curl` and `unzip`
 
-**Linux only** (for building whisper.cpp from source):
-- A C/C++ compiler (`gcc` / `g++`)
-- `cmake` >= 3.10
+Linux also needs:
+
+- a C/C++ compiler (`gcc` and `g++`)
+- `cmake` 3.10 or newer
 - `make`
 
-## Quick Start (Linux)
+For a Linux Vulkan build, install the Vulkan headers and `glslc`. CPU-only development does not need them.
+
+## Quick start on Linux
 
 ```bash
 git clone <repo-url> && cd transcriber
 npm install
-bash scripts/setup.sh   # builds whisper.cpp, downloads model + ffmpeg into bin/linux/ and models/
-npm start                # launches the Electron app
+bash scripts/setup.sh
+npm start
 ```
 
-## Building Distributables
+`scripts/setup.sh` installs the pinned Node dependencies, verifies the Linux x64 transcribe.cpp runtime, builds whisper.cpp, downloads the bundled Tiny English model and FFmpeg, and builds Vulkan whisper.cpp when the required tools are present.
 
-### Windows target (cross-compile from Linux)
-
-Downloads pre-built Windows binaries for whisper.cpp and ffmpeg:
+## Building distributables
 
 ```bash
-bash scripts/build.sh                # produces dist/Transcriber Setup *.exe
+bash scripts/build.sh                  # Windows NSIS target by default
+bash scripts/build.sh --target linux   # Linux AppImage
+bash scripts/build.sh --target all     # Windows and Linux
 ```
 
-### Linux target
+The full command is:
 
-Compiles whisper.cpp from source and downloads a static ffmpeg:
-
-```bash
-bash scripts/build.sh --target linux  # produces dist/Transcriber-*.AppImage
-```
-
-### Both targets
-
-```bash
-bash scripts/build.sh --target all
-```
-
-### Build Script Reference
-
-```
+```text
 scripts/build.sh [--target win|linux|all] [--skip-deps] [--no-gpu] [--debug]
 ```
 
 | Flag | Description |
-|------|-------------|
-| `--target win` | **(default)** Download Windows binaries, package as NSIS installer |
-| `--target linux` | Build whisper.cpp from source, package as AppImage |
-| `--target all` | Build both Windows and Linux |
-| `--skip-deps` | Skip downloading/building binaries (reuse existing `bin/` and `models/`) |
-| `--no-gpu` | Skip building Vulkan GPU binaries (CPU only) |
-| `--debug` | Include debug panel in settings (log file viewer) |
+| --- | --- |
+| `--target win` | Download Windows whisper.cpp and FFmpeg assets, then build the NSIS package. This is the default. |
+| `--target linux` | Build Linux whisper.cpp assets, then build the AppImage. |
+| `--target all` | Build both supported package targets. |
+| `--skip-deps` | Reuse existing `bin/`, `models/`, and installed Node dependencies. Runtime verification still runs. |
+| `--no-gpu` | Skip the Linux Vulkan whisper.cpp build. |
+| `--debug` | Include the debug log panel. |
 
-The script runs these steps:
+The build script:
 
-1. `npm install`
-2. Downloads the bundled model (`ggml-tiny.en.bin`, 75 MB) from Hugging Face
-3. Fetches or builds platform-specific binaries into `bin/{win,linux}/{cpu,vulkan}/`
-   - **Windows**: pre-built CPU `whisper-cli.exe` + DLLs from [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), `ffmpeg.exe` from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
-   - **Linux**: clones whisper.cpp, builds CPU and Vulkan variants with cmake, downloads static ffmpeg from [johnvansickle.com](https://johnvansickle.com/ffmpeg/)
-   - Vulkan binaries: for Linux, built from source (requires Vulkan SDK); for Windows, Vulkan binaries are built in CI only (local Windows builds download pre-built CPU binaries). Skipped with `--no-gpu`
-4. Runs `electron-builder` to produce the distributable in `dist/`
+1. Runs `npm install` so the exact transcribe.cpp 0.1.3 binding, Koffi 3.1.1, and target native packages from the lockfile are available.
+2. Verifies the requested Windows x64 or Linux x64 transcribe.cpp native runtime.
+3. Downloads the bundled `ggml-tiny.en.bin` fallback when it is absent.
+4. Fetches or builds whisper.cpp and FFmpeg under `bin/{win,linux}/` unless `--skip-deps` is used.
+5. Packages the Electron application.
 
-## Windows Native Build
+Windows and Linux native package checks also run in release CI. Do not assume that a cross-built package contains the target native library merely because `npm install` succeeded on the host platform.
 
-Build and run the app directly on Windows without cross-compiling from Linux.
+## Windows development
 
-### Prerequisites
-
-1. **Node.js** >= 18: [Download](https://nodejs.org/)
-2. **Git for Windows**: [Download](https://git-scm.com/download/win)
-3. **Visual Studio Build Tools** (for compiling whisper.cpp):
-   - Download [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-   - Select **"Desktop development with C++"** workload
-4. **CMake** (if not using Visual Studio's bundled version): [Download](https://cmake.org/download/)
-
-Optional for GPU acceleration:
-- **CUDA Toolkit**: [Download](https://developer.nvidia.com/cuda-downloads) (for NVIDIA GPU support)
-
-### Option A: Pre-built binaries (recommended)
+Use Node 22 or newer. The simplest supported route is to prepare assets and package from a checkout with:
 
 ```powershell
-git clone <repo-url>
-cd transcriber
 npm install
-
-mkdir -p bin\win\cpu
-mkdir -p models
-
-# Download whisper.cpp release
-$WHISPER_VERSION = "v1.8.4"
-Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
-Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
-Copy-Item whisper-temp\* bin\win\cpu\ -Recurse -Force
-Remove-Item whisper.zip, whisper-temp -Recurse -Force
-
-# Download ffmpeg
-Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
-Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
-Copy-Item ffmpeg-temp\ffmpeg-*\bin\ffmpeg.exe bin\win\
-Remove-Item ffmpeg.zip, ffmpeg-temp -Recurse -Force
-
-# Download the default model
-Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" -OutFile models\ggml-tiny.en.bin
+bash scripts/build.sh --target win
 ```
 
-### Option B: Build whisper.cpp from source
+The Windows build downloads the released CPU whisper.cpp binaries and FFmpeg. Vulkan whisper.cpp binaries are produced on native Windows release CI. The transcribe.cpp worker and its Windows x64 CPU/Vulkan native package are pinned through `package-lock.json` and verified before packaging.
 
-For custom builds or GPU support:
+For manual whisper.cpp development, place `whisper-cli.exe` and its DLLs in `bin/win/cpu/`, place `ffmpeg.exe` in `bin/win/`, and place the bundled fallback model in `models/`. This does not replace the required `npm install` and `node scripts/verify-transcribe-runtime.js win32-x64` checks for the transcribe.cpp worker.
 
-```powershell
-git clone https://github.com/ggml-org/whisper.cpp.git .build-whisper
-cd .build-whisper
-
-# CPU only
-cmake -B build -DBUILD_SHARED_LIBS=ON
-
-# Or with CUDA support (requires CUDA Toolkit)
-# cmake -B build -DBUILD_SHARED_LIBS=ON -DGGML_CUDA=ON
-
-cmake --build build --config Release
-
-cd ..
-Copy-Item .build-whisper\build\bin\Release\whisper-cli.exe bin\win\cpu\
-Copy-Item .build-whisper\build\bin\Release\*.dll bin\win\cpu\
-
-# Still need ffmpeg and model; see Option A for download commands
-```
-
-### Run and package
-
-```powershell
-npm start              # development mode
-npm run package        # produces dist/ with NSIS installer
-```
-
-The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Windows experience: installs to Program Files, creates Start Menu shortcuts, and registers an uninstaller.
-
-## npm Scripts
+## npm scripts
 
 | Script | Description |
-|--------|-------------|
-| `npm start` | Run in development mode (requires `scripts/setup.sh` first on Linux) |
-| `npm run setup` | Alias for `bash scripts/setup.sh` |
-| `npm run package` | Package for Windows (same as `package:win`) |
-| `npm run package:win` | Package for Windows |
-| `npm run package:linux` | Package for Linux |
-| `npm run package:mac` | Package for macOS |
-| `npm run package:all` | Package for all platforms |
+| --- | --- |
+| `npm start` | Run the Electron app in development mode. |
+| `npm run setup` | Run `scripts/setup.sh`. |
+| `npm run package` | Build the Windows package. |
+| `npm run package:win` | Verify the Windows runtime and build the Windows package. |
+| `npm run package:linux` | Verify the Linux runtime and build the Linux package. |
+| `npm run package:mac` | Present in the package manifest, but not a supported or accepted model-playground target. |
+| `npm run package:all` | Verify Windows/Linux runtimes and invoke all package targets. Do not treat the macOS output as accepted. |
 
-## Project Structure
+## Project structure
 
-```
-main.js              Electron main process; IPC handlers, window creation, settings
-cli.js               Command-line entry point; same pipeline as the GUI, no Electron
-preload.js           Context bridge between main and renderer
-deps.json            Single source of truth for dependency versions and URLs
+```text
+main.js                       Electron main process, IPC, settings, downloads, and jobs
+cli.js                        Standalone CLI using the shared catalogue and runners
+preload.js                    Narrow renderer IPC bridge
+deps.json                     Dependency versions, target packages, and checksums
+electron-builder.yml          ASAR, extra resources, and package targets
 renderer/
-  index.html         App UI
-  renderer.js        UI logic (wires queue model to DOM, IPC handlers)
-  queue.js           Queue state model (pending -> processing -> done/error)
-  media-extensions.js Supported file extensions whitelist
-  time-estimates.js  Model-id to time-estimate bucket mapping
-  transcript-format.js Diarization output formatting and rich-transcript parsing
-  style.css          Styles
-  fonts/             Bundled fonts
+  index.html                  Single-window UI
+  renderer.js                 DOM wiring and queue execution
+  model-chooser.js            Progressive 19-model chooser state
+  job-options.js              Capability-driven current-job option state
+  queue.js                    Serial queue state
+  media-extensions.js         Accepted media extensions
+  time-estimates.js           Whisper time-estimate buckets
+  transcript-format.js        Plain and speaker-labelled transcript formatting
+  style.css                   Application styles
+  fonts/                      Bundled fonts
 lib/
-  paths.js                Shared binary-path resolution (dev vs. packaged, platform dir)
-  capabilities.js         GPU/DTW/Python capability detection (consolidated from main.js)
-  models.js               Canonical model metadata (filenames, DTW presets, download URLs)
-  transcription-runner.js FFmpeg -> whisper -> diarize pipeline factory (composes whisper-runner)
-  whisper-runner.js       Whisper-cli arg construction, backend resolution, GPU/DTW fallback retry
-  _subprocess.js          Shared subprocess spawn helper (used by ffmpeg, whisper, diarization)
-  diarize-merge.js        Diarisation merge pipeline (shared by transcription-runner and tests)
-  diarize.py              Pyannote speaker diarization script (spawned as subprocess)
-  requirements.txt        Python dependencies for diarization
-assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
+  model-catalogue.js          Canonical 19-model metadata and option validation
+  models.js                   Download paths, downloaded state, and secure downloads
+  transcript-result.js        Engine-neutral result validation and normalisation
+  engine-adapters.js          Engine selector
+  transcription-runner.js     FFmpeg, selected engine, optional pyannote, and cleanup
+  whisper-runner.js           whisper.cpp arguments and retry policy
+  transcribe-runner.js        transcribe.cpp option/result adapter
+  transcribe-worker-client.js Framed worker lifecycle and recovery
+  paths.js                    Dev, packaged, worker, binary, and model paths
+  capabilities.js             GPU, DTW, Python, and pyannote probes
+  _subprocess.js              Shared child-process helper
+  diarize-merge.js            Speaker timing merge
+  diarize.py                  pyannote subprocess
+  requirements.txt            Python diarisation dependencies
+worker/
+  transcribe-worker.mjs       Node 22 transcribe.cpp native worker
 scripts/
-  build.sh                 Full build script (download deps + package distributable)
-  setup.sh                 Dev-only setup (build whisper.cpp from source for local testing)
-  test-merge.js                 Unit tests for the diarization merge logic (no model needed)
-  test-capabilities.js          Unit tests for lib/capabilities.js (GPU, DTW, Python)
-  test-transcription-runner.js  Unit tests for the transcription pipeline (FFmpeg, whisper, fallbacks)
-  test-whisper-runner.js        Unit tests for whisper arg construction and retry policy
-  test-models.js                Unit tests for model metadata module
-  test-cli.js                   Subprocess tests for cli.js (arg parsing, exit codes, output streams)
-  test-queue.js                 Unit tests for the queue state model (enqueue, processAll, cancel)
-  test-renderer-smoke.js        Smoke test: loads renderer scripts in a browser-like vm context
-  test-packaging.js             Static check: require() consistency vs electron-builder.yml
-  test-diarize-pipeline.py End-to-end diarization test (requires Python + HF token)
-  test-audio-load.py       Checks ffmpeg can load a given audio file
-electron-builder.yml Packaging config (extraResources, targets per platform)
+  build.sh                    Dependency preparation and packaging
+  setup.sh                    Linux development setup
+  verify-transcribe-runtime.js Exact native runtime check
+  smoke-packaged-worker.js    Packaged worker protocol smoke test
+  run-model-validation.js     Real-model evidence harness
+  test-*.js                   Fast assertion-based JavaScript checks
+  test-audio-load.py          Python audio-load check
+  test-diarize-pipeline.py    Credential-gated pyannote end-to-end check
+docs/                         User, architecture, privacy, and validation documentation
 ```
 
-**Not checked in** (gitignored, created by scripts):
+Generated and downloaded files are not checked in:
 
-```
-bin/win/cpu/         whisper-cli.exe, DLLs (CPU backend)
-bin/win/vulkan/      whisper-cli.exe, DLLs (Vulkan GPU backend)
-bin/win/             ffmpeg.exe (shared)
-bin/linux/cpu/       whisper-cli, shared libs (CPU backend)
-bin/linux/vulkan/    whisper-cli, shared libs (Vulkan GPU backend)
-bin/linux/           ffmpeg (shared)
-models/              ggml-*.bin model files
-.build-whisper/      whisper.cpp source and build tree (Linux only)
-node_modules/
-dist/                Built distributables
+```text
+bin/                          whisper.cpp and FFmpeg assets
+models/                       bundled Tiny English staging model
+.build-whisper/               local whisper.cpp source/build tree
+node_modules/                 JavaScript and native dependencies
+dist/                         built packages
 ```
 
-## Architecture Notes
+Downloaded models do not normally go back into `models/`. The GUI writes them under Electron's writable `userData/models` directory. The standalone CLI uses `TRANSCRIBER_MODEL_DIR` when set, otherwise `%LOCALAPPDATA%/Transcriber/models` on Windows or `$XDG_DATA_HOME/transcriber/models` (defaulting to `~/.local/share/transcriber/models`) on Linux. Both paths fall back to a matching bundled file in `models/`.
 
-- `lib/paths.js` owns all binary-path resolution: `getPlatformDir()` resolves `win`/`linux`/`mac`, `getResourcePath()` handles dev vs. packaged, `getWhisperBinary(backend)` and `getFfmpegBinary()` return binary paths
-- `lib/capabilities.js` consolidates GPU backend detection, DTW support probing, and Python/pyannote availability into a single module (formerly scattered global state in main.js)
-- `lib/transcription-runner.js` orchestrates the FFmpeg -> whisper -> diarize pipeline via a `createTranscriptionRunner` factory. Long-lived dependencies (binary paths, spawn, capabilities) are bound at construction time; per-call job parameters (file, model, options, callbacks, signal) are passed to `runTranscription`. Composes `lib/whisper-runner.js` for the whisper step.
-- Transcription flow: ffmpeg converts input to 16kHz mono WAV temp file, then spawns whisper-cli with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw` (pyannote diarization; DTW support probed at startup, disabled if unsupported)
-- Thread count: `Math.max(1, Math.min(os.cpus().length - 1, 8))`
-- Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
-- `lib/models.js` defines the canonical model list (13 entries) with filenames, DTW presets, and per-model flags; the `download-model` IPC streams from Hugging Face with progress events
-- GPU acceleration: ships both CPU and Vulkan whisper-cli binaries; at startup, tests the Vulkan binary with `--help` (5s timeout) and caches the result. If Vulkan fails mid-transcription, transparently retries with CPU
-- Backend preference stored in `settings.json` in `app.getPath('userData')`
-- macOS builds require building on macOS with `bin/mac/` populated manually
+## Architecture
 
-## Diarization Architecture
+The normal job is:
 
-Speaker diarization uses [pyannote.audio](https://github.com/pyannote/pyannote-audio) via a subprocess, following the same pattern as whisper-cli and ffmpeg.
-
-### Flow
-
-```
-User enables diarization in settings
-    → transcribe IPC handler runs whisper with --output-json-full (full JSON with token timestamps)
-      (adds --dtw <preset> when the model has a DTW preset and the binary supports it;
-       DTW support is probed at startup and disabled for subsequent runs if it fails)
-    → runs lib/diarize.py as subprocess on the same WAV
-    → lib/diarize-merge.js mergeTranscriptWithDiarization() runs the pipeline:
-      mergeDiarizeSegments → groupTokensToWords → assignWordsToSpeakers →
-      refineSpeakerBoundaries → smoothSpeakerAssignments → collapse + mergeShortBlocks
-    → renderer displays color-coded speaker output
+```text
+input media
+  -> FFmpeg child process creates a temporary 16 kHz mono WAV
+  -> catalogue selects an engine adapter
+       -> whisper.cpp child process for the 12 retained Whisper models
+       -> framed Node 22 worker for supported transcribe.cpp models
+  -> engine-neutral transcript result
+  -> optional pyannote subprocess and speaker merge for validated word timing
+  -> GUI result or CLI stdout
 ```
 
-### Subprocess protocol
+`lib/transcription-runner.js` owns conversion, duration limits, adapter selection, pyannote, and temporary-file cleanup. `lib/whisper-runner.js` keeps Whisper-specific flags plus Vulkan-to-CPU and DTW fallback. `lib/transcribe-runner.js` maps capabilities to the framed worker. Native transcribe.cpp code stays outside Electron's main process in `worker/transcribe-worker.mjs`. A failed worker rejects the active job and can be restarted; supported Vulkan failures retry once on CPU.
 
-`lib/diarize.py` communicates with Electron via:
-- **stderr**: JSON progress lines: `{"message": "Loading model...", "percent": 10}`
-- **stderr**: JSON error lines: `{"error": "Authentication failed..."}`
-- **stdout**: Final summary: `{"segments": 42}`
-- **output file**: JSON array of segments: `[{"start": 0.0, "end": 3.5, "speaker": "SPEAKER_00"}, ...]`
+Every job uses one model and a complete file. The GUI processes queued files serially. There is no built-in model comparison, streaming control, or parallel model execution.
 
-### Testing standalone
+## Catalogue and downloads
+
+`lib/model-catalogue.js` is the single capability source for all 19 entries. It records status, engine, source revision, checksum, size, licence, languages, timing, pyannote validation, supported backends, and job-option rules. The 12 Whisper entries are Recommended baselines. Parakeet, Moonshine, and Nemotron are Candidates. Qwen3-ASR, Canary, MedASR, and MOSS are Experimental. MOSS is visible but has `runtimeAvailable: false` with the pinned transcribe.cpp 0.1.3 runtime.
+
+`lib/models.js` downloads to a `.download` file, checks SHA-256, and renames only after verification. Failed and interrupted partials are removed. Hugging Face bearer tokens are attached only to approved Hugging Face HTTPS hosts and are reconsidered after every redirect. MedASR is gated and requires accepted upstream access. A model counts as downloaded when its expected file exists.
+
+## Settings and Job options
+
+Settings are stored in `app.getPath('userData')/settings.json`. The main process currently persists:
+
+- `gpuBackend`: `auto`, `cpu`, or `vulkan`
+- `hfToken`: a saved Hugging Face token, never returned to the renderer
+
+The renderer receives only safe GPU/pyannote status and `hfTokenConfigured`.
+
+Choices for the current job are not settings. Job options contain job mode, source and target language, speaker labels, expected speakers, and Reduce repeated text. The shared catalogue validator controls them in both GUI and CLI.
+
+## Speaker diarisation
+
+TinyDiarize and `small.en-tdrz` have been removed. Speaker labelling uses pyannote only when the selected model has word timing validated against `lib/diarize-merge.js`. The current validated set is the 12 retained Whisper models. New-family word timing does not enable pyannote until the separate validation gates pass.
+
+Application Settings holds Python, pyannote, Hugging Face, and device setup. Enabling speaker labels and choosing an expected speaker count are current-job choices under Job options.
+
+See [docs/diarization.md](docs/diarization.md) and [docs/diarization-setup.md](docs/diarization-setup.md).
+
+## Tests
+
+Run the complete credential-free JavaScript suite:
 
 ```bash
-python lib/diarize.py --audio test.wav --output out.json --hf-token YOUR_TOKEN
-cat out.json  # should contain speaker segments
+for test_file in scripts/test-*.js; do node "$test_file" || exit 1; done
 ```
 
-### Timestamp alignment
+There are currently 20 JavaScript test files. They cover capabilities, CLI, job options, merge behaviour, secure downloads, catalogue/options/promotion, model chooser UI, packaging, queue behaviour, renderer smoke checks, validation-harness behaviour, time estimates, transcribe.cpp adapter/worker, transcript formatting/results, pipeline orchestration, and whisper.cpp retry behaviour.
 
-The merge pipeline lives in `lib/diarize-merge.js` (shared between `lib/transcription-runner.js` and `scripts/test-merge.js`). It runs five stages plus post-collapse short-block merging. See [`docs/diarization.md`](docs/diarization.md) for the full pipeline diagram, stage-by-stage description, config reference, and debug logging (`DIARIZE_DEBUG=1`).
+Useful focused commands are:
 
-Key implementation notes: `DIARIZE_DEBUG=1` emits per-stage diff logs; DTW support is probed at startup and disabled on failure for all subsequent runs. Overlapping segments from pyannote are handled by `mergeDiarizeSegments()` for same-speaker gaps; different-speaker overlaps are preserved as-is.
-
-### Cancellation
-
-Both whisper and diarize subprocesses share a single `AbortController` per transcription job. The cancel button calls the `cancel-transcription` IPC, which aborts the controller, killing whichever subprocess is currently running.
-
-## Dependency Updates
-
-All external dependency versions and download URLs are centralized in `deps.json`. Both `scripts/build.sh`, `scripts/setup.sh`, and `.github/workflows/release.yml` read from it.
-
-### Automated checks
-
-A weekly GitHub Actions workflow (`.github/workflows/dep-check.yml`) runs every Monday:
-
-1. Checks the latest whisper.cpp release tag against `deps.json`
-2. Downloads ffmpeg archives and compares SHA-256 checksums against stored values
-3. If anything changed, opens a PR with the updated `deps.json`
-
-You can also trigger it manually via `workflow_dispatch` in the Actions tab.
-
-### Manual update
-
-To bump whisper.cpp manually, edit `deps.json`:
-
-```json
-{ "whisper": { "version": "v1.8.4", ... } }
+```bash
+node scripts/test-models.js
+node scripts/test-model-options.js
+node scripts/test-model-download.js
+node scripts/test-cli.js
+node scripts/test-transcribe-worker-client.js
+node scripts/test-transcribe-runner.js
+node scripts/test-transcription-runner.js
+node scripts/test-model-playground-ui.js
+node scripts/test-renderer-smoke.js
+node scripts/test-packaging.js
 ```
 
-Then push and run a CI build. The build scripts and CI workflow will pick up the new version automatically.
+The real pyannote and model acceptance checks are separate:
+
+```bash
+python3 scripts/test-audio-load.py
+python3 scripts/test-diarize-pipeline.py --hf-token "$HF_TOKEN" --audio <speaker-fixture.wav>
+node scripts/run-model-validation.js --help
+```
+
+Do not describe a Candidate as Recommended, enable pyannote for a new family, or claim a platform/backend passed acceptance without the evidence required by [docs/model-validation.md](docs/model-validation.md).
+
+## Dependency updates
+
+`deps.json` is the source of truth for whisper.cpp, FFmpeg, Electron, Node, and transcribe.cpp runtime pins. `scripts/setup.sh`, `scripts/build.sh`, runtime verification, and release CI consume it. The weekly dependency workflow checks upstream releases and FFmpeg checksums.
 
 ## FFmpeg
 
-FFmpeg is bundled as a standalone binary and spawned as a child process. See [docs/ffmpeg.md](docs/ffmpeg.md) for details on sources, licensing, and how to replace the bundled binary.
+FFmpeg is bundled as a separate executable and spawned for conversion. See [docs/ffmpeg.md](docs/ffmpeg.md) for sources, licensing, and replacement details.

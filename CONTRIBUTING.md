@@ -16,7 +16,7 @@ The setup script builds whisper.cpp from source (Linux), downloads the default T
 
 ### Prerequisites
 
-- Node.js >= 18
+- Node.js >= 22
 - Git
 - `curl` and `unzip`
 - **Linux:** C/C++ compiler (`gcc`/`g++`), `cmake` >= 3.10, `make`

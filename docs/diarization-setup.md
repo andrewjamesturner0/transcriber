@@ -1,127 +1,83 @@
-# Speaker Diarization Setup Guide
+# Speaker diarization setup guide
 
-Transcriber can identify individual speakers in a recording using [pyannote.audio](https://github.com/pyannote/pyannote-audio). This is an optional advanced feature that requires Python and several large dependencies.
+Transcriber can label individual speakers with [pyannote.audio](https://github.com/pyannote/pyannote-audio). This optional local feature requires Python, PyTorch, pyannote, and gated Hugging Face model access.
+
+Pyannote can be selected only for a model whose word timing has been validated with Transcriber's merge pipeline. At present, that is the 12 retained Whisper models. TinyDiarize is no longer supported.
 
 ## Requirements
 
 | Requirement | Detail |
-|-------------|--------|
+| --- | --- |
 | Python | 3.9 or newer |
-| PyTorch | ~500 MB – 2 GB (CPU or CUDA) |
-| pyannote.audio | + dependencies (scipy, scikit-learn, etc.) |
-| Models | ~300 MB (downloaded automatically on first use) |
-| Hugging Face token | Required to accept model licence and download |
-| **Total footprint** | **~1–10 GB** depending on GPU support |
+| PyTorch | Roughly 500 MB to 2 GB for CPU or CUDA variants |
+| pyannote.audio | Includes scipy, scikit-learn, and other dependencies |
+| Pyannote models | Roughly 300 MB, fetched into pyannote's external cache on first use |
+| Hugging Face token | Read access after accepting the model terms |
 
-## Windows Setup
+CUDA is optional but strongly recommended for long recordings. CUDA accelerates pyannote only; Transcriber's speech-model GPU setting uses the supported Vulkan path.
 
-### 1. Install Python
+## Windows setup
 
-Download Python 3.9+ from [python.org](https://www.python.org/downloads/).
+1. Install Python 3.9 or newer from [python.org](https://www.python.org/downloads/) and select "Add Python to PATH".
+2. Open Command Prompt and install the packages:
 
-Tick **"Add Python to PATH"** during installation. If you forget, you will need to add it manually or reinstall.
-
-To verify, open Command Prompt and run:
-
-```
-python --version
-```
-
-You should see `Python 3.9.x` or newer.
-
-### 2. Install packages
-
-```
-pip install pyannote.audio torch
-```
-
-This downloads PyTorch and pyannote.audio with all dependencies. Expect ~1–2 GB on CPU, or more with CUDA support.
-
-### 3. Get a Hugging Face token
-
-Pyannote models are hosted on Hugging Face as gated models. You must accept the licence for each model listed below, otherwise the download will fail with an authentication error.
-
-1. Create an account at [huggingface.co](https://huggingface.co/join)
-2. Accept the licence at [hf.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1) (click "Agree and access repository")
-3. Accept the licence at [hf.co/pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) (click "Agree and access repository")
-4. Accept the licence at [hf.co/pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1) (click "Agree and access repository")
-5. Generate a token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens):
-   - Token type: **Read** (no write access needed)
-   - The token should start with `hf_`
-
-### 4. GPU setup (optional but recommended)
-
-Diarization on CPU is **very slow** (30 min – 4 hours per hour of audio). With a CUDA GPU, it takes 1–5 minutes.
-
-To enable GPU support:
-
-1. Install the [NVIDIA CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
-2. Reinstall PyTorch with CUDA support:
+   ```text
+   pip install pyannote.audio torch
    ```
-   pip install torch --index-url https://download.pytorch.org/whl/cu121
-   ```
-   (Replace `cu121` with your CUDA version; check with `nvcc --version`)
 
-### 5. Configure in Transcriber
+3. Sign in to Hugging Face and accept access for all three model repositories:
 
-1. Open Transcriber
-2. Click the hamburger menu (top right)
-3. Under **Speaker Diarization**, check that the status shows the detected pyannote version (e.g. "pyannote 3.1.1 detected")
-4. Paste your Hugging Face token
-5. Enable the toggle
-6. Optionally set the number of speakers (or leave on "Auto-detect")
+   - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+   - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
+   - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
 
-## Linux Setup
+4. Create a Read token at [Hugging Face tokens](https://huggingface.co/settings/tokens).
+5. Open Transcriber Settings. Under Speaker labelling setup, confirm that Python and pyannote were detected and save the token.
+6. In the main window, open Job options and enable Speaker labels for the current job. Expected speakers is under Advanced options.
+
+## Linux setup
 
 ```bash
-# Install Python packages
-pip install pyannote.audio torch
-
-# For GPU support (NVIDIA):
-pip install torch --index-url https://download.pytorch.org/whl/cu121
+python3 -m pip install pyannote.audio torch
 ```
 
-Then follow the Hugging Face token steps above (steps 3–5).
+Then accept the three model repositories, create a Read token, and complete steps 5-6 above.
+
+For NVIDIA CUDA, install the matching PyTorch build from the official PyTorch instructions. Do not assume that a CUDA toolkit version and a hard-coded wheel index always match.
+
+## What the token is used for
+
+The GUI saves the token in Electron's per-user `settings.json`. It is not returned to the renderer. pyannote receives it only when speaker labelling runs. The same saved token can authorise a gated catalogue model download such as MedASR after the user has accepted that model's upstream access terms.
+
+The standalone CLI does not read GUI settings. Supply `--hf-token <token>` or set `HF_TOKEN`. Avoid putting a token directly into shared shell history or logs.
 
 ## Troubleshooting
 
-### "Python 3.9+ not found"
+### Python not found
 
-- Check that Python is on your PATH: run `python --version` or `python3 --version` in a terminal
-- On Windows, try reinstalling Python with "Add to PATH" ticked
-- On Windows, the Microsoft Store version of Python may not be detected; use the python.org installer instead
+- Run `python --version` or `python3 --version` in a new terminal.
+- On Windows, use the python.org installer and enable PATH integration.
+- If several Python versions exist, install packages with the exact interpreter, for example `python3 -m pip install pyannote.audio`.
 
-### "pyannote not installed"
+### Pyannote not installed
 
-- Run `pip install pyannote.audio` and check for errors
-- If you have multiple Python versions, make sure you're installing into the right one: `python3 -m pip install pyannote.audio`
+- Run `python -m pip install pyannote.audio torch` and inspect any installation error.
+- Reopen Settings so Transcriber refreshes its Python and pyannote status.
 
-### Authentication / token errors
+### Authentication failed
 
-- Make sure you've accepted **all three** model licences (each page should show "You have been granted access"):
-  - [pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
-  - [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0)
-  - [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
-- Check that your token is valid, starts with `hf_`, and has at least **Read** scope
-- If you recently accepted the licences, restart Transcriber and try again
-- The first run downloads ~300 MB of model files; ensure you have an internet connection
-- Check the debug log (Settings > Debug > Open Log File) for the exact error from Hugging Face
+- Confirm that all three pyannote repository pages show granted access.
+- Confirm that the token is a valid Read token.
+- The first use needs network access so pyannote can fill its own model cache.
+- Check the local application log for a redacted error message.
 
-### Out of memory
+### Out of memory or slow processing
 
-- Close other applications to free RAM
-- If using GPU, try a machine with more VRAM, or fall back to CPU
-- Specify the number of speakers manually instead of auto-detect (auto-detect uses more memory)
+- Close other applications or use a machine with more RAM/VRAM.
+- Use CUDA for pyannote when an NVIDIA GPU is available.
+- Set Expected speakers when that information is known.
+- Cancel stops the active local job.
 
-### Very slow performance
+### Speaker labelling failed
 
-- Diarization on CPU is slow. A CUDA GPU is strongly recommended.
-- Typical CPU times: 30 min – 4 hours per hour of audio
-- Typical GPU times: 1–5 minutes per hour of audio
-- You can cancel a running job using the Cancel button
-
-### Diarization failed, falling back to plain transcript
-
-- This means the diarization subprocess errored. Check the debug log (Settings > Debug > Open Log File) for the full error.
-- Common causes: missing token, model licence not accepted, model download failure, out of memory
-- The transcription itself still succeeds; you just will not get speaker labels
+The transcription can still return a plain transcript if the pyannote step fails. Check the application log for missing access, model download, Python, or memory errors.
