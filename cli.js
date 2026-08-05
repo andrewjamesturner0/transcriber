@@ -7,14 +7,14 @@
 /**
  * Command-line interface for Transcriber.
  *
- * Runs the same FFmpeg -> whisper-cli -> (optional pyannote) pipeline as the
- * Electron GUI, without launching any window subsystem. Reuses the lib/
+ * Runs the same local transcription pipeline as the
+ * Electron GUI without opening a window. Reuses the lib/
  * factories unchanged. Never requires('electron'); never reads or writes the
  * GUI's settings.json.
  *
  * Subcommands:
  *   transcribe <file>     run the full pipeline on one input file
- *   download-model <id>   fetch a model from Hugging Face into models/
+ *   download-model <id>   fetch a model into writable per-user storage
  *   list-models           print the canonical model list
  *   gpu-status            print detected backend and DTW support
  *
@@ -26,7 +26,11 @@ const fs = require('fs');
 const { spawn } = require('child_process');
 
 const paths = require('./lib/paths');
-paths.initPaths({ isPackaged: false, resourcesPath: __dirname });
+paths.initPaths({
+  isPackaged: false,
+  resourcesPath: __dirname,
+  modelDirectory: paths.getStandaloneModelDirectory(),
+});
 
 const models = require('./lib/models');
 const Capabilities = require('./lib/capabilities');
@@ -40,7 +44,7 @@ const TOP_HELP = `Usage: node cli.js <subcommand> [options]
 
 Subcommands:
   transcribe <file>        run the full pipeline on one input file
-  download-model <id>      fetch a model from Hugging Face into models/
+  download-model <id>      fetch a model into writable per-user storage
   list-models              print the canonical model list
   gpu-status               print detected backend and DTW support
 
@@ -54,25 +58,31 @@ Run the full transcription pipeline on one audio or video file.
 Options:
   --model <id>            model id (default: tiny.en); see "list-models"
   --backend auto|cpu|vulkan
-                          whisper backend (default: auto)
+                          local inference backend (default: auto)
   --format txt|json       output format (default: txt)
   --output <path>         write output to file instead of stdout
-  --diarize               enable pyannote speaker diarization
-  --anti-corruption       enable anti-corruption sampling flags
+  --job-mode transcribe|translate
+                          job mode (default: transcribe)
+  --source-language <id>  source language id or auto
+  --target-language <id>  target language id for translation
+  --diarize               enable pyannote speaker diarisation
+  --reduce-repeated-text  reduce repeated transcript text where supported
+  --anti-corruption       compatibility alias for --reduce-repeated-text
   --hf-token <token>      Hugging Face token (or set HF_TOKEN env var)
-  --num-speakers <n>      hint diarizer to expect this many speakers
+  --num-speakers <n>      tell the diariser how many speakers to expect
   --quiet                 suppress progress output on stderr
   -h, --help              show this help and exit
 `;
 
 const DOWNLOAD_HELP = `Usage: node cli.js download-model <id> [options]
 
-Fetch a whisper model from Hugging Face into models/. If the model is already
-on disk this is a no-op.
+Fetch a model from Hugging Face into writable per-user storage. If a matching
+writable or bundled model is already present this is a no-op.
 
 Options:
-  --quiet     suppress progress output on stderr
-  -h, --help  show this help and exit
+  --hf-token <token>  Hugging Face token (or set HF_TOKEN env var)
+  --quiet             suppress progress output on stderr
+  -h, --help          show this help and exit
 `;
 
 const LIST_HELP = `Usage: node cli.js list-models [options]
@@ -150,7 +160,11 @@ const TRANSCRIBE_SPEC = {
   '--backend': { takesValue: true },
   '--format': { takesValue: true },
   '--output': { takesValue: true },
+  '--job-mode': { takesValue: true },
+  '--source-language': { takesValue: true },
+  '--target-language': { takesValue: true },
   '--diarize': { takesValue: false },
+  '--reduce-repeated-text': { takesValue: false },
   '--anti-corruption': { takesValue: false },
   '--hf-token': { takesValue: true },
   '--num-speakers': { takesValue: true },
@@ -193,8 +207,45 @@ async function cmdTranscribe(argv) {
     die(`transcribe: --format must be txt or json (got "${format}")`);
   }
   const diarize = !!flags['--diarize'];
+  const jobMode = flags['--job-mode'] || 'transcribe';
+  const sourceLanguage = flags['--source-language'];
+  const targetLanguage = flags['--target-language'];
+  const reduceRepeatedText = !!(flags['--reduce-repeated-text'] || flags['--anti-corruption']);
   const quiet = !!flags['--quiet'];
   const outputPath = flags['--output'];
+
+  let numSpeakers;
+  if (flags['--num-speakers'] != null) {
+    const value = flags['--num-speakers'];
+    numSpeakers = Number(value);
+    if (!/^[0-9]+$/.test(value) || !Number.isSafeInteger(numSpeakers) || numSpeakers < 1) {
+      die(`transcribe: --num-speakers must be a positive integer (got "${flags['--num-speakers']}")`);
+    }
+  }
+
+  let modelSpec;
+  try {
+    modelSpec = models.getModel(modelId);
+  } catch (err) {
+    die(`transcribe: ${err.message}`);
+  }
+
+  if (modelSpec.runtimeAvailable === false) {
+    die(`transcribe: ${modelSpec.displayName} is deferred until a compatible ${modelSpec.engine} release is available.`);
+  }
+
+  const optionValidation = models.validateJobOptions(modelId, {
+    jobMode,
+    sourceLanguage,
+    targetLanguage,
+    diarization: diarize,
+    numSpeakers,
+    reduceRepeatedText,
+  });
+  if (!optionValidation.valid) {
+    const first = optionValidation.errors[0];
+    die(`transcribe: ${first.message} (${first.code})`);
+  }
 
   let hfToken;
   if (diarize) {
@@ -202,21 +253,6 @@ async function cmdTranscribe(argv) {
     if (!hfToken) {
       die('transcribe: --diarize requires --hf-token <token> or $HF_TOKEN');
     }
-  }
-
-  let numSpeakers;
-  if (flags['--num-speakers'] != null) {
-    numSpeakers = parseInt(flags['--num-speakers'], 10);
-    if (!Number.isFinite(numSpeakers) || numSpeakers < 1) {
-      die(`transcribe: --num-speakers must be a positive integer (got "${flags['--num-speakers']}")`);
-    }
-  }
-
-  // Validate model id early so unknown ids fail before any subprocess
-  try {
-    models.getModel(modelId);
-  } catch (err) {
-    die(`transcribe: ${err.message}`);
   }
 
   // Build capabilities with lazy detection appropriate for the flags
@@ -260,22 +296,28 @@ async function cmdTranscribe(argv) {
 
   const abortController = new AbortController();
   let sigintReceived = false;
-  process.on('SIGINT', () => {
+  const handleSigint = () => {
     if (sigintReceived) return;
     sigintReceived = true;
     if (!quiet) process.stderr.write('\nReceived SIGINT, cancelling...\n');
     abortController.abort();
-  });
+  };
+  process.on('SIGINT', handleSigint);
 
   const stderrLine = (s) => { if (!quiet) process.stderr.write(s + '\n'); };
 
+  let commandError = null;
   try {
     const result = await runner.runTranscription({
       filePath,
       modelId,
       options: {
         diarization: diarize,
-        antiCorruption: !!flags['--anti-corruption'],
+        antiCorruption: reduceRepeatedText,
+        reduceRepeatedText,
+        jobMode: optionValidation.effective.jobMode,
+        sourceLanguage: optionValidation.effective.sourceLanguage,
+        targetLanguage: optionValidation.effective.targetLanguage,
         hfToken,
         numSpeakers,
         outputJson: format === 'json',
@@ -294,8 +336,10 @@ async function cmdTranscribe(argv) {
 
     let output;
     if (format === 'json') {
-      const payload = result.json != null ? result.json : { text: result.text };
-      output = JSON.stringify(payload, null, 2);
+      const payload = result.result != null ? result.result : { text: result.text };
+      const compactPayload = Object.fromEntries(Object.entries(payload)
+        .filter(([, value]) => value != null && (!Array.isArray(value) || value.length > 0)));
+      output = JSON.stringify(compactPayload, null, 2);
     } else {
       output = result.text;
     }
@@ -307,10 +351,15 @@ async function cmdTranscribe(argv) {
       if (!output.endsWith('\n')) process.stdout.write('\n');
     }
   } catch (err) {
-    if (sigintReceived || err.message === 'Cancelled') {
-      process.exit(130);
-    }
-    die(`transcribe failed: ${err.message}`);
+    commandError = err;
+  } finally {
+    process.removeListener('SIGINT', handleSigint);
+    await runner.shutdown();
+  }
+
+  if (commandError) {
+    if (sigintReceived || commandError.message === 'Cancelled') process.exit(130);
+    die(`transcribe failed: ${commandError.message}`);
   }
 }
 
@@ -319,6 +368,7 @@ async function cmdTranscribe(argv) {
 // ---------------------------------------------------------------------------
 
 const DOWNLOAD_SPEC = {
+  '--hf-token': { takesValue: true },
   '--quiet': { takesValue: false },
   '--help': { takesValue: false },
   '-h': { takesValue: false },
@@ -345,15 +395,28 @@ async function cmdDownloadModel(argv) {
 
   const id = positional[0];
   const quiet = !!flags['--quiet'];
+  const hfToken = flags['--hf-token'] || process.env.HF_TOKEN;
 
   let destPath;
+  let existingPath;
+  let modelSpec;
   try {
-    destPath = models.getModelPath(id);
+    modelSpec = models.getModel(id);
+    existingPath = models.getModelPath(id);
+    destPath = models.getModelDownloadPath(id);
   } catch (err) {
     die(`download-model: ${err.message}`);
   }
 
-  if (fs.existsSync(destPath)) {
+  if (modelSpec.runtimeAvailable === false) {
+    die(`download-model: ${modelSpec.displayName} is deferred until a compatible ${modelSpec.engine} release is available.`);
+  }
+
+  if (modelSpec.gated && !hfToken) {
+    die(`download-model: ${modelSpec.displayName} requires --hf-token <token> or $HF_TOKEN. Request access at ${modelSpec.accessUrl}.`);
+  }
+
+  if (fs.existsSync(existingPath)) {
     if (!quiet) process.stderr.write(`model ${id} already downloaded\n`);
     process.exit(0);
   }
@@ -366,7 +429,7 @@ async function cmdDownloadModel(argv) {
         lastPercent = data.percent;
         process.stderr.write(`\rdownloading ${id}: ${data.percent}%`);
       }
-    });
+    }, { hfToken });
     if (!quiet) process.stderr.write('\n');
   } catch (err) {
     if (!quiet) process.stderr.write('\n');
@@ -397,14 +460,45 @@ function cmdListModels(argv) {
     process.exit(0);
   }
 
-  const all = models.listModels();
+  const downloaded = new Map(models.listModels().map((model) => [model.id, model.downloaded]));
+  const all = models.listPresentationModels().map((model) => ({
+    id: model.id,
+    label: model.displayName,
+    task: model.task,
+    status: model.status,
+    availability: model.availability || (model.runtimeAvailable === false ? 'deferred' : 'available'),
+    languages: model.languages,
+    size: model.size,
+    licence: model.licence,
+    capabilities: {
+      jobModes: model.translationPairs.length > 0 ? ['transcribe', 'translate'] : ['transcribe'],
+      languageSelection: model.languageSelection,
+      timestamps: model.timestampLevel,
+      speakerLabels: model.builtInSpeakers ? 'built-in' : model.pyannoteValidated ? 'pyannote' : 'unavailable',
+      expectedSpeakers: model.pyannoteValidated,
+      reduceRepeatedText: model.repetitionControl,
+      runtimeAvailable: model.runtimeAvailable,
+    },
+    gated: model.gated,
+    downloaded: downloaded.get(model.id) || false,
+  }));
   if (flags['--json']) {
     process.stdout.write(JSON.stringify(all, null, 2) + '\n');
     return;
   }
 
-  const headers = ['ID', 'Label', 'Size', 'Downloaded'];
-  const rows = all.map((m) => [m.id, m.label, m.size, m.downloaded ? 'yes' : 'no']);
+  const headers = ['ID', 'Label', 'Task', 'Status', 'Languages', 'Size', 'Licence', 'Capabilities', 'Downloaded'];
+  const rows = all.map((m) => {
+    const capabilities = [
+      ...m.capabilities.jobModes,
+      `${m.capabilities.timestamps}-timestamps`,
+      m.capabilities.speakerLabels,
+      m.capabilities.expectedSpeakers ? 'expected-speakers' : null,
+      m.capabilities.reduceRepeatedText ? 'reduce-repeated-text' : null,
+      m.capabilities.runtimeAvailable ? null : 'unavailable',
+    ].filter(Boolean).join(',');
+    return [m.id, m.label, m.task, m.status, m.languages.join(','), m.size, m.licence, capabilities, m.downloaded ? 'yes' : 'no'];
+  });
   const widths = headers.map((h, i) => Math.max(h.length, ...rows.map((r) => r[i].length)));
   const fmt = (cols) => cols.map((c, i) => c.padEnd(widths[i])).join('  ');
   process.stdout.write(fmt(headers) + '\n');

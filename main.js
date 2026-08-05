@@ -1,4 +1,4 @@
-// Transcriber — local audio/video transcription
+// Transcriber - local audio/video transcription
 // Copyright (C) 2026 Andrew James Turner
 // Licensed under the GNU General Public License v3.0
 // See LICENSE for the full licence text.
@@ -11,13 +11,15 @@ const { autoUpdater } = require('electron-updater');
 const paths = require('./lib/paths');
 const Capabilities = require('./lib/capabilities');
 const models = require('./lib/models');
-const { createTranscriptionRunner } = require('./lib/transcription-runner');
+const { createTranscriptionRunner, createTranscriptionJobController } = require('./lib/transcription-runner');
+const JobOptions = require('./renderer/job-options');
 
 // Initialize path resolver at module load time so it's available for
 // all requires and function calls that follow.
 paths.initPaths({
   isPackaged: app.isPackaged,
   resourcesPath: app.isPackaged ? process.resourcesPath : __dirname,
+  modelDirectory: path.join(app.getPath('userData'), 'models'),
 });
 
 // --- Constants ---
@@ -44,9 +46,109 @@ function writeSettings(data) {
 }
 
 let mainWindow;
-let transcriptionAbort = null;
 let capabilities;
 let transcriptionRunner;
+const transcriptionJobs = createTranscriptionJobController();
+let nextFileId = 1;
+const selectedFiles = new Map();
+
+function ipcError(code, message, field) {
+  const error = new Error(message);
+  error.code = code;
+  if (field) error.field = field;
+  return error;
+}
+
+function requireObject(value, name) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw ipcError('INVALID_REQUEST', `${name} must be an object.`);
+  }
+  return value;
+}
+
+function rejectUnknownKeys(payload, allowed, name) {
+  const unknown = Object.keys(payload).find((key) => !allowed.has(key));
+  if (unknown) throw ipcError('INVALID_REQUEST', `Unknown ${name}: ${unknown}`, unknown);
+}
+
+function validateJobRequestOptions(options) {
+  const stringFields = ['jobMode', 'sourceLanguage', 'targetLanguage'];
+  for (const field of stringFields) {
+    if (options[field] != null && typeof options[field] !== 'string') {
+      throw ipcError('INVALID_REQUEST', `${field} must be a string.`, field);
+    }
+  }
+  for (const field of ['speakerLabels', 'reduceRepeatedText']) {
+    if (options[field] != null && typeof options[field] !== 'boolean') {
+      throw ipcError('INVALID_REQUEST', `${field} must be true or false.`, field);
+    }
+  }
+  if (options.expectedSpeakers != null
+    && (!Number.isInteger(options.expectedSpeakers) || options.expectedSpeakers < 1)) {
+    throw ipcError('INVALID_REQUEST', 'expectedSpeakers must be a positive whole number.', 'expectedSpeakers');
+  }
+}
+
+function registerMediaFiles(filePaths) {
+  return filePaths.map((filePath) => {
+    const id = `file-${nextFileId++}`;
+    selectedFiles.set(id, filePath);
+    return { id, name: path.basename(filePath) };
+  });
+}
+
+function resolveSelectedFile(fileId) {
+  if (typeof fileId !== 'string' || !selectedFiles.has(fileId)) {
+    throw ipcError('INVALID_FILE', 'Choose the audio or video file again.', 'fileId');
+  }
+  return selectedFiles.get(fileId);
+}
+
+function getModelForIpc(modelId) {
+  if (typeof modelId !== 'string' || !modelId) {
+    throw ipcError('INVALID_MODEL_ID', 'Choose a model.', 'modelId');
+  }
+  let model;
+  try {
+    model = models.getModel(modelId);
+  } catch (_) {
+    throw ipcError('INVALID_MODEL_ID', `Unknown model: ${modelId}`, 'modelId');
+  }
+  if (!model.runtimeAvailable) {
+    throw ipcError('MODEL_UNAVAILABLE', `${model.displayName} is deferred because the pinned local runtime does not support it.`, 'modelId');
+  }
+  return model;
+}
+
+function safeGpuStatus(status) {
+  return {
+    backend: status.backend,
+    detected: status.detected,
+    deviceName: status.deviceName,
+    setting: status.setting,
+    available: Array.isArray(status.available) ? [...status.available] : [],
+  };
+}
+
+function safePyannoteSetup(info) {
+  return {
+    pythonFound: !!info.pythonFound,
+    pythonVersion: info.pythonVersion || null,
+    pyannoteInstalled: !!info.pyannoteInstalled,
+    pyannoteVersion: info.pyannoteVersion || null,
+    gpuAvailable: !!info.gpuAvailable,
+  };
+}
+
+async function getPresentationSettings() {
+  const saved = readSettings();
+  const pythonInfo = await capabilities.getPythonInfo();
+  return {
+    hfTokenConfigured: typeof saved.hfToken === 'string' && saved.hfToken.length > 0,
+    gpu: safeGpuStatus(capabilities.getStatus()),
+    pyannote: safePyannoteSetup(pythonInfo),
+  };
+}
 
 // --- Debug logging ---
 const logDir = path.join(app.getPath('userData'), 'logs');
@@ -58,6 +160,15 @@ function logWrite(message) {
     const timestamp = new Date().toISOString();
     fs.appendFileSync(logFile, `[${timestamp}] ${message}\n`);
   } catch (_) { /* ignore logging errors */ }
+}
+
+function logRunnerMessage(message) {
+  let safeMessage = String(message);
+  const saved = readSettings();
+  if (typeof saved.hfToken === 'string' && saved.hfToken) {
+    safeMessage = safeMessage.split(saved.hfToken).join('[REDACTED]');
+  }
+  logWrite(safeMessage);
 }
 
 function logRotate() {
@@ -77,8 +188,10 @@ logWrite('=== Application started ===');
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 700,
-    height: 800,
+    width: 820,
+    height: 900,
+    minWidth: 390,
+    minHeight: 640,
     resizable: true,
     icon: path.join(__dirname, 'assets', 'icon.png'),
     webPreferences: {
@@ -108,7 +221,7 @@ app.whenReady().then(async () => {
     capabilities,
     paths,
     spawn,
-    log: logWrite,
+    log: logRunnerMessage,
   });
 
   createWindow();
@@ -152,6 +265,20 @@ app.whenReady().then(async () => {
     logWrite(`[UPDATE] Failed to initialize: ${err.message}`);
   }
 });
+let appShutdownFinished = false;
+let appShutdownPromise = null;
+app.on('before-quit', (event) => {
+  if (appShutdownFinished) return;
+  event.preventDefault();
+  transcriptionJobs.cancel();
+  if (appShutdownPromise) return;
+  appShutdownPromise = Promise.resolve(transcriptionRunner && transcriptionRunner.shutdown())
+    .catch((error) => logRunnerMessage(`[WORKER-SHUTDOWN-FAIL] ${error.message}`))
+    .finally(() => {
+      appShutdownFinished = true;
+      app.quit();
+    });
+});
 app.on('window-all-closed', () => app.quit());
 
 // --- IPC Handlers ---
@@ -165,55 +292,163 @@ ipcMain.handle('select-files', async () => {
     properties: ['openFile', 'multiSelections'],
   });
   if (result.canceled) return [];
-  return result.filePaths;
+  return registerMediaFiles(result.filePaths);
 });
 
-ipcMain.handle('get-models', async () => {
-  return models.listModels();
+ipcMain.handle('register-dropped-files', async (event, request) => {
+  const payload = requireObject(request, 'register-dropped-files request');
+  if (!Array.isArray(payload.filePaths) || payload.filePaths.some((value) => typeof value !== 'string')) {
+    throw ipcError('INVALID_REQUEST', 'filePaths must be an array of file paths.', 'filePaths');
+  }
+  return registerMediaFiles(payload.filePaths);
 });
 
-ipcMain.handle('download-model', async (event, modelId) => {
-  models.getModel(modelId); // validates id; throws on unknown
-  return models.downloadModel(modelId, models.getModelPath(modelId), (data) => {
-    event.sender.send('download-progress', data);
+ipcMain.handle('get-models', async (event, request) => {
+  const payload = requireObject(request, 'get-models request');
+  rejectUnknownKeys(payload, new Set(), 'get-models field');
+  return models.listPresentationModels();
+});
+
+ipcMain.handle('derive-job-options', async (event, request) => {
+  const payload = requireObject(request, 'derive-job-options request');
+  rejectUnknownKeys(payload, new Set(['modelId', 'state']), 'derive-job-options field');
+  if (typeof payload.modelId !== 'string') {
+    throw ipcError('INVALID_MODEL_ID', 'Choose a model.', 'modelId');
+  }
+  let model;
+  try {
+    model = models.getModel(payload.modelId);
+  } catch (_) {
+    throw ipcError('INVALID_MODEL_ID', `Unknown model: ${payload.modelId}`, 'modelId');
+  }
+  const rawState = payload.state == null ? {} : requireObject(payload.state, 'job option state');
+  rejectUnknownKeys(rawState, new Set(['optionsOpen', 'advancedOpen', 'requested']), 'job option state field');
+  const requested = rawState.requested == null ? {} : requireObject(rawState.requested, 'requested job options');
+  rejectUnknownKeys(requested, new Set([
+    'jobMode', 'sourceLanguage', 'targetLanguage', 'speakerLabels',
+    'expectedSpeakers', 'reduceRepeatedText',
+  ]), 'requested job option');
+  validateJobRequestOptions(requested);
+  const state = JobOptions.createJobOptionsState({
+    ...requested,
+    optionsOpen: !!rawState.optionsOpen,
+    advancedOpen: !!rawState.advancedOpen,
   });
+  return JobOptions.deriveJobOptions(model, state, models.validateJobOptions);
 });
 
-ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
-  const backend = capabilities.getActiveBackend();
-  logWrite(`=== Transcription started: model=${modelId}, backend=${backend}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
+ipcMain.handle('download-model', async (event, request) => {
+  const payload = requireObject(request, 'download-model request');
+  rejectUnknownKeys(payload, new Set(['modelId']), 'download-model field');
+  const model = getModelForIpc(payload.modelId);
+  const saved = readSettings();
+  const hfToken = typeof saved.hfToken === 'string' && saved.hfToken ? saved.hfToken : null;
+  if (model.gated && !hfToken) {
+    throw ipcError('HF_TOKEN_REQUIRED', `${model.displayName} requires a saved Hugging Face token.`, 'modelId');
+  }
+  try {
+    await models.downloadModel(model.id, models.getModelDownloadPath(model.id), (data) => {
+      event.sender.send('download-progress', data);
+    }, model.gated ? { hfToken } : {});
+  } catch (error) {
+    logRunnerMessage(`[DOWNLOAD-FAIL] model=${model.id} ${error.message}`);
+    const httpFailure = /^Download failed: HTTP \d+$/.test(error.message);
+    throw ipcError('DOWNLOAD_FAILED', httpFailure ? error.message : `Could not download ${model.displayName}.`);
+  }
+  return { modelId: model.id, downloaded: true };
+});
 
-  const abort = new AbortController();
-  transcriptionAbort = abort;
+ipcMain.handle('transcribe', async (event, request) => {
+  const payload = requireObject(request, 'transcribe request');
+  const filePath = resolveSelectedFile(payload.fileId);
+  const model = getModelForIpc(payload.modelId);
+  const options = payload.options == null ? {} : requireObject(payload.options, 'transcribe options');
+  const allowedOptions = new Set([
+    'jobMode', 'sourceLanguage', 'targetLanguage', 'speakerLabels',
+    'expectedSpeakers', 'reduceRepeatedText',
+  ]);
+  rejectUnknownKeys(payload, new Set(['fileId', 'modelId', 'options']), 'transcribe field');
+  rejectUnknownKeys(options, allowedOptions, 'transcribe option');
+  validateJobRequestOptions(options);
+  const validation = models.validateJobOptions(model.id, options);
+  if (!validation.valid) {
+    const first = validation.errors[0];
+    throw ipcError(first.code, first.message, first.field);
+  }
+  if (!fs.existsSync(models.getModelPath(model.id))) {
+    throw ipcError('MODEL_NOT_DOWNLOADED', `${model.displayName} must be downloaded before transcription.`, 'modelId');
+  }
+
+  const backend = capabilities.getActiveBackend();
+  logWrite(`=== Transcription started: model=${model.id}, backend=${backend}, speakerLabels=${validation.effective.speakerLabels} ===`);
+
+  const job = transcriptionJobs.begin();
 
   try {
-    const { text } = await transcriptionRunner.runTranscription({
+    const saved = readSettings();
+    const run = await transcriptionRunner.runTranscription({
       filePath,
-      modelId,
-      options,
-      signal: abort.signal,
+      modelId: model.id,
+      options: {
+        ...validation.effective,
+        diarization: validation.effective.speakerLabels,
+        numSpeakers: validation.effective.expectedSpeakers,
+        hfToken: validation.effective.speakerLabels ? saved.hfToken : undefined,
+      },
+      signal: job.controller.signal,
       onProgress: (msg) => event.sender.send('transcribe-status', msg),
       onDiarizeProgress: (data) => event.sender.send('diarize-status', data),
     });
-    return text;
+    return run.result || {
+      text: run.text,
+      model: model.id,
+      engine: model.engine,
+      backend,
+    };
+  } catch (error) {
+    logRunnerMessage(`[TRANSCRIPTION-FAIL] ${error.message}\n${error.stack || ''}`);
+    if (error.message === 'Cancelled') throw ipcError('CANCELLED', 'Cancelled');
+    if (error.code === 'AUDIO_LIMIT_EXCEEDED') {
+      throw ipcError(error.code, error.message, 'fileId');
+    }
+    throw ipcError('TRANSCRIPTION_FAILED', 'Transcription failed. Check the application log for details.');
   } finally {
-    transcriptionAbort = null;
+    job.finish();
   }
 });
 
 ipcMain.handle('cancel-transcription', () => {
-  if (transcriptionAbort) {
-    transcriptionAbort.abort();
-    return true;
-  }
-  return false;
+  return transcriptionJobs.cancel();
 });
 
-ipcMain.handle('check-python', async () => capabilities.getPythonInfo());
+ipcMain.handle('get-settings', async (event, request) => {
+  const payload = requireObject(request, 'get-settings request');
+  rejectUnknownKeys(payload, new Set(['refreshPyannote']), 'get-settings field');
+  if (payload.refreshPyannote != null && typeof payload.refreshPyannote !== 'boolean') {
+    throw ipcError('INVALID_REQUEST', 'refreshPyannote must be true or false.', 'refreshPyannote');
+  }
+  return getPresentationSettings();
+});
 
-ipcMain.handle('get-gpu-status', () => capabilities.getStatus());
-
-ipcMain.handle('set-gpu-backend', (event, backend) => capabilities.setBackendPreference(backend));
+ipcMain.handle('update-settings', async (event, request) => {
+  const payload = requireObject(request, 'update-settings request');
+  const allowed = new Set(['hfToken', 'gpuPreference']);
+  rejectUnknownKeys(payload, allowed, 'setting');
+  if (Object.prototype.hasOwnProperty.call(payload, 'hfToken')) {
+    if (typeof payload.hfToken !== 'string' || payload.hfToken.length > 8192) {
+      throw ipcError('INVALID_SETTING', 'Hugging Face token must be a string of at most 8192 characters.', 'hfToken');
+    }
+    writeSettings({ hfToken: payload.hfToken || null });
+  }
+  if (Object.prototype.hasOwnProperty.call(payload, 'gpuPreference')) {
+    if (!['auto', 'cpu', 'vulkan'].includes(payload.gpuPreference)) {
+      throw ipcError('INVALID_SETTING', 'GPU preference must be auto, cpu or vulkan.', 'gpuPreference');
+    }
+    await capabilities.setBackendPreference(payload.gpuPreference);
+  }
+  const saved = readSettings();
+  return { hfTokenConfigured: typeof saved.hfToken === 'string' && saved.hfToken.length > 0 };
+});
 
 
 ipcMain.handle('open-external', async (event, url) => {
@@ -230,8 +465,6 @@ ipcMain.handle('is-debug-build', () => {
   const markerPath = paths.getResourcePath('.debug-build');
   return fs.existsSync(markerPath) || process.env.DEBUG_BUILD === '1';
 });
-
-ipcMain.handle('get-log-path', () => logFile);
 
 ipcMain.handle('open-log-file', async () => {
   if (fs.existsSync(logFile)) {
@@ -264,5 +497,3 @@ ipcMain.handle('save-transcript', async (event, text) => {
   fs.writeFileSync(result.filePath, text, 'utf-8');
   return true;
 });
-
-

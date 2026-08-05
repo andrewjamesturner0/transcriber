@@ -1,4 +1,4 @@
-// Transcriber — local audio/video transcription
+// Transcriber - local audio/video transcription
 // Copyright (C) 2026 Andrew James Turner
 // Licensed under the GNU General Public License v3.0
 // See LICENSE for the full licence text.
@@ -7,11 +7,16 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   selectFiles: () => ipcRenderer.invoke('select-files'),
-  getPathForFile: (file) => webUtils.getPathForFile(file),
-  transcribe: (filePath, modelId, options) => ipcRenderer.invoke('transcribe', filePath, modelId, options),
+  registerDroppedFiles: (files) => ipcRenderer.invoke('register-dropped-files', {
+    filePaths: Array.from(files, (file) => webUtils.getPathForFile(file)),
+  }),
+  transcribe: (request) => ipcRenderer.invoke('transcribe', request),
   saveTranscript: (text) => ipcRenderer.invoke('save-transcript', text),
-  getModels: () => ipcRenderer.invoke('get-models'),
-  downloadModel: (modelId) => ipcRenderer.invoke('download-model', modelId),
+  getModels: () => ipcRenderer.invoke('get-models', {}),
+  deriveJobOptions: (request) => ipcRenderer.invoke('derive-job-options', request),
+  downloadModel: (request) => ipcRenderer.invoke('download-model', request),
+  getSettings: (request = {}) => ipcRenderer.invoke('get-settings', request),
+  updateSettings: (request) => ipcRenderer.invoke('update-settings', request),
   onStatus: (callback) => ipcRenderer.on('transcribe-status', (_, msg) => callback(msg)),
   onDownloadProgress: (callback) => ipcRenderer.on('download-progress', (_, data) => callback(data)),
   getLicenses: () => ipcRenderer.invoke('get-licenses'),
@@ -21,12 +26,8 @@ contextBridge.exposeInMainWorld('api', {
   onUpdateDownloaded: (cb) => ipcRenderer.on('update-downloaded', () => cb()),
   installUpdate: () => ipcRenderer.invoke('install-update'),
   cancelTranscription: () => ipcRenderer.invoke('cancel-transcription'),
-  checkPythonSetup: () => ipcRenderer.invoke('check-python'),
-  getGpuStatus: () => ipcRenderer.invoke('get-gpu-status'),
-  setGpuBackend: (backend) => ipcRenderer.invoke('set-gpu-backend', backend),
   onDiarizeStatus: (callback) => ipcRenderer.on('diarize-status', (_, data) => callback(data)),
   isDebugBuild: () => ipcRenderer.invoke('is-debug-build'),
-  getLogPath: () => ipcRenderer.invoke('get-log-path'),
   openLogFile: () => ipcRenderer.invoke('open-log-file'),
   openLogFolder: () => ipcRenderer.invoke('open-log-folder'),
 });
