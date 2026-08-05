@@ -1,10 +1,10 @@
 [
   {
     "name": "FFmpeg",
-    "license": "LGPL 2.1",
-    "description": "Audio format conversion",
-    "url": "https://github.com/FFmpeg/FFmpeg",
-    "text": "FFmpeg is free software licensed under the GNU Lesser General Public License (LGPL) version 2.1 or later.\n\nYou may obtain a copy of the License at:\nhttps://www.gnu.org/licenses/old-licenses/lgpl-2.1.html\n\nFFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.\n\nThis software uses libraries from the FFmpeg project under the LGPL v2.1+. The source code for FFmpeg can be obtained at https://github.com/FFmpeg/FFmpeg."
+    "license": "GPLv3",
+    "description": "Audio format conversion using bundled static GPLv3 builds",
+    "url": "https://ffmpeg.org/legal.html",
+    "text": "The bundled static FFmpeg binaries are licensed under GNU GPL version 3. The configured Windows release essentials build comes from https://www.gyan.dev/ffmpeg/builds/. The configured Linux static build comes from https://johnvansickle.com/ffmpeg/. The GPLv3 licence text is at https://www.gnu.org/licenses/gpl-3.0.html. Corresponding build and source details are linked from those build pages, and FFmpeg source downloads and repository links are at https://ffmpeg.org/download.html#get-sources. FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project."
   },
   {
     "name": "whisper.cpp",
@@ -16,9 +16,9 @@
   {
     "name": "OpenAI Whisper",
     "license": "MIT",
-    "description": "Model weights",
+    "description": "Whisper model weights (one bundled fallback and 11 optional downloads)",
     "url": "https://github.com/openai/whisper",
-    "text": "MIT License\n\nCopyright (c) 2022 OpenAI\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
+    "text": "MIT License\n\nCopyright (c) 2022 OpenAI\n\nThis notice covers tiny.en, tiny, base.en, base, small.en, small, medium.en, medium, large-v3, large-v3-turbo, large-v3-turbo-q5_0 and large-v3-q5_0. tiny.en is bundled as Transcriber's fallback. The other 11 retained Whisper model files are optional separate downloads started by the user.\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE."
   },
   {
     "name": "Electron & Chromium",
@@ -47,5 +47,75 @@
     "description": "Numerical computing (user-installed)",
     "url": "https://github.com/numpy/numpy",
     "text": "BSD 3-Clause License\n\nCopyright (c) 2005-2026 NumPy Developers. All rights reserved.\n\nRedistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n\n1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.\n\n2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.\n\n3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
+  },
+  {
+    "name": "transcribe.cpp",
+    "license": "MIT",
+    "description": "Local inference engine and Node.js binding",
+    "url": "https://github.com/handy-computer/transcribe.cpp",
+    "text": "Copyright (c) the transcribe.cpp authors. Licensed under the MIT License. The application pins the transcribe-cpp binding and Linux/Windows CPU/Vulkan native packages at version 0.1.3."
+  },
+  {
+    "name": "Koffi",
+    "license": "MIT",
+    "description": "Foreign-function interface used by transcribe.cpp",
+    "url": "https://github.com/Koromix/koffi",
+    "text": "Copyright (c) Niels Martignene and Koffi contributors. Licensed under the MIT License."
+  },
+  {
+    "name": "Parakeet TDT-CTC 110M model",
+    "modelId": "parakeet-tdt-ctc-110m",
+    "license": "CC BY 4.0",
+    "description": "Optional NVIDIA English speech-recognition model",
+    "url": "https://huggingface.co/nvidia/parakeet-tdt_ctc-110m",
+    "text": "NVIDIA Parakeet TDT-CTC 110M. Licensed under CC BY 4.0. The model is downloaded separately at the user's request and is not bundled with Transcriber."
+  },
+  {
+    "name": "Moonshine Tiny model",
+    "modelId": "moonshine-tiny",
+    "license": "MIT",
+    "description": "Optional Useful Sensors English speech-recognition model",
+    "url": "https://huggingface.co/UsefulSensors/moonshine",
+    "text": "Useful Sensors Moonshine Tiny. Licensed under the MIT License. The model is downloaded separately at the user's request and is not bundled with Transcriber."
+  },
+  {
+    "name": "Nemotron 3.5 ASR Streaming 0.6B model",
+    "modelId": "nemotron-3.5-0.6b",
+    "license": "OpenMDW-1.1",
+    "description": "Optional NVIDIA multilingual speech-recognition model",
+    "url": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b",
+    "text": "NVIDIA Nemotron 3.5 ASR Streaming 0.6B. Governed by Open Model Data Web 1.1. The model is downloaded separately at the user's request and is not bundled with Transcriber."
+  },
+  {
+    "name": "Qwen3-ASR 0.6B model",
+    "modelId": "qwen3-asr-0.6b",
+    "license": "Apache-2.0",
+    "description": "Optional Alibaba multilingual speech-recognition model",
+    "url": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B",
+    "text": "Alibaba Qwen3-ASR 0.6B. Licensed under Apache License 2.0. The model is downloaded separately at the user's request and is not bundled with Transcriber."
+  },
+  {
+    "name": "Canary 180M Flash model",
+    "modelId": "canary-180m-flash",
+    "license": "CC BY 4.0",
+    "description": "Optional NVIDIA transcription and translation model",
+    "url": "https://huggingface.co/nvidia/canary-180m-flash",
+    "text": "NVIDIA Canary 180M Flash. Licensed under CC BY 4.0. The model is downloaded separately at the user's request and is not bundled with Transcriber."
+  },
+  {
+    "name": "MedASR model",
+    "modelId": "medasr",
+    "license": "Health AI Developer Foundations terms",
+    "description": "Optional gated Google medical speech-recognition model",
+    "url": "https://developers.google.com/health-ai-developer-foundations/terms",
+    "text": "Google Health AI MedASR. Access requires accepting Google's Health AI Developer Foundations terms. The gated model is downloaded separately with the user's Hugging Face credentials and is not bundled with Transcriber."
+  },
+  {
+    "name": "MOSS Transcribe-Diarize model",
+    "modelId": "moss-transcribe-diarize",
+    "license": "Apache-2.0",
+    "description": "Deferred OpenMOSS transcription and diarization model",
+    "url": "https://huggingface.co/OpenMOSS-Team/MOSS-Transcribe-Diarize",
+    "text": "OpenMOSS MOSS Transcribe-Diarize. Licensed under Apache License 2.0. This model is visible but unavailable in the current release and is not downloaded or bundled."
   }
 ]

@@ -14,6 +14,10 @@ dep() { node -p "require('$DEPS_JSON')$1"; }
 
 mkdir -p "$CPU_DIR" "$MODELS_DIR"
 
+echo "==> Installing pinned Node dependencies..."
+(cd "$PROJECT_DIR" && npm install)
+node "$PROJECT_DIR/scripts/verify-transcribe-runtime.js" linux-x64
+
 # --- 1. Build whisper.cpp (CPU) ---
 echo "==> Building whisper.cpp (CPU)..."
 if [ ! -d "$BUILD_DIR" ]; then

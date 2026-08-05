@@ -4,17 +4,39 @@ icon: assets/icon-512.png
 directories:
   output: dist
 
+files:
+  - main.js
+  - preload.js
+  - cli.js
+  - package.json
+  - deps.json
+  - lib/**/*
+  - renderer/**/*
+  - assets/**/*
+  - worker/**/*
+  - LICENSE
+  - NOTICE
+
+asarUnpack:
+  - worker/**/*
+  - node_modules/transcribe-cpp/**/*
+  - node_modules/koffi/**/*
+  - node_modules/@koromix/koffi-*/**/*
+  - node_modules/@transcribe-cpp/**/*
+
 extraResources:
   - from: models/
     to: models/
     filter:
-      - "**/*"
+      - "ggml-tiny.en.bin"
   - from: lib/diarize.py
     to: lib/diarize.py
   - from: lib/requirements.txt
     to: lib/requirements.txt
   - from: THIRD-PARTY-LICENSES.json
     to: THIRD-PARTY-LICENSES.json
+  - from: NOTICE
+    to: NOTICE
   - from: "."
     to: "."
     filter:

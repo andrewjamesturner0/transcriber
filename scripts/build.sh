@@ -165,6 +165,15 @@ cd "$PROJECT_DIR"
 echo "==> Installing npm dependencies..."
 npm install
 
+case "$TARGET" in
+  win) node scripts/verify-transcribe-runtime.js win32-x64 ;;
+  linux) node scripts/verify-transcribe-runtime.js linux-x64 ;;
+  all)
+    node scripts/verify-transcribe-runtime.js win32-x64
+    node scripts/verify-transcribe-runtime.js linux-x64
+    ;;
+esac
+
 if [ "$SKIP_DEPS" = false ]; then
   download_model
 

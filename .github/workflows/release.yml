@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         run: npm install
 
+      - name: Verify transcribe.cpp runtime
+        run: node scripts/verify-transcribe-runtime.js win32-x64
+
       - name: Create directories
         shell: pwsh
         run: |
@@ -84,10 +87,31 @@ jobs:
         run: |
           Invoke-WebRequest -Uri "${{ steps.deps.outputs.MODEL_URL }}" -OutFile models\ggml-tiny.en.bin
 
+      - name: Verify Windows packaging inputs
+        shell: pwsh
+        run: |
+          $required = @(
+            'bin\win\cpu\whisper-cli.exe',
+            'bin\win\cpu\whisper.dll',
+            'bin\win\vulkan\whisper-cli.exe',
+            'bin\win\vulkan\whisper.dll',
+            'bin\win\vulkan\ggml-vulkan.dll',
+            'bin\win\ffmpeg.exe',
+            'models\ggml-tiny.en.bin'
+          )
+          $missing = $required | Where-Object { -not (Test-Path $_ -PathType Leaf) }
+          if ($missing) {
+            throw "Missing Windows packaging inputs: $($missing -join ', ')"
+          }
+
       - name: Build
         run: npx electron-builder --win nsis -p never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Smoke packaged transcribe.cpp worker
+        shell: pwsh
+        run: node scripts/smoke-packaged-worker.js "dist/win-unpacked/Transcriber.exe" "dist/win-unpacked/resources/app.asar.unpacked/worker/transcribe-worker.mjs"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
@@ -122,6 +146,9 @@ jobs:
 
       - name: Install dependencies
         run: npm install
+
+      - name: Verify transcribe.cpp runtime
+        run: node scripts/verify-transcribe-runtime.js linux-x64
 
       - name: Create directories
         run: mkdir -p bin/linux/cpu bin/linux/vulkan models
@@ -166,6 +193,9 @@ jobs:
         run: npx electron-builder --linux AppImage -p never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+
+      - name: Smoke packaged transcribe.cpp worker
+        run: node scripts/smoke-packaged-worker.js dist/linux-unpacked/transcriber dist/linux-unpacked/resources/app.asar.unpacked/worker/transcribe-worker.mjs
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
