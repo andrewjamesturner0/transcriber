@@ -109,22 +109,27 @@ function makeBrowserContext() {
 
     // Init calls that fire at load time
     getModels: () => noopPromise([]),
-    checkPythonSetup: () => noopPromise({ pythonFound: false }),
-    getGpuStatus: () => noopPromise({ backend: 'cpu', detected: null, deviceName: null, setting: 'auto', available: ['cpu'] }),
+    deriveJobOptions: () => noopPromise(null),
+    getSettings: () => noopPromise({
+      hfTokenConfigured: false,
+      pyannote: { pythonFound: false },
+      gpu: { backend: 'cpu', detected: null, deviceName: null, setting: 'auto', available: ['cpu'] },
+    }),
     isDebugBuild: () => noopPromise(false),
     getVersion: () => noopPromise('0.0.0'),
 
     // Calls made by event handlers (not top-level but stubbed for completeness)
     selectFiles: () => noopPromise([]),
-    transcribe: () => noopPromise(''),
-    downloadModel: () => noopPromise(true),
+    transcribe: () => noopPromise({ text: '', model: 'tiny.en', engine: 'whisper.cpp', backend: 'cpu' }),
+    downloadModel: () => noopPromise({ modelId: 'tiny.en', downloaded: true }),
+    updateSettings: () => noopPromise({ hfTokenConfigured: true }),
     cancelTranscription: () => noopPromise(true),
     saveTranscript: () => noopPromise(false),
     openExternal: noopAsync,
     openLogFile: noopAsync,
     openLogFolder: noopAsync,
     installUpdate: noopAsync,
-    getPathForFile: (f) => '',
+    registerDroppedFiles: () => noopPromise([]),
     getLicenses: () => noopPromise([]),
   };
 
@@ -149,6 +154,53 @@ function makeBrowserContext() {
 // --- Tests ---
 
 console.log('Renderer smoke tests\n');
+
+test('preload exposes object IPC contracts without raw path or settings access', () => {
+  const calls = [];
+  let exposed;
+  const electron = {
+    contextBridge: { exposeInMainWorld(name, api) { exposed = { name, api }; } },
+    ipcRenderer: {
+      invoke(channel, ...args) {
+        calls.push({ channel, args });
+        return Promise.resolve();
+      },
+      on() {},
+    },
+    webUtils: { getPathForFile(file) { return `/private/${file.name}`; } },
+  };
+  const sandbox = {
+    require(name) {
+      if (name === 'electron') return electron;
+      throw new Error(`Unexpected preload require: ${name}`);
+    },
+    Array,
+  };
+  vm.createContext(sandbox);
+  vm.runInContext(fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf-8'), sandbox, { filename: 'preload.js' });
+
+  assert(exposed.name === 'api', 'preload should expose api');
+  assert(!('getPathForFile' in exposed.api), 'raw path helper must not be exposed');
+  assert(!('getLogPath' in exposed.api), 'raw log path helper must not be exposed');
+  exposed.api.getModels();
+  exposed.api.deriveJobOptions({ modelId: 'small', state: {} });
+  exposed.api.downloadModel({ modelId: 'tiny.en' });
+  exposed.api.transcribe({ fileId: 'file-1', modelId: 'tiny.en', options: {} });
+  assert(calls[0].channel === 'get-models' && typeof calls[0].args[0] === 'object', 'get-models should receive an object');
+  assert(calls[1].channel === 'derive-job-options' && calls[1].args[0].modelId === 'small', 'job options should use a narrow IPC contract');
+  assert(calls[2].channel === 'download-model' && calls[2].args[0].modelId === 'tiny.en', 'download-model should receive an object');
+  assert(calls[3].channel === 'transcribe' && calls[3].args[0].fileId === 'file-1', 'transcribe should receive an object');
+});
+
+test('presentation catalogue excludes download internals and keeps MOSS deferred', () => {
+  const catalogue = require(path.join(ROOT, 'lib', 'model-catalogue'));
+  const presented = catalogue.listPresentationModels();
+  const moss = presented.find((model) => model.id === 'moss-transcribe-diarize');
+  assert(presented.every((model) => !('sha256' in model)), 'checksums must not cross IPC');
+  assert(presented.every((model) => !('repository' in model)), 'repositories must not cross IPC');
+  assert(presented.every((model) => !('fileName' in model)), 'model file names must not cross IPC');
+  assert(moss && moss.runtimeAvailable === false, 'MOSS should remain visible and unavailable');
+});
 
 test('queue.js parses without errors', () => {
   const ctx = makeBrowserContext();
@@ -176,6 +228,8 @@ test('renderer.js parses without errors', () => {
     'media-extensions.js',
     'time-estimates.js',
     'transcript-format.js',
+    'model-chooser.js',
+    'job-options.js',
   ];
   for (const mod of modules) {
     vm.runInContext(
@@ -204,10 +258,12 @@ test('queue.js + renderer.js together parse without errors', () => {
   const mediaSrc = fs.readFileSync(path.join(RENDERER_DIR, 'media-extensions.js'), 'utf-8');
   const timeSrc = fs.readFileSync(path.join(RENDERER_DIR, 'time-estimates.js'), 'utf-8');
   const formatSrc = fs.readFileSync(path.join(RENDERER_DIR, 'transcript-format.js'), 'utf-8');
+  const chooserSrc = fs.readFileSync(path.join(RENDERER_DIR, 'model-chooser.js'), 'utf-8');
+  const optionsSrc = fs.readFileSync(path.join(RENDERER_DIR, 'job-options.js'), 'utf-8');
   const rendererSrc = fs.readFileSync(path.join(RENDERER_DIR, 'renderer.js'), 'utf-8');
 
   // Simulate loading all scripts
-  const combined = `${queueSrc}\n${mediaSrc}\n${timeSrc}\n${formatSrc}\n${rendererSrc}`;
+  const combined = `${queueSrc}\n${mediaSrc}\n${timeSrc}\n${formatSrc}\n${chooserSrc}\n${optionsSrc}\n${rendererSrc}`;
   vm.runInContext(combined, sandbox, { filename: 'renderer-combined.js' });
 
   // If we got here without throwing, all scripts parsed and top-level code ran.

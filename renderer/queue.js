@@ -122,6 +122,27 @@ function createQueue() {
     return results;
   }
 
+  /**
+   * Finish one processing run. Successful items from the supplied run are
+   * consumed, while failures remain visible in the queue for inspection.
+   *
+   * @param {Array} results - entries returned by processAll()
+   * @returns {Array} successful items from this run, in queue order
+   */
+  function finishRun(results) {
+    const completedIds = new Set((results || [])
+      .filter((entry) => entry && entry.status === 'done' && entry.item)
+      .map((entry) => entry.item.id));
+    const completed = _items.filter((item) => completedIds.has(item.id) && item.status === 'done');
+
+    // A done item has already been consumed by a run. Remove all such items so
+    // stale successes cannot leak into later output even if a caller previously
+    // failed to finish its run.
+    _items = _items.filter((item) => item.status !== 'done');
+    if (_items.length === 0) _activeId = null;
+    return completed;
+  }
+
   return {
     enqueue,
     remove,
@@ -130,6 +151,7 @@ function createQueue() {
     getSummary,
     getActiveItem,
     processAll,
+    finishRun,
   };
 }
 

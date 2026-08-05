@@ -214,6 +214,22 @@ test('error in one item does not break the remaining queue', async () => {
   assert(items[2].status === 'done', 'remaining item should be done');
 });
 
+test('MedASR duration error does not stop the following queue item', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('over-limit.wav'), makeFile('valid.wav')]);
+  const results = await q.processAll(async (item) => {
+    if (item.fileName === 'over-limit.wav') {
+      const error = new Error('MedASR supports recordings up to about 400 seconds; this file is 401 seconds.');
+      error.code = 'AUDIO_LIMIT_EXCEEDED';
+      throw error;
+    }
+    return 'completed';
+  });
+  assert(results[0].status === 'error');
+  assert(results[1].status === 'done');
+  assert(q.getItems()[1].result === 'completed');
+});
+
 test('processAll reports per-item lifecycle via onChange', async () => {
   const q = createQueue();
   q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
@@ -314,6 +330,56 @@ test('processAll only processes pending items', async () => {
   await q.processAll(async (i) => { called.push(i.fileName); return i.fileName; });
   assert(called.length === 1, `expected 1 call, got ${called.length}`);
   assert(called[0] === 'a.mp3', 'only pending item should be processed');
+});
+
+test('finishRun consumes successes and keeps failures with their messages', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('ok.wav'), makeFile('too-long.wav')]);
+  const results = await q.processAll(async (item) => {
+    if (item.fileName === 'too-long.wav') {
+      throw new Error('MedASR supports recordings up to 6 minutes 40 seconds. This file is 6 minutes 41 seconds.');
+    }
+    return 'current transcript';
+  });
+
+  const completed = q.finishRun(results);
+  assert(completed.length === 1, `expected one completed item, got ${completed.length}`);
+  assert(completed[0].fileName === 'ok.wav', 'the current success should be returned');
+  assert(completed[0].result === 'current transcript', 'the current transcript should be returned');
+  assert(q.getItems().length === 1, 'only the failed item should remain visible');
+  assert(q.getItems()[0].status === 'error', 'the failed item should remain an error');
+  assert(q.getItems()[0].error.includes('MedASR supports recordings'), 'the failure message should remain visible');
+});
+
+test('finished successes cannot appear in a later run', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('first.wav')]);
+  const firstResults = await q.processAll(async () => 'first transcript');
+  const firstCompleted = q.finishRun(firstResults);
+  assert(firstCompleted.length === 1, 'first run should return its success');
+  assert(q.getItems().length === 0, 'first success should be consumed');
+
+  q.enqueue([makeFile('second.wav')]);
+  const secondResults = await q.processAll(async () => 'second transcript');
+  const secondCompleted = q.finishRun(secondResults);
+  assert(secondCompleted.length === 1, 'second run should contain one success');
+  assert(secondCompleted[0].result === 'second transcript', 'later output must contain only the later transcript');
+  assert(!secondCompleted.some((item) => item.result === 'first transcript'), 'earlier output must not be duplicated');
+});
+
+test('finishRun does not consume pending items after cancellation', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('first.wav'), makeFile('later.wav')]);
+  const controller = new AbortController();
+  const results = await q.processAll(async (item) => {
+    controller.abort();
+    return `done:${item.fileName}`;
+  }, { signal: controller.signal });
+
+  q.finishRun(results);
+  assert(q.getItems().length === 1, 'the unattempted item should remain queued');
+  assert(q.getItems()[0].fileName === 'later.wav', 'the later item should remain');
+  assert(q.getItems()[0].status === 'pending', 'the later item should remain pending');
 });
 
 // ---------------------------------------------------------------------------
