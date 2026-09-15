@@ -120,11 +120,15 @@ setup_linux() {
     find "$BUILD_DIR/build-cpu" -name "libggml*.so*" -exec cp {} "$CPU_DIR/" \;
   fi
 
-  # Vulkan (GPU) build — requires libvulkan-dev and glslang-tools
+  # Vulkan (GPU) build - requires libvulkan-dev, glslc, and spirv-headers
   if [ "$NO_GPU" = true ]; then
     echo "==> Skipping Vulkan build (--no-gpu)."
   elif ! command -v glslc &>/dev/null; then
-    echo "==> Skipping Vulkan build (glslc not installed — run: sudo apt install libvulkan-dev glslc)"
+    echo "==> Skipping Vulkan build (glslc not installed - run: sudo apt install libvulkan-dev glslc spirv-headers)"
+  elif ! { pkg-config --exists vulkan 2>/dev/null || [ -f /usr/include/vulkan/vulkan.h ]; }; then
+    echo "==> Skipping Vulkan build (Vulkan headers not installed - run: sudo apt install libvulkan-dev glslc spirv-headers)"
+  elif ! cmake --find-package -DNAME=SPIRV-Headers -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST &>/dev/null; then
+    echo "==> Skipping Vulkan build (SPIR-V headers not installed - run: sudo apt install libvulkan-dev glslc spirv-headers)"
   elif [ -f "$VULKAN_DIR/whisper-cli" ]; then
     echo "==> Linux whisper-cli (Vulkan) already exists, skipping."
   else

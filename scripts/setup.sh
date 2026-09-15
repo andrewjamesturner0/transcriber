@@ -42,8 +42,10 @@ echo "    Copying shared libraries..."
 find "$BUILD_DIR/build-cpu" -name "libwhisper.so*" -exec cp {} "$CPU_DIR/" \;
 find "$BUILD_DIR/build-cpu" -name "libggml*.so*" -exec cp {} "$CPU_DIR/" \;
 
-# --- 1b. Build whisper.cpp (Vulkan) if libvulkan-dev is installed ---
-if command -v glslc &>/dev/null && { pkg-config --exists vulkan 2>/dev/null || [ -f /usr/include/vulkan/vulkan.h ]; }; then
+# --- 1b. Build whisper.cpp (Vulkan) when all build dependencies are installed ---
+if command -v glslc &>/dev/null && \
+   { pkg-config --exists vulkan 2>/dev/null || [ -f /usr/include/vulkan/vulkan.h ]; } && \
+   cmake --find-package -DNAME=SPIRV-Headers -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST &>/dev/null; then
   VULKAN_DIR="$PLATFORM_DIR/vulkan"
   mkdir -p "$VULKAN_DIR"
   echo "==> Building whisper.cpp (Vulkan)..."
@@ -57,7 +59,7 @@ if command -v glslc &>/dev/null && { pkg-config --exists vulkan 2>/dev/null || [
   find "$BUILD_DIR/build-vulkan" -name "libwhisper.so*" -exec cp {} "$VULKAN_DIR/" \;
   find "$BUILD_DIR/build-vulkan" -name "libggml*.so*" -exec cp {} "$VULKAN_DIR/" \;
 else
-  echo "==> Vulkan SDK not found, skipping Vulkan build (install libvulkan-dev glslc for GPU support)"
+  echo "==> Vulkan build dependencies not found, skipping Vulkan build (install libvulkan-dev glslc spirv-headers for GPU support)"
 fi
 
 # --- 2. Download model ---

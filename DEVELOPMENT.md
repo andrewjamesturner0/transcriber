@@ -10,6 +10,7 @@
 - A C/C++ compiler (`gcc` / `g++`)
 - `cmake` >= 3.10
 - `make`
+- For Vulkan builds: `libvulkan-dev`, `glslc`, and `spirv-headers`
 
 ## Quick Start (Linux)
 

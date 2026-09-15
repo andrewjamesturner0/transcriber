@@ -118,7 +118,7 @@ jobs:
           echo "FFMPEG_URL=$(node -p "require('./deps.json').ffmpeg['linux-amd64'].url")" >> "$GITHUB_OUTPUT"
 
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake gcc g++ libvulkan-dev glslc
+        run: sudo apt-get update && sudo apt-get install -y cmake gcc g++ libvulkan-dev glslc spirv-headers
 
       - name: Install dependencies
         run: npm install
