@@ -1,6 +1,6 @@
 {
   "whisper": {
-    "version": "v1.9.4",
+    "version": "v1.9.2",
     "repo": "ggml-org/whisper.cpp",
     "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/download/${version}",
     "winCpuAsset": "whisper-bin-x64.zip"

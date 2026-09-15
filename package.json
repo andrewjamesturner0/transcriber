@@ -3,6 +3,9 @@
   "version": "0.3.1-dev",
   "description": "Local audio transcription powered by whisper.cpp",
   "license": "GPL-3.0-only",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
