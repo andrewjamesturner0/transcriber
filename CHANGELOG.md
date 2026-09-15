@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-15
+
+### Changed
+
+- Updated whisper.cpp from v1.8.4 to v1.9.2, the latest release that provides the required Windows binary.
+- Updated Electron from 42.0.1 to 44.3.0 and raised the required Node.js version to 22.12.
+- Updated the Windows FFmpeg build and verified its checksum.
+
+### Fixed
+
+- Kept `package-lock.json` in sync when the weekly dependency workflow updates Electron.
+- Skipped whisper.cpp releases that do not provide the required Windows binary.
+- Installed the SPIR-V headers required to build whisper.cpp with Vulkan on Linux and Windows.
+
 ## [0.3.0] - 2026-05-13
 
 ### Added
