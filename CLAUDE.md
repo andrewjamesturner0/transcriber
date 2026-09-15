@@ -8,6 +8,8 @@ Transcriber, an Electron desktop app wrapping [whisper.cpp](https://github.com/g
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions, project structure, and architecture details.
 
+Before changing existing behaviour, check `.agents/docs/LESSONS.md` for durable gotchas and deliberate behaviours maintained by `/lesson`.
+
 ## Commands
 
 ```bash
