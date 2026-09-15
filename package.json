@@ -3,6 +3,9 @@
   "version": "0.3.1-dev",
   "description": "Local audio transcription powered by whisper.cpp",
   "license": "GPL-3.0-only",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "main": "main.js",
   "scripts": {
     "start": "electron .",
@@ -14,7 +17,7 @@
     "package:all": "electron-builder --win --linux --mac"
   },
   "devDependencies": {
-    "electron": "^42.0.1",
+    "electron": "^44.3.0",
     "electron-builder": "^25.0.0"
   },
   "dependencies": {

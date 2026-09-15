@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) >= 18
+- [Node.js](https://nodejs.org/) >= 22.12
 - [Git](https://git-scm.com/)
 - `curl` and `unzip` (available by default on most systems)
 
@@ -75,7 +75,7 @@ Build and run the app directly on Windows without cross-compiling from Linux.
 
 ### Prerequisites
 
-1. **Node.js** >= 18: [Download](https://nodejs.org/)
+1. **Node.js** >= 22.12: [Download](https://nodejs.org/)
 2. **Git for Windows**: [Download](https://git-scm.com/download/win)
 3. **Visual Studio Build Tools** (for compiling whisper.cpp):
    - Download [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
@@ -96,7 +96,7 @@ mkdir -p bin\win\cpu
 mkdir -p models
 
 # Download whisper.cpp release
-$WHISPER_VERSION = "v1.8.4"
+$WHISPER_VERSION = "v1.9.2"
 Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
 Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
 Copy-Item whisper-temp\* bin\win\cpu\ -Recurse -Force
@@ -279,9 +279,10 @@ All external dependency versions and download URLs are centralized in `deps.json
 
 A weekly GitHub Actions workflow (`.github/workflows/dep-check.yml`) runs every Monday:
 
-1. Checks the latest whisper.cpp release tag against `deps.json`
+1. Checks the latest whisper.cpp release with the required Windows binary against `deps.json`
 2. Downloads ffmpeg archives and compares SHA-256 checksums against stored values
-3. If anything changed, opens a PR with the updated `deps.json`
+3. Checks the latest Electron release and updates `package.json` and `package-lock.json`
+4. If anything changed, opens a dependency update PR
 
 You can also trigger it manually via `workflow_dispatch` in the Actions tab.
 
@@ -290,7 +291,7 @@ You can also trigger it manually via `workflow_dispatch` in the Actions tab.
 To bump whisper.cpp manually, edit `deps.json`:
 
 ```json
-{ "whisper": { "version": "v1.8.4", ... } }
+{ "whisper": { "version": "v1.9.2", ... } }
 ```
 
 Then push and run a CI build. The build scripts and CI workflow will pick up the new version automatically.
