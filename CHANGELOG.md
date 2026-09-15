@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-09-15
+
+### Fixed
+
+- Waited for Vulkan detection to finish before showing the active transcription backend in the model selector.
+
 ## [0.3.1] - 2026-09-15
 
 ### Changed
