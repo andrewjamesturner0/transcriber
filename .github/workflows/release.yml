@@ -40,6 +40,14 @@ jobs:
           install_runtime: false
           cache: true
 
+      - name: Install SPIR-V headers
+        shell: pwsh
+        run: |
+          $V = "${{ steps.deps.outputs.VULKAN_SDK }}"
+          git clone --depth 1 --branch "vulkan-sdk-$V" https://github.com/KhronosGroup/SPIRV-Headers.git .build-spirv-headers
+          cmake -S .build-spirv-headers -B .build-spirv-headers/build -DSPIRV_HEADERS_ENABLE_TESTS=OFF -DCMAKE_INSTALL_PREFIX="$PWD/.build-spirv-headers/install"
+          cmake --install .build-spirv-headers/build --config Release
+
       - name: Install dependencies
         run: npm install
 
@@ -64,7 +72,7 @@ jobs:
         run: |
           $V = "${{ steps.deps.outputs.WHISPER_VERSION }}"
           git clone --depth 1 --branch $V https://github.com/ggml-org/whisper.cpp.git .build-whisper
-          cmake -S .build-whisper -B .build-whisper/build-vulkan -DBUILD_SHARED_LIBS=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release
+          cmake -S .build-whisper -B .build-whisper/build-vulkan -DBUILD_SHARED_LIBS=ON -DGGML_VULKAN=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$PWD/.build-spirv-headers/install"
           cmake --build .build-whisper/build-vulkan --config Release
           Copy-Item .build-whisper\build-vulkan\bin\Release\whisper-cli.exe bin\win\vulkan\
           Copy-Item .build-whisper\build-vulkan\bin\Release\whisper.dll bin\win\vulkan\
