@@ -229,7 +229,7 @@ async function cmdTranscribe(argv) {
 
   const probes = [];
   if (backendArg !== 'cpu') {
-    probes.push(capabilities._detectGpu());
+    probes.push(capabilities.detectGpu());
   }
   if (diarize) {
     probes.push(capabilities._detectDtw().then((s) => { capabilities._dtwSupported = s; }));
@@ -436,7 +436,7 @@ async function cmdGpuStatus(argv) {
   }
 
   const capabilities = new Capabilities({ logWrite: () => {} });
-  await capabilities._detectGpu();
+  await capabilities.detectGpu();
   const dtwSupported = await capabilities._detectDtw();
   capabilities._dtwSupported = dtwSupported;
   const status = capabilities.getStatus();

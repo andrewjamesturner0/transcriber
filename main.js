@@ -180,6 +180,7 @@ ipcMain.handle('download-model', async (event, modelId) => {
 });
 
 ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
+  await capabilities.detectGpu();
   const backend = capabilities.getActiveBackend();
   logWrite(`=== Transcription started: model=${modelId}, backend=${backend}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
 
@@ -211,7 +212,10 @@ ipcMain.handle('cancel-transcription', () => {
 
 ipcMain.handle('check-python', async () => capabilities.getPythonInfo());
 
-ipcMain.handle('get-gpu-status', () => capabilities.getStatus());
+ipcMain.handle('get-gpu-status', async () => {
+  await capabilities.detectGpu();
+  return capabilities.getStatus();
+});
 
 ipcMain.handle('set-gpu-backend', (event, backend) => capabilities.setBackendPreference(backend));
 
@@ -264,5 +268,4 @@ ipcMain.handle('save-transcript', async (event, text) => {
   fs.writeFileSync(result.filePath, text, 'utf-8');
   return true;
 });
-
 

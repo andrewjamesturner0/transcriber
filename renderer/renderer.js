@@ -707,8 +707,7 @@ async function updateGpuStatus() {
 // --- Init ---
 loadModels();
 checkPythonSetup();
-// Delay GPU status check slightly to allow backend detection to complete
-setTimeout(updateGpuStatus, 500);
+updateGpuStatus();
 window.api.getVersion().then((v) => {
   document.getElementById('version-label').textContent = `v${v}`;
 });

@@ -143,6 +143,45 @@ test('Vulkan spawn failure falls back to CPU', async () => {
   assert(status.detected === 'cpu', `expected cpu after spawn failure, got ${status.detected}`);
 });
 
+test('GPU status can wait for the shared detection probe', async () => {
+  const { EventEmitter } = require('events');
+  let vulkanProc;
+  let vulkanSpawnCount = 0;
+  const delayedSpawn = function (cmd) {
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+
+    if (cmd.includes('/vulkan/')) {
+      vulkanSpawnCount++;
+      vulkanProc = proc;
+    } else {
+      process.nextTick(() => proc.emit('close', 0));
+    }
+    return proc;
+  };
+  const caps = new Capabilities({
+    paths: makePaths(),
+    fsExists: () => true,
+    spawn: delayedSpawn,
+    logWrite: () => {},
+  });
+
+  const firstProbe = caps.detectGpu();
+  const secondProbe = caps.detectGpu();
+  assert(firstProbe === secondProbe, 'concurrent callers should share one GPU probe');
+  assert(caps.getStatus().backend === 'cpu', 'backend is unresolved while the probe runs');
+
+  vulkanProc.stderr.emit('data', Buffer.from(
+    'ggml_vulkan: 0 = NVIDIA GeForce RTX 3060 (driver 535.xx) | uma: 0\n'
+  ));
+  vulkanProc.emit('close', 0);
+  await firstProbe;
+
+  assert(vulkanSpawnCount === 1, `GPU probe should run once, got ${vulkanSpawnCount}`);
+  assert(caps.getStatus().backend === 'vulkan', 'backend should be Vulkan after awaiting detection');
+});
+
 test('preference override: setting cpu overrides detected vulkan', async () => {
   const stderr = 'ggml_vulkan: 0 = NVIDIA GeForce RTX 3060 | uma: 0 | fp16: 1 | warp size: 32';
   let stored = {};
