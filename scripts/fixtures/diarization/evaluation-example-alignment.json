@@ -1,0 +1,358 @@
+{
+  "format": "transcriber-alignment",
+  "version": 1,
+  "synthetic": "Invented forced-alignment output for the evaluation harness fixture. Not produced by WhisperX.",
+  "provider": {
+    "name": "synthetic",
+    "version": null,
+    "model": null,
+    "language": "en"
+  },
+  "device": null,
+  "processingSec": null,
+  "segments": [
+    {
+      "index": 0,
+      "status": "aligned",
+      "reason": null,
+      "words": [
+        {
+          "startMs": 1960,
+          "endMs": 2240,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 2260,
+          "endMs": 2440,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 2460,
+          "endMs": 2590,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 2610,
+          "endMs": 3140,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 3160,
+          "endMs": 3840,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 3860,
+          "endMs": 4040,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 4060,
+          "endMs": 4640,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 4660,
+          "endMs": 4790,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 4810,
+          "endMs": 5440,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 5460,
+          "endMs": 5940,
+          "score": 0.9,
+          "quality": "measured"
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "status": "aligned",
+      "reason": null,
+      "words": [
+        {
+          "startMs": 6210,
+          "endMs": 6390,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 6410,
+          "endMs": 6740,
+          "score": 0.9,
+          "quality": "measured"
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "status": "aligned",
+      "reason": null,
+      "words": [
+        {
+          "startMs": 6960,
+          "endMs": 7340,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 7460,
+          "endMs": 7640,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 7660,
+          "endMs": 7840,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": null,
+          "endMs": null,
+          "score": null,
+          "quality": "unaligned"
+        },
+        {
+          "startMs": 7960,
+          "endMs": 8140,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 8160,
+          "endMs": 8390,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 8410,
+          "endMs": 8840,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 8860,
+          "endMs": 8990,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 9010,
+          "endMs": 9440,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 9460,
+          "endMs": 9890,
+          "score": 0.9,
+          "quality": "measured"
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "status": "aligned",
+      "reason": null,
+      "words": [
+        {
+          "startMs": 10010,
+          "endMs": 10090,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 10110,
+          "endMs": 10540,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 10560,
+          "endMs": 11140,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 11160,
+          "endMs": 11540,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 11560,
+          "endMs": 11690,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 11710,
+          "endMs": 11940,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 11960,
+          "endMs": 12340,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 12360,
+          "endMs": 12540,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 12560,
+          "endMs": 12940,
+          "score": 0.9,
+          "quality": "measured"
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "status": "aligned",
+      "reason": null,
+      "words": [
+        {
+          "startMs": 13210,
+          "endMs": 13590,
+          "score": 0.9,
+          "quality": "measured"
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "status": "aligned",
+      "reason": null,
+      "words": [
+        {
+          "startMs": 13810,
+          "endMs": 13940,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 13960,
+          "endMs": 14140,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 14160,
+          "endMs": 14390,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 14410,
+          "endMs": 14840,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 14860,
+          "endMs": 15240,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 15260,
+          "endMs": 15440,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 15460,
+          "endMs": 15590,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 15610,
+          "endMs": 15940,
+          "score": 0.9,
+          "quality": "measured"
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "status": "aligned",
+      "reason": null,
+      "words": [
+        {
+          "startMs": 16210,
+          "endMs": 16390,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 16410,
+          "endMs": 16540,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 16560,
+          "endMs": 16690,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 16710,
+          "endMs": 16940,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 17010,
+          "endMs": 17140,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 17160,
+          "endMs": 17290,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 17310,
+          "endMs": 17490,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 17510,
+          "endMs": 17640,
+          "score": 0.9,
+          "quality": "measured"
+        },
+        {
+          "startMs": 17660,
+          "endMs": 17890,
+          "score": 0.9,
+          "quality": "measured"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,414 @@
+{
+  "synthetic": "Invented Whisper-shaped output for the evaluation harness fixture. Not produced by a model.",
+  "result": {
+    "language": "en"
+  },
+  "transcription": [
+    {
+      "offsets": {
+        "from": 2000,
+        "to": 6000
+      },
+      "text": " This is an invented recording for testing the evaluation script.",
+      "tokens": [
+        {
+          "text": " This",
+          "offsets": {
+            "from": 2000,
+            "to": 2300
+          }
+        },
+        {
+          "text": " is",
+          "offsets": {
+            "from": 2300,
+            "to": 2500
+          }
+        },
+        {
+          "text": " an",
+          "offsets": {
+            "from": 2500,
+            "to": 2650
+          }
+        },
+        {
+          "text": " invented",
+          "offsets": {
+            "from": 2650,
+            "to": 3200
+          }
+        },
+        {
+          "text": " recording",
+          "offsets": {
+            "from": 3200,
+            "to": 3900
+          }
+        },
+        {
+          "text": " for",
+          "offsets": {
+            "from": 3900,
+            "to": 4100
+          }
+        },
+        {
+          "text": " testing",
+          "offsets": {
+            "from": 4100,
+            "to": 4700
+          }
+        },
+        {
+          "text": " the",
+          "offsets": {
+            "from": 4700,
+            "to": 4850
+          }
+        },
+        {
+          "text": " evaluation",
+          "offsets": {
+            "from": 4850,
+            "to": 5500
+          }
+        },
+        {
+          "text": " script.",
+          "offsets": {
+            "from": 5500,
+            "to": 6000
+          }
+        }
+      ]
+    },
+    {
+      "offsets": {
+        "from": 6250,
+        "to": 6800
+      },
+      "text": " Yes, exactly.",
+      "tokens": [
+        {
+          "text": " Yes,",
+          "offsets": {
+            "from": 6250,
+            "to": 6450
+          }
+        },
+        {
+          "text": " exactly.",
+          "offsets": {
+            "from": 6450,
+            "to": 6800
+          }
+        }
+      ]
+    },
+    {
+      "offsets": {
+        "from": 7000,
+        "to": 9950
+      },
+      "text": " Good. Then tell me how many apples you counted today.",
+      "tokens": [
+        {
+          "text": " Good.",
+          "offsets": {
+            "from": 7000,
+            "to": 7400
+          }
+        },
+        {
+          "text": " Then",
+          "offsets": {
+            "from": 7500,
+            "to": 7700
+          }
+        },
+        {
+          "text": " tell",
+          "offsets": {
+            "from": 7700,
+            "to": 7900
+          }
+        },
+        {
+          "text": " me",
+          "offsets": {
+            "from": 7900,
+            "to": 8000
+          }
+        },
+        {
+          "text": " how",
+          "offsets": {
+            "from": 8000,
+            "to": 8200
+          }
+        },
+        {
+          "text": " many",
+          "offsets": {
+            "from": 8200,
+            "to": 8450
+          }
+        },
+        {
+          "text": " apples",
+          "offsets": {
+            "from": 8450,
+            "to": 8900
+          }
+        },
+        {
+          "text": " you",
+          "offsets": {
+            "from": 8900,
+            "to": 9050
+          }
+        },
+        {
+          "text": " counted",
+          "offsets": {
+            "from": 9050,
+            "to": 9500
+          }
+        },
+        {
+          "text": " today.",
+          "offsets": {
+            "from": 9500,
+            "to": 9950
+          }
+        }
+      ]
+    },
+    {
+      "offsets": {
+        "from": 10050,
+        "to": 13000
+      },
+      "text": " I counted 42 apples and three pairs this morning.",
+      "tokens": [
+        {
+          "text": " I",
+          "offsets": {
+            "from": 10050,
+            "to": 10150
+          }
+        },
+        {
+          "text": " counted",
+          "offsets": {
+            "from": 10150,
+            "to": 10600
+          }
+        },
+        {
+          "text": " 42",
+          "offsets": {
+            "from": 10600,
+            "to": 11200
+          }
+        },
+        {
+          "text": " apples",
+          "offsets": {
+            "from": 11200,
+            "to": 11600
+          }
+        },
+        {
+          "text": " and",
+          "offsets": {
+            "from": 11600,
+            "to": 11750
+          }
+        },
+        {
+          "text": " three",
+          "offsets": {
+            "from": 11750,
+            "to": 12000
+          }
+        },
+        {
+          "text": " pairs",
+          "offsets": {
+            "from": 12000,
+            "to": 12400
+          }
+        },
+        {
+          "text": " this",
+          "offsets": {
+            "from": 12400,
+            "to": 12600
+          }
+        },
+        {
+          "text": " morning.",
+          "offsets": {
+            "from": 12600,
+            "to": 13000
+          }
+        }
+      ]
+    },
+    {
+      "offsets": {
+        "from": 13250,
+        "to": 13650
+      },
+      "text": " Right.",
+      "tokens": [
+        {
+          "text": " Right.",
+          "offsets": {
+            "from": 13250,
+            "to": 13650
+          }
+        }
+      ]
+    },
+    {
+      "offsets": {
+        "from": 13850,
+        "to": 16000
+      },
+      "text": " And one more apple fell off the tree.",
+      "tokens": [
+        {
+          "text": " And",
+          "offsets": {
+            "from": 13850,
+            "to": 14000
+          }
+        },
+        {
+          "text": " one",
+          "offsets": {
+            "from": 14000,
+            "to": 14200
+          }
+        },
+        {
+          "text": " more",
+          "offsets": {
+            "from": 14200,
+            "to": 14450
+          }
+        },
+        {
+          "text": " apple",
+          "offsets": {
+            "from": 14450,
+            "to": 14900
+          }
+        },
+        {
+          "text": " fell",
+          "offsets": {
+            "from": 14900,
+            "to": 15300
+          }
+        },
+        {
+          "text": " off",
+          "offsets": {
+            "from": 15300,
+            "to": 15500
+          }
+        },
+        {
+          "text": " the",
+          "offsets": {
+            "from": 15500,
+            "to": 15650
+          }
+        },
+        {
+          "text": " tree.",
+          "offsets": {
+            "from": 15650,
+            "to": 16000
+          }
+        }
+      ]
+    },
+    {
+      "offsets": {
+        "from": 16250,
+        "to": 17950
+      },
+      "text": " Thank you so much, that is all for today.",
+      "tokens": [
+        {
+          "text": " Thank",
+          "offsets": {
+            "from": 16250,
+            "to": 16450
+          }
+        },
+        {
+          "text": " you",
+          "offsets": {
+            "from": 16450,
+            "to": 16600
+          }
+        },
+        {
+          "text": " so",
+          "offsets": {
+            "from": 16600,
+            "to": 16750
+          }
+        },
+        {
+          "text": " much,",
+          "offsets": {
+            "from": 16750,
+            "to": 17000
+          }
+        },
+        {
+          "text": " that",
+          "offsets": {
+            "from": 17050,
+            "to": 17200
+          }
+        },
+        {
+          "text": " is",
+          "offsets": {
+            "from": 17200,
+            "to": 17350
+          }
+        },
+        {
+          "text": " all",
+          "offsets": {
+            "from": 17350,
+            "to": 17550
+          }
+        },
+        {
+          "text": " for",
+          "offsets": {
+            "from": 17550,
+            "to": 17700
+          }
+        },
+        {
+          "text": " today.",
+          "offsets": {
+            "from": 17700,
+            "to": 17950
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "format": "transcriber-diarization",
+  "version": 1,
+  "synthetic": "Invented speaker timelines for the evaluation harness fixture. Not produced by pyannote.",
+  "regular": [
+    {
+      "start": 1.9,
+      "end": 6.1,
+      "speaker": "SPEAKER_00"
+    },
+    {
+      "start": 6.1,
+      "end": 6.9,
+      "speaker": "SPEAKER_01"
+    },
+    {
+      "start": 6.9,
+      "end": 10,
+      "speaker": "SPEAKER_00"
+    },
+    {
+      "start": 10,
+      "end": 16,
+      "speaker": "SPEAKER_01"
+    },
+    {
+      "start": 13.1,
+      "end": 13.8,
+      "speaker": "SPEAKER_00"
+    },
+    {
+      "start": 16.1,
+      "end": 18.1,
+      "speaker": "SPEAKER_00"
+    }
+  ],
+  "exclusive": [
+    {
+      "start": 1.9,
+      "end": 6.1,
+      "speaker": "SPEAKER_00"
+    },
+    {
+      "start": 6.1,
+      "end": 6.9,
+      "speaker": "SPEAKER_01"
+    },
+    {
+      "start": 6.9,
+      "end": 10,
+      "speaker": "SPEAKER_00"
+    },
+    {
+      "start": 10,
+      "end": 13.1,
+      "speaker": "SPEAKER_01"
+    },
+    {
+      "start": 13.1,
+      "end": 13.8,
+      "speaker": "SPEAKER_00"
+    },
+    {
+      "start": 13.8,
+      "end": 16,
+      "speaker": "SPEAKER_01"
+    },
+    {
+      "start": 16.1,
+      "end": 18.1,
+      "speaker": "SPEAKER_00"
+    }
+  ],
+  "exclusiveAvailable": true,
+  "model": null,
+  "versions": null,
+  "device": null,
+  "numSpeakersRequested": null,
+  "audio": null,
+  "processingSec": null
+}
