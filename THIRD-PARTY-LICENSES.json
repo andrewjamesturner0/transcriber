@@ -1,10 +1,10 @@
 [
   {
     "name": "FFmpeg",
-    "license": "LGPL 2.1",
+    "license": "LGPL/GPL (bundled Linux: GPLv3)",
     "description": "Audio format conversion",
     "url": "https://github.com/FFmpeg/FFmpeg",
-    "text": "FFmpeg is free software licensed under the GNU Lesser General Public License (LGPL) version 2.1 or later.\n\nYou may obtain a copy of the License at:\nhttps://www.gnu.org/licenses/old-licenses/lgpl-2.1.html\n\nFFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.\n\nThis software uses libraries from the FFmpeg project under the LGPL v2.1+. The source code for FFmpeg can be obtained at https://github.com/FFmpeg/FFmpeg."
+    "text": "FFmpeg is licensed under LGPL 2.1 or later, with optional GPL components that change the licence of a build. The bundled John Van Sickle Linux static builds use GPLv3. Check ffmpeg -L and ffmpeg -version for the exact distributed binary, including Windows or replacement builds.\n\nLicence explanation: https://ffmpeg.org/legal.html\nLinux build licence: https://johnvansickle.com/ffmpeg/\nSource code: https://github.com/FFmpeg/FFmpeg\n\nFFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project."
   },
   {
     "name": "whisper.cpp",

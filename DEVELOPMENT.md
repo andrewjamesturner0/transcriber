@@ -143,7 +143,7 @@ npm start              # development mode
 npm run package        # produces dist/ with NSIS installer
 ```
 
-The NSIS installer (`Transcriber Setup <version>.exe`) provides the standard Windows experience: installs to Program Files, creates Start Menu shortcuts, and registers an uninstaller.
+The NSIS installer (`Transcriber-Setup-<version>.exe`) uses electron-builder's default installation location, creates Start Menu shortcuts and registers an uninstaller.
 
 ## npm Scripts
 
@@ -168,6 +168,7 @@ renderer/
   index.html         App UI
   renderer.js        UI logic (wires queue model to DOM, IPC handlers)
   queue.js           Queue state model (pending -> processing -> done/error)
+  job-options.js     Alignment availability and per-job option construction
   media-extensions.js Supported file extensions whitelist
   time-estimates.js  Model-id to time-estimate bucket mapping
   transcript-format.js Diarization output formatting and rich-transcript parsing
@@ -177,16 +178,22 @@ lib/
   paths.js                Shared binary-path resolution (dev vs. packaged, platform dir)
   capabilities.js         GPU/DTW/Python capability detection (consolidated from main.js)
   models.js               Canonical model metadata (filenames, DTW presets, download URLs)
-  transcription-runner.js FFmpeg -> whisper -> diarize pipeline factory (composes whisper-runner)
+  transcription-runner.js FFmpeg -> whisper -> optional align -> diarize pipeline factory
   whisper-runner.js       Whisper-cli arg construction, backend resolution, GPU/DTW fallback retry
   _subprocess.js          Shared subprocess spawn helper (used by ffmpeg, whisper, diarization)
-  diarize-merge.js        Diarisation merge pipeline (shared by transcription-runner and tests)
-  diarize.py              Pyannote speaker diarization script (spawned as subprocess)
-  requirements.txt        Python dependencies for diarization
+  transcript-timing.js   Word timing validation, grouping and alignment provenance
+  diarize-merge.js        Speaker assignment and transcript formatting
+  diarization-setup.js    Explicit Python model setup runner
+  diarize.py              Offline Community-1 speaker inference and readiness check
+  align.py                Optional offline WhisperX word alignment and readiness check
+  requirements.txt        Pinned Python dependencies for diarization
+  requirements-alignment.txt Optional alignment dependencies
 assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
 scripts/
   build.sh                 Full build script (download deps + package distributable)
   setup.sh                 Dev-only setup (build whisper.cpp from source for local testing)
+  setup-diarization.py     Download speaker/alignment models; check readiness
+  evaluate-diarization.js  Score saved local outputs against speaker-labelled references
   test-merge.js                 Unit tests for the diarization merge logic (no model needed)
   test-capabilities.js          Unit tests for lib/capabilities.js (GPU, DTW, Python)
   test-transcription-runner.js  Unit tests for the transcription pipeline (FFmpeg, whisper, fallbacks)
@@ -196,7 +203,9 @@ scripts/
   test-queue.js                 Unit tests for the queue state model (enqueue, processAll, cancel)
   test-renderer-smoke.js        Smoke test: loads renderer scripts in a browser-like vm context
   test-packaging.js             Static check: require() consistency vs electron-builder.yml
-  test-diarize-pipeline.py End-to-end diarization test (requires Python + HF token)
+  test-diarize-pipeline.py End-to-end diarization test (requires prepared model + Python)
+  test-diarize-contract.py Offline diarization/setup contract tests
+  test-align-contract.py  Offline alignment contract tests
   test-audio-load.py       Checks ffmpeg can load a given audio file
 electron-builder.yml Packaging config (extraResources, targets per platform)
 ```
@@ -221,56 +230,94 @@ dist/                Built distributables
 - `lib/paths.js` owns all binary-path resolution: `getPlatformDir()` resolves `win`/`linux`/`mac`, `getResourcePath()` handles dev vs. packaged, `getWhisperBinary(backend)` and `getFfmpegBinary()` return binary paths
 - `lib/capabilities.js` consolidates GPU backend detection, DTW support probing, and Python/pyannote availability into a single module (formerly scattered global state in main.js)
 - `lib/transcription-runner.js` orchestrates the FFmpeg -> whisper -> diarize pipeline via a `createTranscriptionRunner` factory. Long-lived dependencies (binary paths, spawn, capabilities) are bound at construction time; per-call job parameters (file, model, options, callbacks, signal) are passed to `runTranscription`. Composes `lib/whisper-runner.js` for the whisper step.
-- Transcription flow: ffmpeg converts input to 16kHz mono WAV temp file, then spawns whisper-cli with `--no-timestamps` (single-speaker), `--tinydiarize` (tdrz models), or `--output-json-full` + `--dtw` (pyannote diarization; DTW support probed at startup, disabled if unsupported)
-- Thread count: `Math.max(1, Math.min(os.cpus().length - 1, 8))`
+- Transcription flow: FFmpeg converts input to 16 kHz mono WAV, then whisper-cli transcribes. Pyannote jobs request full JSON and keep ordinary token timing by default. Explicit CLI `--dtw` adds `--dtw <preset> --no-flash-attn` where supported. Forced jobs skip DTW and align the same text before speaker inference.
+- Whisper thread count: `options.threads || 4` in `lib/whisper-runner.js`; GUI and CLI use the default four threads.
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
 - `lib/models.js` defines the canonical model list (13 entries) with filenames, DTW presets, and per-model flags; the `download-model` IPC streams from Hugging Face with progress events
 - GPU acceleration: ships both CPU and Vulkan whisper-cli binaries; at startup, tests the Vulkan binary with `--help` (5s timeout) and caches the result. If Vulkan fails mid-transcription, transparently retries with CPU
 - Backend preference stored in `settings.json` in `app.getPath('userData')`
 - macOS builds require building on macOS with `bin/mac/` populated manually
 
+`electron-builder.yml` lists the app code, assets and public documentation to
+include. It excludes `.env` files, `.agents/`, `Examples/` and local build trees;
+binaries and models are copied separately as extra resources. Gitignore alone does not
+exclude private data from a package. Runtime Python helpers remain explicit
+extra resources; JavaScript stays inside the asar.
+
 ## Diarization Architecture
 
-Speaker diarization uses [pyannote.audio](https://github.com/pyannote/pyannote-audio) via a subprocess, following the same pattern as whisper-cli and ffmpeg.
+Speaker diarisation is optional. Install Python 3.10 to 3.13 and the pinned
+`lib/requirements.txt` packages, then prepare Community-1 with
+`scripts/setup-diarization.py`. Alignment adds `lib/requirements-alignment.txt`
+(WhisperX 3.8.6) and its language model. `TRANSCRIBER_PYTHON` selects the same
+interpreter for checks, setup and jobs. See [the setup guide](docs/diarization-setup.md)
+for installation and the measured package footprint.
 
 ### Flow
 
 ```
-User enables diarization in settings
-    → transcribe IPC handler runs whisper with --output-json-full (full JSON with token timestamps)
-      (adds --dtw <preset> when the model has a DTW preset and the binary supports it;
-       DTW support is probed at startup and disabled for subsequent runs if it fails)
-    → runs lib/diarize.py as subprocess on the same WAV
-    → lib/diarize-merge.js mergeTranscriptWithDiarization() runs the pipeline:
-      mergeDiarizeSegments → groupTokensToWords → assignWordsToSpeakers →
-      refineSpeakerBoundaries → smoothSpeakerAssignments → collapse + mergeShortBlocks
-    → renderer displays color-coded speaker output
+FFmpeg -> whisper-cli full JSON
+       -> optional lib/align.py (existing text, same WAV)
+       -> lib/diarize.py (Community-1, same WAV, offline)
+       -> transcript-timing.js -> diarize-merge.js -> speaker-labelled text
 ```
 
-### Subprocess protocol
+Every model stage runs in a separate process. Ordinary token timing is the
+default. Explicit CLI `--dtw` needs `--no-flash-attn`; its anchor is an estimated
+onset rather than a measured word interval. Otherwise ordinary token offsets,
+segment times or missing timing are recorded. Forced jobs keep Whisper's
+default decoder and record measured, interpolated or unaligned words.
 
-`lib/diarize.py` communicates with Electron via:
-- **stderr**: JSON progress lines: `{"message": "Loading model...", "percent": 10}`
-- **stderr**: JSON error lines: `{"error": "Authentication failed..."}`
-- **stdout**: Final summary: `{"segments": 42}`
-- **output file**: JSON array of segments: `[{"start": 0.0, "end": 3.5, "speaker": "SPEAKER_00"}, ...]`
+The exclusive speaker timeline decides word labels when available; the
+regular timeline records overlap evidence. Short replies and Unknown are
+preserved through formatting. See [the pipeline guide](docs/diarization.md)
+for assignment rules, JSON fields and failure behaviour.
 
-### Testing standalone
+### Setup and subprocess protocol
+
+Setup is the only Python step that downloads assets. The Hugging Face token
+is passed in the setup process environment and is never saved. Inference
+sets offline flags, disables telemetry and reports missing caches instead
+of downloading.
+
+Both Python helpers send JSON progress/error lines on stderr and a final
+summary on stdout. `diarize.py` writes a versioned `transcriber-diarization`
+envelope with model revision, versions, device, regular and exclusive
+timelines. `align.py` writes a `transcriber-alignment` envelope with per-word
+times and quality; it returns no replacement text.
+
+After setup, test the helper directly on a 16 kHz mono PCM WAV:
 
 ```bash
-python lib/diarize.py --audio test.wav --output out.json --hf-token YOUR_TOKEN
-cat out.json  # should contain speaker segments
+python lib/diarize.py --check --load
+python lib/diarize.py --audio test.wav --output out.json
 ```
 
-### Timestamp alignment
+### Tests and evaluation
 
-The merge pipeline lives in `lib/diarize-merge.js` (shared between `lib/transcription-runner.js` and `scripts/test-merge.js`). It runs five stages plus post-collapse short-block merging. See [`docs/diarization.md`](docs/diarization.md) for the full pipeline diagram, stage-by-stage description, config reference, and debug logging (`DIARIZE_DEBUG=1`).
+Deterministic checks need no model downloads:
 
-Key implementation notes: `DIARIZE_DEBUG=1` emits per-stage diff logs; DTW support is probed at startup and disabled on failure for all subsequent runs. Overlapping segments from pyannote are handled by `mergeDiarizeSegments()` for same-speaker gaps; different-speaker overlaps are preserved as-is.
+```bash
+for test_file in scripts/test-*.js; do
+  case "$test_file" in *test-whisper-dtw.js) continue ;; esac
+  node "$test_file" || exit 1
+done
+python3 scripts/test-diarize-contract.py
+python3 scripts/test-align-contract.py
+```
+
+`scripts/test-whisper-dtw.js` and `scripts/test-diarize-pipeline.py` use real
+local assets and are separate smoke checks. The evaluation harness replays
+saved results and records missing metrics explicitly; see
+[the evaluation guide](docs/diarization-evaluation.md). Current speaker accuracy
+and Windows/Linux acceptance checks remain incomplete.
 
 ### Cancellation
 
-Both whisper and diarize subprocesses share a single `AbortController` per transcription job. The cancel button calls the `cancel-transcription` IPC, which aborts the controller, killing whichever subprocess is currently running.
+FFmpeg, Whisper, alignment and diarisation share one `AbortSignal`. Cancelling
+kills the active subprocess and cleans up temporary WAV/JSON files. Alignment
+failures retain Whisper timing; diarisation failures retain plain text.
+Cancellation propagates rather than starting a fallback job.
 
 ## Dependency Updates
 

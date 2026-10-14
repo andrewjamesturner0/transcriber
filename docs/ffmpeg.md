@@ -17,13 +17,17 @@ ffmpeg -i input.mp3 -ar 16000 -ac 1 -c:a pcm_s16le -y output.wav
 | Windows | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) | `ffmpeg-release-essentials.zip` |
 | Linux | [johnvansickle.com](https://johnvansickle.com/ffmpeg/) | Static build (`ffmpeg-release-amd64-static.tar.xz`) |
 
-## LGPL 2.1 compliance
+## Licence of the bundled binary
 
-FFmpeg is licensed under the GNU Lesser General Public License version 2.1.
+FFmpeg's base licence is LGPL 2.1 or later, but enabling GPL components changes
+the binary's licence. See [FFmpeg's licence explanation](https://ffmpeg.org/legal.html).
+The [John Van Sickle Linux builds](https://johnvansickle.com/ffmpeg/) used here
+are GPLv3; the local 7.0.2 binary reports `--enable-gpl --enable-version3`.
+Do not describe the bundled builds as LGPL-only.
 
-Because Transcriber runs FFmpeg as a **separate process** rather than linking it as a library, the LGPL re-linking obligation is satisfied automatically. Users can substitute their own FFmpeg binary by replacing the file in `bin/{platform}/`.
-
-The pre-built binaries from the sources above are built without `--enable-gpl`, so they remain under LGPL 2.1. Even if a GPL-enabled FFmpeg build were used, this would be compatible with Transcriber's GPLv3 licence.
+Check each distributed binary with `ffmpeg -L` and `ffmpeg -version`, including
+Windows or replacement builds. Transcriber runs it as a replaceable subprocess;
+that does not remove the binary's licence and source distribution obligations.
 
 ## Replacing the bundled FFmpeg
 

@@ -20,7 +20,7 @@ Optional word alignment adds `lib/requirements-alignment.txt` (WhisperX
 
 ## 1. Install Python and packages
 
-Install Python 3.10 or later (on Windows tick "Add Python to PATH"). Then:
+Install Python 3.10 to 3.13 (on Windows tick "Add Python to PATH"). Then:
 
 ```
 pip install -r lib/requirements.txt
@@ -74,8 +74,8 @@ setup step uses the network.
 
 | Status in Settings | Fix |
 | --- | --- |
-| Python 3.10+ not found | Install Python, or set `TRANSCRIBER_PYTHON` |
-| Python 3.x is too old | Install Python 3.10 or later |
+| Python 3.10+ not found | Install Python 3.10 to 3.13, or set `TRANSCRIBER_PYTHON` |
+| Python 3.x is too old | Install Python 3.10 to 3.13 |
 | pyannote not installed / not supported | `pip install -r lib/requirements.txt` |
 | Speaker model not downloaded | Step 2 |
 | Word alignment not installed | `pip install -r lib/requirements-alignment.txt` |

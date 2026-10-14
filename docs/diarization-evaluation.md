@@ -464,8 +464,8 @@ no held-out recording yet, so nothing below is evidence that a change
 generalises. Recognised text comes from whisper.cpp `small.en` (libwhisper
 1.8.4 built locally, CPU, 4 threads), converted to 16 kHz mono as in the app.
 
-**No speaker diarisation output exists yet.** The machine used has no
-Hugging Face access to the gated pyannote model, so every speaker metric
+**At the first capture, no speaker diarisation output existed.** Model access
+was unavailable, so every speaker metric
 (word speaker error, unknown and ambiguous rates, short-turn retention,
 errors near changes, overlap subsets) is **missing** for every variant,
 including the original pipeline baseline. No timing annotation exists
@@ -489,19 +489,125 @@ checked against voicing onsets after quiet pauses):
 | DTW anchor | +154 ms | 424 ms | 77.1% |
 | Forced alignment vs voicing onset (69 words after quiet pauses) | +9 ms to -18 ms by padding | - | - |
 
+### 2026-10-14: Community-1 speaker scores
+
+After model access was granted, Community-1 revision
+`3533c8cf8e369892e6b79ff1bf80f7b0286a54ee` ran on the same 16 kHz mono WAV
+with networking disabled in a Linux network namespace. Packages: Python
+3.12.3, pyannote.audio 4.0.7 and torch 2.8.0+cu128. Both automatic speaker
+counting and an explicit four-speaker run completed on a 4 GB RTX 3050 Ti.
+Regular and exclusive timelines were replayed against each saved Whisper
+output; forced alignment used the unchanged ordinary decoder text.
+
+| Timing with Community-1 exclusive | Matched / reference | Wrong speaker / matched | Unknown | Ambiguous | Short turns and clips retained | Wrong near changes / matched nearby |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Ordinary token offsets | 1308 / 1353 (96.7%) | 35 / 1308 (2.68%) | 0 | 0 | 3 / 4 | 31 / 163 (19.02%) |
+| DTW decode and anchors | 1261 / 1353 (93.2%) | 19 / 1261 (1.51%) | 0 | 0 | 1 / 4 | 19 / 151 (12.58%) |
+| Original text + forced alignment | 1308 / 1353 (96.7%) | 18 / 1308 (1.38%) | 0 | 0 | 3 / 4 | 18 / 163 (11.04%) |
+
+Automatic and explicit four-speaker runs gave the same word scores and
+retention. Regular and exclusive timelines also gave the same wrong-speaker
+counts here. Regular assignment marked two ordinary-timed words and one
+forced-aligned word as ambiguous; exclusive assignment marked none. This
+recording does not establish an accuracy advantage for exclusive output.
+
+Forced alignment removed 17 of the 35 wrong-speaker assignments on identical
+recognised text and frozen diarisation. All its remaining errors were near
+speaker changes. Reference turn 21, a three-word reply with two matched
+words, was still assigned to the wrong speaker; both inserted clips were
+retained. DTW omitted both clips entirely, so its lower speaker error rate
+uses a different denominator and is not a fair timing-only improvement.
+
+Community-1 wall time was 114.3 s (automatic count) and 99.2 s (four speakers),
+including imports and model loading. Inference itself took 91.3 s in the
+automatic run. Peak process RAM was about 1.92 GiB in each run, measured with
+`/usr/bin/time -v`; GPU memory was not measured. Whisper and alignment timings
+remain those in the first table; only diarisation was rerun.
+
+The local manifest/report now include twelve Community-1 comparisons
+(three timing inputs x two timelines x two speaker-count settings) with
+input checksums. Missing independent timing annotations still prevent word
+start error, time-weighted speaker error, reference overlap scores and DER.
+There is no held-out recording. The legacy comparison below is now complete
+for this episode; independent timing and held-out checks keep T4.4 open.
+
+### 2026-10-14: legacy model and cleanup comparisons
+
+The original `a08e386` Python helper and merge were replayed with the frozen
+ordinary Whisper output. The helper needed `use_auth_token` in place of
+`token` for the older loader, plus PyTorch's older checkpoint-loading default.
+These were loading adapters; inference settings and merge rules were unchanged.
+The run was offline on the same mono WAV and CUDA device.
+
+Legacy packages were isolated from the app environment: pyannote.audio 3.4.0,
+pyannote.core 5.0.0, database 5.1.3, metrics 3.2.1, pipeline 3.0.1, torch and
+torchaudio 2.8.0, NumPy 1.26.4 and SciPy 1.14.1. The model was
+`speaker-diarization-3.1` revision `84fd25912480287da0247647c3d2b4853cb3ee5d`,
+with cached segmentation and embedding snapshots recorded locally. Wall time
+was 94.6 s and peak process RAM was 1.90 GiB. The original checkout had no
+working Python environment, so this is a recorded compatible reproduction,
+not a claim to recover its unknown original package versions.
+
+All rows below use the same recognised text and match 1308 / 1353 reference
+words. Each pair holds the speaker timeline fixed while changing the merge.
+
+| Speaker model and merge | Wrong speaker / matched | Short turns and clips retained |
+| --- | ---: | ---: |
+| Legacy 3.1, original merge | 45 / 1308 (3.44%) | 2 / 4 |
+| Legacy 3.1, current merge | 49 / 1308 (3.75%) | 2 / 4 |
+| Community-1 regular, original merge | 34 / 1308 (2.60%) | 3 / 4 |
+| Community-1 regular, current merge | 35 / 1308 (2.68%) | 3 / 4 |
+| Community-1 exclusive, current merge + forced alignment | 18 / 1308 (1.38%) | 3 / 4 |
+
+The merge rewrite did not improve aggregate speaker error on this episode.
+It still preserves the correctly timed short replies and Unknown cases in
+the regression tests; this recording does not establish a general accuracy
+gain from removing cleanup. Community-1 improved speaker scores and retention
+on frozen text; forced alignment then reduced errors on that same text and
+speaker timeline. The final row changes alignment as well as the merge/model,
+so it measures the combined pipeline rather than cleanup alone.
+
+For the original merge, the evaluator scored its final speaker-labelled text.
+A local replay used ordinal word intervals solely to carry those labels into
+the existing scorer, after checking that the normalised text and word order
+were unchanged. Those intervals are not acoustic timing evidence, and the
+original merge's ambiguity diagnostics were not available. The private manifest
+and replay files identify this explicitly. Neither reference timing nor overlap
+accuracy was inferred from this replay.
+
 ### Promotion decisions
 
-- **Defaults unchanged.** Diarised jobs keep Whisper timing (DTW anchors)
-  by default and forced alignment stays an opt-in job option. No speaker
-  accuracy evidence exists for either choice yet.
+- **Default DTW disabled by user decision.** Diarised jobs now keep ordinary
+  Whisper token timing and flash attention. Explicit CLI `--dtw` remains
+  available for experiments; forced alignment stays optional. This avoids the
+  measured decoder text loss and extra time on this recording. It is a choice
+  to preserve recognised text, not a claim of general speaker accuracy.
 - **DTW carries a text cost on this recording.** Turning flash attention off
   for DTW lost both inserted interview clips (49 reference words); matched
   words fell from 1308 to 1261, 3.5 points of coverage. This is one decoder run on one recording; it must be checked
-  on held-out recordings before DTW is kept or replaced as the default
-  timing source for diarised jobs.
-- **Still to run (T4.4):** reproduce the original `a08e386` pipeline with
-  pyannote 3.1 in an isolated checkout; Community-1 regular and exclusive;
-  cleanup-only comparison on frozen text and timelines; DTW versus ordinary
-  versus forced timing with frozen diarisation; auto and explicit
-  four-speaker runs; manual timing annotations for speaker changes and short
-  replies; held-out recordings with acceptance rules fixed beforehand.
+  on held-out recordings before any broader timing recommendation.
+- **Still to run (T4.4):** add independent manual timing annotations around
+  speaker changes and short replies; evaluate held-out recordings with
+  acceptance rules fixed beforehand. Tune/held-out generalisation remains
+  untested even though the first-episode comparisons are complete.
+
+## Runtime checks, 2026-10-14
+
+| Check | Result |
+| --- | --- |
+| Deterministic JS/Python contracts | All 17 suites passed; packaging checks also guard private-file exclusions |
+| Real CPU DTW, public JFK sample | 23 / 23 text-token anchors valid on the local 1.8.4 build and a fresh pinned 1.9.2 build; network disabled |
+| CLI default, explicit DTW and forced JSON | Actual timing sources and requested status matched each option; both speaker timelines present |
+| Real Electron window under Linux/Xvfb | Plain/default diarised/forced jobs and ready controls passed with networking disabled |
+| Missing Python and empty speaker cache | Real setup checks disabled diarisation, hid alignment and showed the appropriate setup action |
+| Cancellation | Real FFmpeg, Whisper, alignment and diarisation subprocesses cancelled and left no temporary files |
+| Alignment cache failure after readiness | One fallback message; original words kept on token timing; speaker labelling completed |
+| Linux production unpacked package | Installed helper paths, cache readiness and real offline forced-alignment job passed; archive excludes private data and build trees |
+| Windows, packaged Windows and Vulkan inference | Unavailable here; no usable Vulkan device was detected |
+| Pinned Whisper 1.9.2 CPU runtime | Built from tag commit `306c88f4d1286aec1bf96e544632897886af5501`; offline DTW, plain CLI JSON and full forced-alignment/diarisation checks passed. Packaged smoke tests used the existing local 1.8.4 resources |
+
+The Electron runtime was 44.7.0. Python inference used prepared caches without a
+token. Linux network namespaces disabled external networking; the packaged-window
+test enabled loopback only for its local test driver. These checks establish
+behaviour on the tested Linux setup, not complete Windows/Linux release
+acceptance. T5.6 remains open for the unavailable platform/runtime checks.

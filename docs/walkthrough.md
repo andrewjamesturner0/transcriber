@@ -6,40 +6,28 @@ Transcriber is a single-user, local-only Electron desktop app that transcribes a
 
 The target audience is anyone who needs transcription without sending audio to a cloud service: researchers with ethics-committee constraints, journalists working with sensitive recordings, and anyone who prefers to keep their data local. Windows is the primary platform; Linux is also supported. macOS packaging exists in the config but is untested.
 
-The app converts an input media file to 16 kHz mono WAV via a bundled ffmpeg binary, runs a bundled whisper-cli binary on that WAV, optionally runs a Python-based speaker diarization pipeline, and displays the transcript. The app downloads models once from Hugging Face and caches them locally. GPU acceleration (Vulkan) is auto-detected and can be disabled.
+The app converts an input media file to 16 kHz mono WAV via a bundled ffmpeg binary, runs a bundled whisper-cli binary on that WAV, optionally aligns the recognised words and runs Python-based speaker diarisation, and displays the transcript. The app downloads models once from Hugging Face and caches them locally. GPU acceleration (Vulkan) is auto-detected and can be disabled.
 
 Three constraints define the architecture:
 
-- Local-only, offline processing: everything runs as local subprocesses. No remote inference endpoints. This drives the child-process spawning pattern and the bundling of platform-specific binaries.
+- Local-only, offline processing: everything runs as local subprocesses. No remote inference endpoints. This explains the child-process spawning pattern and the bundling of platform-specific binaries.
 - Single-user desktop app: no authentication, no database, no multi-tenancy. Settings live in a flat JSON file in the user data directory. The queue is an in-memory array.
 - Cross-platform from a single codebase: Windows is primary, Linux is supported, macOS is aspirational. Path resolution, binary discovery, and environment setup all go through a shared abstraction layer in `lib/paths.js`.
 
 ## 2. The 30-second architecture
 
 ```
-  media file on disk
-      |
-      | [ main.js: transcribe IPC handler  -- OR --  cli.js: transcribe subcommand ]
-      v
-  ffmpeg (child process) ──> temp 16kHz mono WAV
-      |
-      v
-  whisper-cli (child process) ──> transcript text / JSON
-      |                              |
-      |                              | [ optional, if diarization enabled ]
-      |                              v
-      |                   diarize.py (child process) ──> speaker segments
-      |                              |
-      |                              v
-      |                   diarize-merge.js ──> speaker-labeled transcript
-      |
-      v
-  renderer: textarea or rich HTML display  -- OR --  stdout (CLI)
+  local media -> FFmpeg -> temp 16 kHz mono WAV
+              -> whisper-cli -> text / full JSON
+              -> optional align.py -> times for the same words
+              -> optional diarize.py -> regular + exclusive speaker timelines
+              -> transcript-timing.js -> diarize-merge.js
+              -> renderer display or CLI stdout
 ```
 
 The main process (`main.js`) owns the IPC handlers and transcription orchestration for the GUI. A parallel entry point (`cli.js`) runs the same pipeline from the command line, without launching Electron, for use on headless servers and in batch or agent workflows; see [docs/cli.md](cli.md) for the reference. The renderer (`renderer/renderer.js` + `renderer/queue.js`) owns the UI and queue state. The two communicate through Electron's context bridge (`preload.js`), which exposes a flat `window.api` object. The renderer never touches Node APIs directly; the main process never touches the DOM.
 
-The `lib/` directory holds shared modules used by the main process, the CLI, and the test scripts: path resolution (`paths.js`), capability detection (`capabilities.js`), model metadata and download (`models.js`), the transcription pipeline (`transcription-runner.js`) and the whisper invocation/retry sub-module it composes (`whisper-runner.js`), a shared subprocess helper (`_subprocess.js`), and the diarization merge algorithm (`diarize-merge.js`). The CLI is structurally constrained to never `require('electron')` and never read or write the GUI's `settings.json`; configuration comes entirely from flags and environment variables.
+The `lib/` directory holds shared modules used by the main process, the CLI, and the test scripts: path resolution (`paths.js`), capability detection (`capabilities.js`), model metadata and download (`models.js`), the transcription pipeline (`transcription-runner.js`) and the whisper invocation/retry sub-module it composes (`whisper-runner.js`), a shared subprocess helper (`_subprocess.js`), word timing (`transcript-timing.js`), speaker assignment (`diarize-merge.js`), and explicit Python model setup (`diarization-setup.js`). The CLI is structurally constrained to never `require('electron')` and never read or write the GUI's `settings.json`; configuration comes entirely from flags and environment variables.
 
 ## 3. The transcription pipeline
 
@@ -51,7 +39,7 @@ This module exports a factory: `createTranscriptionRunner({ capabilities, paths,
 
 The dependency-injection pattern has two purposes. First, it makes the pipeline testable: `scripts/test-transcription-runner.js` passes mock spawn functions, fake binary paths, and fake capability callbacks to exercise orchestration and cancellation without touching the filesystem. Second, it isolates the pipeline from the Electron main process -- the pipeline does not `require('electron')` and does not know about `ipcMain`. It receives `onProgress(msg)` and `onDiarizeProgress(data)` callbacks; `main.js` wires those to `event.sender.send(...)`.
 
-The pipeline runs three sequential steps:
+The pipeline runs these steps in order:
 
 1. **FFmpeg conversion.** The input file (audio or video) is converted to 16 kHz mono WAV (`pcm_s16le`) in a temp directory. A 16-format extension whitelist (9 audio, 7 video) controls which files pass the UI, but the pipeline itself trusts the extension to detect video vs. audio for the "Extracting audio..." / "Converting audio..." status message.
 
@@ -59,49 +47,63 @@ The pipeline runs three sequential steps:
 
    - **Plain transcription:** `--no-timestamps` -- whisper outputs raw text, fastest path.
    - **TinyDiarize (tdrz models):** `--tinydiarize` -- the `small.en-tdrz` model was fine-tuned for speaker change detection; it emits `[SPEAKER_TURN]` markers inline. No separate diarization step needed.
-   - **Pyannote diarization:** `--output-json-full` with `--dtw <preset>` -- whisper outputs per-token JSON with timestamps from DTW alignment. The JSON is later merged with pyannote speaker segments.
+   - **Pyannote diarisation:** `--output-json-full` returns token offsets. Ordinary token timing is the default. Explicit `--dtw` adds `--dtw <preset> --no-flash-attn` where supported and consumes valid DTW anchors. Forced-alignment jobs skip DTW so Whisper keeps its default decoder.
 
    The anti-corruption mode (`-mc 0 --temperature 0.4 --entropy-thold 1.8`) disables cross-segment text conditioning, preventing whisper from entering hallucination loops that produce repeating lines. These specific values come from whisper.cpp issue discussions about repetitive output on certain audio.
 
-3. **Optional diarization.** If pyannote diarization is enabled (and the model is not tdrz), the pipeline spawns `lib/diarize.py` as a Python subprocess on the same WAV file, then merges the result with whisper's JSON output using `lib/diarize-merge.js`.
+3. **Optional alignment.** For `alignment: 'forced'`, `lib/align.py` matches the existing words to the same WAV. It uses only WhisperX's alignment functions and returns times and quality labels. A failure keeps Whisper timing and reports the reason; cancellation propagates.
+
+4. **Optional diarisation.** For pyannote jobs (excluding tdrz models), `lib/diarize.py` runs Community-1 offline on the same WAV. `lib/transcript-timing.js` normalises word timing, and `lib/diarize-merge.js` assigns speakers using the exclusive timeline when available. Each Python process exits before the next starts.
 
 The whisper step is delegated to `lib/whisper-runner.js`, which owns arg construction, backend resolution, and two fallback chains:
 
 - **GPU to CPU fallback.** If the active backend is `'vulkan'` and whisper exits non-zero, the runner retries with the CPU binary. It distinguishes OOM errors (`OutOfDeviceMemory`, `failed to allocate`) from other Vulkan failures: OOM doesn't disable GPU for future runs (the next file might be shorter and fit), but non-OOM errors call `capabilities.disableGpu()` which pins the session to CPU.
 
-- **DTW to no-DTW fallback.** If whisper fails with a DTW-related error (`unknown DTW preset`, `DTW ... not built`), the runner strips `--dtw` and retries. After a DTW failure, `capabilities.disableDtw()` is called so subsequent diarization runs skip `--dtw` entirely, avoiding the failure for every file in a batch.
+- **DTW fallback.** A DTW error retries without `--dtw` and `--no-flash-attn`. A successful run that reports DTW disabled records that reason too. Support is tracked per executable, so one backend failure does not disable DTW on the other. Missing or invalid anchors use declared token/segment fallback; the JSON never treats flag support alone as measured timing.
 
-Keeping the retry policy in `whisper-runner.js` means `runTranscription` reads as a clean three-step composition (ffmpeg -> whisperRunner.transcribe -> optional diarize+merge) with no retry-aware branching. Subprocess spawning, logging, abort wiring, and HF-token redaction live in `lib/_subprocess.js`, shared by ffmpeg, whisper, and the diarization step.
+Keeping the retry policy in `whisper-runner.js` means `runTranscription` composes FFmpeg, Whisper, optional alignment and diarisation with no retry-aware branching. Subprocess spawning, logging, abort wiring, and HF-token redaction live in `lib/_subprocess.js`, shared by ffmpeg, whisper, and the diarization step.
 
 Cancellation works through a single `AbortSignal` shared across all subprocesses. Each `_runProcess` call registers an `abort` event listener that calls `proc.kill()`. The `cancel-transcription` IPC handler calls `abort()` on the controller. Because ffmpeg and whisper run sequentially (not in parallel), killing whichever process is currently running is sufficient.
 
-### 3.2 lib/diarize-merge.js -- the merge pipeline
+### 3.2 Word timing and speaker assignment
 
-This is the most complex single module in the codebase. It converts whisper's per-token JSON output and pyannote's speaker segments into a speaker-labeled transcript. The pipeline runs five stages plus a post-collapse merge, compensating for the fact that whisper's DTW-aligned word timestamps and pyannote's neural speaker boundaries come from two independent systems with slightly different clocks.
+`lib/transcript-timing.js` groups tokens into ordered words and validates
+DTW anchors, ordinary offsets and segment times. It records the timing source
+and fallback for each word. Zero is valid; negative, reversed and non-finite
+times are rejected. DTW anchors are estimated onsets with derived spans,
+not measured word durations. Forced alignment labels acoustic matches and
+interpolated times separately and leaves unaligned words on Whisper timing.
 
-The tunable thresholds in the `DEFAULTS` object are set where they are for specific reasons:
+`lib/diarize-merge.js` assigns one speaker from the word's DTW anchor or span
+midpoint. It prefers the exclusive timeline, keeping regular overlap as
+evidence. In a gap it checks span overlap, then allows nearby speech within
+`gapFillMaxMs` (5 seconds); distant or untimed words remain Unknown.
+Consecutive words with the same label form blocks. Cleanup no longer rewrites
+short replies, snaps boundaries or smooths labels. Both estimators see the
+same WAV and clock; timing disagreement is an estimate error.
 
-- **`mergeGapSec: 0.5`** -- pyannote sometimes splits a single speaker turn at a pause. 0.5 seconds is roughly the threshold between a natural intra-turn pause and an actual speaker change.
-- **`absorbShortSegSec: 0.3`** -- pyannote occasionally produces 100-200ms phantom segments (misidentified noise). Absorbing segments under 0.3s when flanked by the same speaker catches these.
-- **`boundarySnapMaxDistSec: 3.0`** -- DTW timestamp drift typically stays within 1-2 seconds of pyannote boundaries. 3.0s provides headroom without being so wide that words far from the boundary get incorrectly snapped.
-- **`smoothingMaxRunLen: 2`** -- smoothing corrects runs of 1-2 misassigned words. It stops at 2 because a 3-word run could be a genuine short utterance (e.g., "Yes, I agree."). If pyannote labelled it differently, the app trusts pyannote over smoothing.
-- **`shortBlockMaxWords: 3` / `shortBlockMaxDurationSec: 2.0`** -- after collapse, a short block (e.g., a single "yeah" between longer same-speaker blocks) is merged back. The dual word-count AND duration check prevents a 3-word sentence that takes 4 seconds (which is a real utterance) from being absorbed.
-- **`boundaryThirdSpeakerWindowSec: 2.0`** -- at an A->B speaker boundary, DTW drift sometimes mislabels a boundary word as a phantom speaker C. The algorithm checks whether C appears elsewhere within 2 seconds around the boundary. If C is isolated, it's drift and the word is reassigned to A or B. If C has company (a cluster), it's a genuine three-way conversation and the labels are preserved.
-- **`nearestSegMaxDistSec: 5.0`** -- the last-resort fallback for words in pyannote gaps. 5 seconds limits how far a word can be from a segment before it's labelled `Unknown` rather than assigned to a far-away speaker.
+See [diarization.md](diarization.md) for the full contract and
+[diarization-evaluation.md](diarization-evaluation.md) for the benchmark limits.
+`DIARIZE_DEBUG=1` prints an assignment summary on stderr.
 
-The module is shared between `main.js` (production use) and `scripts/test-merge.js` (unit tests). The tests pass custom config overrides to exercise specific thresholds without modifying the defaults. Setting `DIARIZE_DEBUG=1` emits per-stage diff logs to stderr.
+### 3.3 Python helpers and setup
 
-### 3.3 lib/diarize.py -- the Python subprocess
+`lib/diarize.py` loads pinned Community-1 from the local Hugging Face cache.
+It reads the app's PCM WAV with the stdlib `wave` module, runs pyannote.audio
+4.x, and writes a versioned envelope with regular and exclusive timelines,
+model revision, versions and device. `lib/align.py` loads a prepared language
+model and writes per-word timing and quality without replacement text.
 
-A standalone Python script spawned as a child process. It loads the pyannote.audio diarization pipeline, converts the WAV to a PyTorch waveform using the stdlib `wave` module (avoiding `torchcodec`/`torchaudio` dependencies that are difficult to install on Windows), runs inference, and writes speaker segments as JSON.
+Both helpers send JSON progress/errors on stderr, a summary on stdout and
+results through a temporary output file. `lib/_subprocess.js` runs and reads
+both helpers. Temporary files are deleted after success, failure or cancellation.
 
-The subprocess protocol uses three channels:
-
-- **stderr:** JSON progress lines (`{"message": "...", "percent": N}`) and error lines (`{"error": "..."}`). The main process parses stderr line by line in `_runDiarization`.
-- **stdout:** a final JSON summary (`{"segments": 42}`).
-- **output file:** the actual segments array written to a temp JSON file, read back by the caller, then deleted.
-
-Why a subprocess instead of a Python native binding? Pyannote has heavy dependencies (PyTorch, transformers, torchaudio) that would be impractical to bundle into an Electron app. The subprocess pattern follows the same logic as ffmpeg and whisper-cli: a standalone executable that the app spawns and communicates with via stdio.
+`scripts/setup-diarization.py` downloads models explicitly and checks that the
+speaker pipeline loads offline. `lib/diarization-setup.js` exposes this through
+Settings. The token is used only for setup, passed through the environment and
+never saved. Inference sets offline flags and disables telemetry; missing
+assets produce a setup message. Python and packages are installed separately
+(see [the setup guide](diarization-setup.md)).
 
 ### 3.4 lib/capabilities.js -- runtime capability detection
 
@@ -109,8 +111,8 @@ Replaces what was once scattered global state in `main.js` (separate `gpuState`,
 
 At startup, `detect()` runs three probes concurrently:
 - **GPU detection:** spawns the Vulkan whisper binary with `--help` (5s timeout), parses stderr for `ggml_vulkan:` device lines, and picks a discrete GPU (non-Intel) over integrated. The app rejects Intel GPUs because their Vulkan drivers are unreliable for ML inference.
-- **DTW detection:** spawns the CPU whisper binary with `--help` and checks for `--dtw` in the output. The result is cached; `isDtwSupported()` returns `true` until probed as `false`.
-- **Python detection:** tries `python3`, `python`, and `py` (Windows) with `--version`, then checks for pyannote and CUDA via import probes. Results are cached after the first call.
+- **DTW detection:** probes CPU and available Vulkan executables for both `--dtw` and `--no-flash-attn`. Results and failures are cached per backend.
+- **Python detection:** uses `TRANSCRIBER_PYTHON` when set, otherwise tries `python3`, `python`, and `py` (Windows). `diarize.py --check` reports Python/package compatibility, CUDA and speaker cache readiness. `align.py --check` reports optional alignment readiness per language. Results can be refreshed after setup.
 
 `getActiveBackend()` resolves the effective backend from the user's preference (auto/cpu/vulkan) and the detection result. The app persists the user preference to `settings.json` in the user data directory.
 
@@ -124,7 +126,7 @@ A flat JSON file at `app.getPath('userData')/settings.json`. Read and written vi
 
 - `gpuBackend`: `'auto'`, `'cpu'`, or `'vulkan'`
 
-There is no schema enforcement or migration logic because there is only one key and a missing key defaults to `'auto'`. If more settings are added, the `{ ...existing, ...data }` merge in `writeSettings()` ensures new keys don't clobber old ones.
+There is no schema enforcement or migration logic; a missing backend key defaults to `'auto'`. If more settings are added, the `{ ...existing, ...data }` merge in `writeSettings()` ensures new keys don't clobber old ones.
 
 ### 4.2 Models (`models/`)
 
@@ -138,7 +140,7 @@ A plain text append-only log at `app.getPath('userData')/logs/transcriber.log`. 
 
 ## 5. The UI layer
 
-The renderer consists of five scripts loaded in `index.html`, in order: `queue.js`, `media-extensions.js`, `time-estimates.js`, `transcript-format.js`, then `renderer.js`. The first four are pure modules (no DOM, no IPC) using the same dual `module.exports` / `window.<namespace>` pattern as `queue.js`, so they are testable in plain Node. `renderer.js` consumes them through `window.mediaExtensions`, `window.timeEstimates`, and `window.transcriptFormat`. There is no framework, no build step, and no bundler. The constraints that drove this: (a) the UI is a single screen with no routing, so a framework adds complexity without benefit; (b) avoiding a build step means contributors can change the renderer code and reload the app without running a watcher; (c) the UI is simple enough (a model picker, a file queue, a transcript output) that vanilla DOM manipulation is sufficient.
+The renderer loads six scripts in `index.html`: `queue.js`, `media-extensions.js`, `time-estimates.js`, `transcript-format.js`, `job-options.js`, then `renderer.js`. The first five are pure modules (no DOM, no IPC) using the same dual `module.exports` / `window.<namespace>` pattern as `queue.js`, so they are testable in plain Node. `renderer.js` consumes them through `window.mediaExtensions`, `window.timeEstimates`, and `window.transcriptFormat`. There is no framework, no build step, and no bundler. The constraints that drove this: (a) the UI is a single screen with no routing, so a framework adds complexity without benefit; (b) avoiding a build step means contributors can change the renderer code and reload the app without running a watcher; (c) the UI is simple enough (a model picker, a file queue, a transcript output) that vanilla DOM manipulation is sufficient.
 
 ### 5.1 renderer/queue.js -- the queue state model
 
@@ -156,7 +158,7 @@ Wires the DOM elements to user actions and IPC events. Key behaviours:
 - **Model download** streams progress from the main process via `download-progress` events. The download button appears only for undownloaded models, determined by the `downloaded` boolean from `get-models`.
 - **Transcription** is kicked off by the Transcribe button, which calls `queue.processAll` with a callback that invokes `window.api.transcribe`. The UI shows a progress spinner, an elapsed timer, and a cancel button. After processing, the queue is cleared (completed items are discarded from the UI -- transcripts are shown in the output area, not retained in the queue).
 - **Rich display for diarized output:** when pyannote diarization succeeds (detected by `transcriptFormat.isPyannoteDiarized`, a `[N speakers detected]` header check), the renderer replaces the plain textarea with a `div.transcript-rich` containing speaker-colored spans. The block parsing is done by `transcriptFormat.parseRichTranscript`, which clamps speaker numbers above 8 to the highest CSS class. Eight CSS classes (`speaker-1` through `speaker-8`) provide distinct colors. The textarea is kept in sync (hidden) as the plain-text copy/save source.
-- **Settings menu** (hamburger icon) contains the anti-corruption toggle, diarization setup, and an optional debug panel. The diarization section disables the enable toggle if Python or pyannote is not found, and shows CUDA detection status.
+- **Settings menu** contains the anti-corruption toggle, speaker/alignment model setup and an optional debug panel. Speaker diarisation is enabled only when the supported Python packages and model are ready. The Model card shows **Align words to the audio** while diarisation is on; `job-options.js` controls availability and builds each job's options. The alignment preference is saved in renderer local storage; the token is not saved.
 - **Auto-update** uses `electron-updater`'s GitHub provider. The renderer listens for `update-available` (shows "Downloading...") and `update-downloaded` (shows "Update ready -- click to restart"). Version comparison prevents offering downgrades.
 
 ### 5.3 preload.js -- the context bridge
@@ -167,7 +169,7 @@ A flat list of `contextBridge.exposeInMainWorld` calls. Each function maps to an
 
 ### 6.1 Why Electron
 
-Electron was chosen because it provides a cross-platform desktop shell with native file dialogs, auto-updates, and a Chromium renderer -- all from JavaScript. The alternative would be a native GUI toolkit (Qt, GTK, WinUI), but that would require either C++ development or Python packaging (which is notoriously fragile on Windows). Electron's `extraResources` mechanism in `electron-builder.yml` allows bundling arbitrary binary directories alongside the asar, which is critical for shipping ffmpeg and whisper-cli.
+Electron was chosen because it provides a cross-platform desktop shell with native file dialogs, auto-updates, and a Chromium renderer -- all from JavaScript. The alternative would be a native GUI toolkit (Qt, GTK, WinUI), but that would require either C++ development or Python packaging (which is notoriously fragile on Windows). Electron's `extraResources` mechanism in `electron-builder.yml` allows bundling arbitrary binary directories alongside the asar, which lets the app ship ffmpeg and whisper-cli.
 
 ### 6.2 Platform binary layout
 
@@ -187,11 +189,11 @@ Each platform gets its own directory. The binary names differ by platform (`.exe
 
 ### 6.3 Windows NSIS installer
 
-Built by `electron-builder` with `nsis.oneClick: true`. The installer places the app in Program Files, creates Start Menu shortcuts, and registers an uninstaller. The one-click setting means the user doesn't see an installation wizard -- it installs silently to the default location.
+Built by `electron-builder` with `nsis.oneClick: true`. The installer uses electron-builder's default installation location, creates Start Menu shortcuts and registers an uninstaller. The one-click setting means the user doesn't see an installation wizard -- it installs silently to the default location.
 
 ### 6.4 Linux AppImage
 
-A self-contained AppImage that bundles all dependencies. Built by `electron-builder` with `linux.target: AppImage`. No system dependencies required beyond a working FUSE setup.
+An AppImage with Electron and the basic transcription binaries, built with `linux.target: AppImage`. Optional Python packages and speaker/alignment models are installed separately. Running the AppImage needs a supported Linux system and working FUSE setup.
 
 ### 6.5 Build script (`scripts/build.sh`)
 
@@ -205,8 +207,8 @@ The single build script handles dependency fetching and packaging. It reads `dep
 
 | File | What it tests | When to run it |
 |------|--------------|----------------|
-| `scripts/test-merge.js` | All 5 stages of the diarization merge pipeline plus post-collapse merging; ~40 test cases covering segment-level fallback, word-level token assignment, boundary refinement, smoothing, short-block merge, and config overrides | After any change to `lib/diarize-merge.js` |
-| `scripts/test-capabilities.js` | GPU detection fallback, DTW probe caching, Python detection caching, preference persistence; ~15 tests using mock spawn and stubs | After any change to `lib/capabilities.js` |
+| `scripts/test-merge.js` | Speaker assignment, short-turn/Unknown preservation, gaps, overlap, exclusive timelines and boundary rules | After any change to `lib/diarize-merge.js` |
+| `scripts/test-capabilities.js` | GPU detection fallback, per-executable DTW support, Python/package/cache readiness, preference persistence; ~15 tests using mock spawn and stubs | After any change to `lib/capabilities.js` |
 | `scripts/test-transcription-runner.js` | Pipeline orchestration: FFmpeg arg construction, whisper-is-called wiring, cancellation via AbortSignal; ~10 tests using mock spawn | After any change to `lib/transcription-runner.js` |
 | `scripts/test-whisper-runner.js` | Whisper arg construction, GPU->CPU fallback, DTW->no-DTW fallback, OOM vs non-OOM classification, cancellation during retry; ~12 tests | After any change to `lib/whisper-runner.js` |
 | `scripts/test-models.js` | `getModel` lookup and unknown-id error, `getModelPath`, `getDownloadUrl` default vs `hfRepo` override, `listModels` shape; ~9 tests | After any change to `lib/models.js` |
@@ -214,10 +216,17 @@ The single build script handles dependency fetching and packaging. It reads `dep
 | `scripts/test-queue.js` | Queue enqueue/remove/clear/getActiveItem, serial processing, error isolation (one failure doesn't stop the batch), cancellation; ~15 tests | After any change to `renderer/queue.js` |
 | `scripts/test-transcript-format.js` | Pyannote detection regex, tinydiarize split-and-join formatting, rich-transcript parsing with speaker-number clamping, speaker counting; ~21 tests | After any change to `renderer/transcript-format.js` |
 | `scripts/test-time-estimates.js` | Model-id to time-estimate bucket mapping including the `large-turbo` special case; ~16 tests | After any change to `renderer/time-estimates.js` |
-| `scripts/test-renderer-smoke.js` | Loads every renderer script (`queue.js`, `media-extensions.js`, `time-estimates.js`, `transcript-format.js`, `renderer.js`) in a minimal browser-like vm context to catch require()-in-renderer bugs, missing globals, and syntax errors | Before any release or PR that touches renderer code |
-| `scripts/test-packaging.js` | Verifies that every `require('./lib/...')` in `main.js` resolves to an existing file, that `lib/` is not in top-level `extraResources` (which would move JS modules outside the asar), and that `lib/diarize.py` IS in `extraResources` | Before packaging a release |
+| `scripts/test-renderer-smoke.js` | Loads every renderer script (`queue.js`, `media-extensions.js`, `time-estimates.js`, `transcript-format.js`, `job-options.js`, `renderer.js`) in a minimal browser-like vm context to catch require()-in-renderer bugs, missing globals, and syntax errors | Before any release or PR that touches renderer code |
+| `scripts/test-packaging.js` | Verifies that every `require('./lib/...')` in `main.js` resolves to an existing file, that `lib/` is not in top-level `extraResources` (which would move JS modules outside the asar), that Python helpers, setup and requirements are in `extraResources`, and that app files exclude credentials and private working data | Before packaging a release |
+| `scripts/test-transcript-timing.js` | Word grouping, timing sources, validation and forced-alignment fallback | After timing changes |
+| `scripts/test-job-options.js` | Alignment controls and job options | After UI option changes |
+| `scripts/test-diarization-setup.js` | Setup subprocess, token handling and refresh | After setup changes |
+| `scripts/test-diarize-contract.py` | Python detector, privacy, output and setup contracts without models | After diarisation/helper changes |
+| `scripts/test-align-contract.py` | Alignment-only loading, positional mapping and timing quality without models | After alignment/helper changes |
+| `scripts/test-diarization-evaluation.js` | Scoring, denominators and missing metrics on synthetic data | After evaluator changes |
+| `scripts/test-whisper-dtw.js` | Real local executable identity and populated DTW anchors | With prepared local audio and model |
 | `scripts/test-audio-load.py` | Checks that ffmpeg can load a given audio file | Ad-hoc, when debugging ffmpeg issues |
-| `scripts/test-diarize-pipeline.py` | End-to-end diarization test requiring Python, pyannote, and a Hugging Face token | After changes to `lib/diarize.py` or when setting up diarization |
+| `scripts/test-diarize-pipeline.py` | End-to-end diarisation smoke check requiring the prepared speaker model and Python; inference needs no token | After changes to `lib/diarize.py` or when setting up diarization |
 
 All JavaScript tests follow the same plain-Node pattern: no test framework, no assertions library. A `test(name, fn)` function queues tests; `assert(cond, msg)` throws on failure. The test runner prints `PASS`/`FAIL` per test and exits with code 1 on any failure. No dev dependency is added that would need maintenance across Electron version bumps.
 
@@ -225,7 +234,7 @@ All JavaScript tests follow the same plain-Node pattern: no test framework, no a
 
 | Choice | Why |
 |--------|-----|
-| Spawning child processes instead of native bindings | Avoids C++ compilation in the Electron app; isolates crashes (a whisper segfault doesn't take down the UI); satisfies LGPL compliance for ffmpeg without re-linking; enables clean cancellation via `proc.kill()` |
+| Spawning child processes instead of native bindings | Avoids C++ compilation in the Electron app; isolates crashes (a whisper segfault doesn't take down the UI); keeps FFmpeg separate and replaceable; enables clean cancellation via `proc.kill()` |
 | whisper.cpp rather than faster-whisper or WhisperX | Ships as a single static binary per platform; no Python dependency for basic transcription; active maintenance; Vulkan GPU support; simplest to bundle into a desktop installer |
 | Electron + vanilla DOM instead of Qt/Tauri/React | Cross-platform from one JS codebase; no C++ or Rust toolchain required for contributors; no build step for the renderer (edit and reload); Electron's `extraResources` handles binary bundling cleanly |
 | In-memory queue (no persistence) | Queue doesn't need to survive app restarts -- users rebuilding a transcription queue after a crash is acceptable; persistence would add file-format complexity and error handling for corrupt state |
@@ -244,14 +253,12 @@ All JavaScript tests follow the same plain-Node pattern: no test framework, no a
 
 4. **`lib/models.js`** -- canonical model metadata. One entry per model with filename, label, size, DTW preset, and optional `tdrz`/`hfRepo` flags. Add a model here and every consumer (download handler, runner) sees it.
 
-5. **`lib/transcription-runner.js`** + **`lib/whisper-runner.js`** -- the FFmpeg -> whisper -> diarize pipeline. `runTranscription` is the three-step composition; `whisper-runner` owns arg construction and the GPU/DTW retry policy. `lib/_subprocess.js` is the shared spawn helper.
+5. **`lib/transcription-runner.js`** + **`lib/whisper-runner.js`** -- the FFmpeg -> Whisper -> optional alignment -> diarise pipeline. `runTranscription` composes these stages; `whisper-runner` owns arg construction and the GPU/DTW retry policy. `lib/_subprocess.js` is the shared spawn helper.
 
 6. **`lib/capabilities.js`** -- GPU, DTW, and Python detection. `detect()` runs three probes at startup. `getActiveBackend()` shows how user preference and hardware detection combine.
 
-7. **`lib/diarize-merge.js`** -- the five-stage merge pipeline plus post-collapse short-block merge. The `DEFAULTS` object documents every tunable threshold. The `mergeTranscriptWithDiarization` orchestrator wires them together.
+7. **`lib/diarize-merge.js`** -- speaker assignment from normalised words and timelines, with structured evidence. `assignSpeakers` returns words, blocks and summaries; `mergeTranscriptWithDiarization` keeps the string API.
 
 8. **`renderer/queue.js`** and **`renderer/renderer.js`** -- the UI side: queue state model and DOM wiring. Look at `processAll` for serial processing and `displayRichTranscript` for the speaker-colored output. Pure helpers live alongside: `renderer/transcript-format.js` (pyannote detection, tinydiarize formatting, rich parsing), `renderer/media-extensions.js`, and `renderer/time-estimates.js`.
 
 9. **`scripts/build.sh`** and **`electron-builder.yml`** -- how the app becomes a Windows NSIS installer or Linux AppImage. `electron-builder.yml` defines `extraResources` (what goes outside the asar) and `nsis`/`AppImage` target settings.
-
-That is the whole project.

@@ -6,6 +6,27 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Optional local word alignment of the existing Whisper transcript, with an "Align words to the audio" job switch and CLI `--alignment whisper|forced`.
+- Explicit speaker and alignment model downloads in Settings or `scripts/setup-diarization.py`; `TRANSCRIBER_PYTHON` selects the interpreter.
+- JSON speaker attribution evidence, word timing sources, alignment status and regular/exclusive speaker timelines, while retaining `whisper`, `diarize` and `merged`.
+- A reproducible speaker evaluation harness and partial benchmark results. Community-1 word speaker scores are recorded on one tuning episode; legacy comparisons, independent timing annotations and held-out validation remain pending.
+
+### Changed
+
+- Diarised jobs keep ordinary Whisper timing and flash attention by default. DTW is now an explicit CLI `--dtw` option after the tuning episode lost two interview clips with DTW and took 35% longer.
+- Optional speaker diarisation uses pyannote.audio 4.0.7 and Community-1 with its exclusive timeline for word assignment. Python packages are pinned; Python 3.10 to 3.13 is the supported setup.
+- Speaker and alignment inference load prepared local caches with telemetry disabled. Tokens are used only during setup and are no longer saved; the CLI's old `--hf-token` option is ignored.
+- Alignment setup warns about the non-commercial fr/de/es/it model licences.
+
+### Fixed
+
+- Excluded local credentials, environments and benchmark recordings from packaged app files.
+- Requested DTW timing now disables flash attention and uses validated token anchors; unsupported DTW falls back with a recorded reason.
+- Speaker merging preserves supported short replies, overlap evidence and Unknown labels instead of rewriting them during cleanup.
+
+
 ## [0.3.3] - 2026-10-14
 
 ### Changed

@@ -22,7 +22,10 @@ https://github.com/openai/whisper
 
 FFmpeg
 Copyright (c) the FFmpeg developers
-Licensed under the GNU Lesser General Public License version 2.1
+Base project: GNU Lesser General Public License version 2.1 or later;
+GPL-enabled builds use the GNU General Public License. The bundled Linux
+static builds from johnvansickle.com use GPLv3. Check ffmpeg -L for each
+distributed platform binary.
 https://ffmpeg.org | https://github.com/FFmpeg/FFmpeg
 
 ---

@@ -1,69 +1,100 @@
 # Privacy architecture
 
-This document describes Transcriber's data processing architecture for use in ethics applications, IRB submissions, data management plans, and institutional data governance reviews.
+Transcriber processes audio and video locally on the user's computer.
+Transcription, word alignment and speaker diarisation use local processes
+and prepared models. They do not upload audio or transcript text.
 
-## Summary
-
-Transcriber is a desktop application that processes audio and video files locally on the user's computer. **No data is transmitted over any network during transcription.** There is no cloud component, no remote API, no telemetry, and no user accounts.
+This document describes the data flow for ethics applications, data management
+plans and institutional reviews. Model setup and application updates use the
+network; a local transcription job does not need a network connection.
 
 ## Data flow
 
-1. The user selects an audio or video file from their local filesystem.
-2. FFmpeg (running as a local process) converts the file to WAV format. The converted file is stored temporarily on the local filesystem.
-3. whisper.cpp (running as a local process) processes the WAV file using a Whisper model stored on the local filesystem. The transcript is generated in memory and passed to the application.
-4. If diarisation is enabled, pyannote.audio (or TinyDiarize for the small.en-tdrz model) identifies distinct speakers and labels transcript segments accordingly. This runs locally.
-5. The transcript is displayed in the application interface. It remains in application memory until the user copies or exports it.
+1. The user selects a local audio or video file.
+2. FFmpeg converts it to a temporary 16 kHz mono PCM WAV on the local filesystem.
+3. whisper.cpp transcribes that WAV with a local Whisper model.
+4. If requested, a Python process matches the recognised words to the same WAV
+   using a prepared word alignment model. It changes word times, not text.
+5. If speaker diarisation is enabled, a separate Python process runs Community-1
+   from the local cache. Its exclusive timeline assigns one speaker at each
+   time; its regular timeline records overlap. TinyDiarize models instead detect
+   speaker changes within whisper.cpp.
+6. The app displays the transcript. The user can copy or export it.
 
-**At no point in this process is any data transmitted over a network.**
+The pipeline deletes temporary WAV and JSON files after success, failure or
+cancellation. Exported transcripts remain where the user saves them. This is
+ordinary file deletion, not secure erasure. The GUI also writes local logs
+containing file paths and subprocess output, which may include transcript
+text. Logs rotate at 5 MB; users should treat logs and exports as sensitive.
 
 ## Network activity
 
-Transcriber makes **no network connections during transcription**. No audio, text, or metadata is transmitted at any point in the transcription process.
+Network use is limited to setup and application maintenance:
 
-Network activity is limited to:
-- Model downloads (75 MB – 3.1 GB per model, once per model, initiated by the user)
-- An automatic update check on startup (queries GitHub Releases for newer versions; no user data is sent)
+- Whisper model downloads initiated by the user (about 75 MB to 3.1 GB).
+- Optional Python package installation and explicit speaker/alignment model
+  setup. Community-1 access requires a Hugging Face account and acceptance
+  of its access conditions; a Read token authenticates the download.
+- Update checks on GUI startup and automatic update downloads when available.
+- External documentation links opened by the user in their browser.
 
-The application:
-- Does not transmit audio, text, or metadata
-- Does not collect usage analytics or telemetry
-- Does not require an internet connection after model download
-- Does not require user accounts or registration
+Speaker and alignment jobs set Hugging Face offline flags before imports and
+disable pyannote/Hugging Face telemetry. Alignment also uses local transformer,
+NLTK and torch caches and blocks their download paths during inference. Missing
+models produce a setup message or a declared fallback, rather than an inference
+download. The Hugging Face token is passed to setup through the process
+environment and is not saved by Transcriber. Later inference needs no token.
+
+The app has no cloud transcription service, usage analytics or Transcriber
+user account. It can transcribe without internet access once the models are
+prepared. An update request still exposes ordinary connection information,
+such as the source IP address, to the update host; it does not contain the
+recording or transcript.
 
 ## Technical components
 
 | Component | Role | Licence | Source |
 |-----------|------|---------|--------|
-| whisper.cpp | Speech-to-text inference | MIT | https://github.com/ggml-org/whisper.cpp |
-| FFmpeg | Audio/video format conversion | LGPL 2.1 | https://ffmpeg.org |
-| Whisper models | Neural network weights | MIT | https://github.com/openai/whisper |
-| TinyDiarize | Speaker change detection | MIT | Integrated with whisper.cpp |
-| pyannote.audio | Speaker diarisation (optional) | MIT | https://github.com/pyannote/pyannote-audio |
-| Electron | Application framework | MIT | https://www.electronjs.org |
+| whisper.cpp | Speech recognition | MIT | [Source](https://github.com/ggml-org/whisper.cpp) |
+| FFmpeg | Media conversion | Depends on build; LGPL or GPL | [Bundling details](ffmpeg.md) |
+| Whisper models | Recognition weights | MIT | [Source](https://github.com/openai/whisper) |
+| TinyDiarize | Speaker change detection | MIT | [Source](https://github.com/akashmjn/tinydiarize-whisper.cpp) |
+| pyannote.audio | Optional speaker inference | MIT | [Source](https://github.com/pyannote/pyannote-audio) |
+| Community-1 | Optional speaker model | CC BY 4.0 | [Model](https://huggingface.co/pyannote/speaker-diarization-community-1) |
+| WhisperX | Optional alignment functions | BSD 2-Clause | [Source](https://github.com/m-bain/whisperX) |
+| English wav2vec2 model | Optional alignment weights | MIT | [Attribution](../NOTICE) |
+| Electron | Desktop framework | MIT | [Source](https://www.electronjs.org) |
 
-All components run locally. No component makes network requests during transcription.
-
-## Source code
-
-Transcriber is free and open-source software released under the GNU General Public License v3.0. The complete source code is available at:
-
-https://github.com/andrewjamesturner0/transcriber
-
-The source code can be audited to verify the claims made in this document.
+Some non-English alignment models have separate licences, including
+non-commercial terms for fr/de/es/it. See [the setup guide](diarization-setup.md).
+Optional Python packages and models are installed separately from the app.
 
 ## Verification
 
-Because Transcriber is open-source (GPLv3), the architecture described here can be independently verified by:
-1. Inspecting the source code
-2. Monitoring network activity during operation (the application makes no connections)
-3. Running the application in a network-isolated environment (it functions identically)
+The [source code](https://github.com/andrewjamesturner0/transcriber) is public
+under GPLv3. Relevant code is `lib/transcription-runner.js`, `lib/diarize.py`,
+`lib/align.py`, `scripts/setup-diarization.py` and the update handler in `main.js`.
+
+Verify a prepared installation by running a transcription job with networking
+disabled, or monitoring its processes' network activity. Distinguish inference
+from setup downloads and the GUI updater. Deterministic privacy contracts are
+checked in `scripts/test-diarize-contract.py` and `scripts/test-align-contract.py`;
+real model/platform smoke checks are still incomplete and do not yet prove
+this behaviour on every supported installation.
 
 ## Use in ethics applications
 
-Suggested language for ethics board submissions:
+Suggested wording, to adapt to the actual installation and local policy:
 
-> Audio recordings will be transcribed using Transcriber (https://github.com/andrewjamesturner0/transcriber), a free, open-source desktop application that processes audio locally on the researcher's computer. No audio data is transmitted to cloud services or third parties during transcription. The software's source code is publicly available under the GNU General Public License v3.0 and can be audited to verify this claim. A detailed privacy architecture document is available at https://github.com/andrewjamesturner0/transcriber/blob/master/docs/privacy-architecture.md.
+> Audio recordings will be transcribed using Transcriber, a free, open-source
+> desktop application that processes recordings locally on the researcher's
+> computer. Transcription and optional word alignment and speaker diarisation
+> use prepared local models without uploading recordings or transcripts. Model
+> setup and software updates use the network. Transcripts, temporary files and
+> application logs are held locally and managed under the study's data handling
+> procedures. The source code is available under GPLv3 for audit.
 
 ## Contact
 
-For questions about Transcriber's architecture or data handling, open an issue on the [GitHub repository](https://github.com/andrewjamesturner0/transcriber/issues).
+For questions about architecture or data handling, open an issue on the
+[GitHub repository](https://github.com/andrewjamesturner0/transcriber/issues).

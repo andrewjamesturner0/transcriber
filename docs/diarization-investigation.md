@@ -7,7 +7,7 @@ earlier explanation that the timestamp resolution was insufficient is therefore
 incomplete. Fixing these problems should establish a fair baseline before we
 judge the remaining limits of Whisper or pyannote.
 
-This is an investigation, not an accuracy claim. Production code is unchanged.
+This records the original investigation, before production fixes. The implemented pipeline is documented in [diarization.md](diarization.md); measured results and missing evidence are in [diarization-evaluation.md](diarization-evaluation.md). The observations below describe the original checkout, not the current implementation.
 Three GPT-6 Astra agents independently examined timestamp handling, speaker
 merging, and current tooling; their findings were checked against source and
 small reproducible examples.
