@@ -12,6 +12,7 @@ const paths = require('./lib/paths');
 const Capabilities = require('./lib/capabilities');
 const models = require('./lib/models');
 const { createTranscriptionRunner } = require('./lib/transcription-runner');
+const { createDiarizationSetup } = require('./lib/diarization-setup');
 
 // Initialize path resolver at module load time so it's available for
 // all requires and function calls that follow.
@@ -47,6 +48,7 @@ let mainWindow;
 let transcriptionAbort = null;
 let capabilities;
 let transcriptionRunner;
+let diarizationSetup = null;
 
 // --- Debug logging ---
 const logDir = path.join(app.getPath('userData'), 'logs');
@@ -110,6 +112,7 @@ app.whenReady().then(async () => {
     spawn,
     log: logWrite,
   });
+  diarizationSetup = createDiarizationSetup({ capabilities, paths, spawn, log: logWrite });
 
   createWindow();
 
@@ -210,7 +213,17 @@ ipcMain.handle('cancel-transcription', () => {
   return false;
 });
 
-ipcMain.handle('check-python', async () => capabilities.getPythonInfo());
+// Re-probe every time: the Re-check button and a finished setup must see the
+// current Python packages and model cache.
+ipcMain.handle('check-python', async () => capabilities.getPythonInfo({ refresh: true }));
+
+// User-directed download of the speaker model (D2). Jobs never download.
+ipcMain.handle('prepare-diarization', async (event, token) => {
+  return diarizationSetup.prepare({
+    token,
+    onProgress: (data) => event.sender.send('diarize-status', data),
+  });
+});
 
 ipcMain.handle('get-gpu-status', async () => {
   await capabilities.detectGpu();

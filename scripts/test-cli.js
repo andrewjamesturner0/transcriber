@@ -153,14 +153,15 @@ test('transcribe with invalid --format exits non-zero', () => {
   }
 });
 
-test('transcribe --diarize without HF token exits non-zero before any work', () => {
+test('transcribe --diarize without a usable Python exits non-zero before any work, no token needed', () => {
   const tmpFile = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-')) + '/a.wav';
   fs.writeFileSync(tmpFile, '');
   try {
-    const r = runCli(['transcribe', '--diarize', tmpFile]);
+    const r = runCli(['transcribe', '--diarize', '--backend', 'cpu', tmpFile],
+      { env: { TRANSCRIBER_PYTHON: '/no/such/python' } });
     assert(r.status !== 0, `expected non-zero exit, got ${r.status}`);
-    assert(r.stderr.includes('HF_TOKEN') || r.stderr.includes('hf-token'),
-      `stderr should mention HF token, got: ${r.stderr}`);
+    assert(r.stderr.includes('not ready (python-missing)'), `stderr should give the setup status, got: ${r.stderr}`);
+    assert(!/requires --hf-token/.test(r.stderr), 'a token must no longer be required');
   } finally {
     try { fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true }); } catch (_) {}
   }

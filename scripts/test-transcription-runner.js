@@ -365,13 +365,15 @@ console.log('\nDiarised pipeline tests\n');
 
 fs.mkdirSync(path.join(FAKE_APP, 'lib'), { recursive: true });
 fs.writeFileSync(path.join(FAKE_APP, 'lib', 'diarize.py'), '');
+fs.writeFileSync(path.join(FAKE_APP, 'lib', 'align.py'), '');
 
 /**
  * Spawn mock for the full diarised pipeline. whisper-cli writes `whisperJson`
  * to its -of prefix; python writes `diarizeOutput` (raw JSON text or value)
  * to --output and emits `diarizeStderr` chunks.
  */
-function pipelineSpawn({ whisperJson, diarizeOutput, diarizeStderr = [], diarizeCode = 0, calls = [] }) {
+function pipelineSpawn({ whisperJson, diarizeOutput, diarizeStderr = [], diarizeCode = 0, calls = [], hang = false,
+  alignOutput, alignCode = 0, alignStderr = [], hangAlign = false }) {
   return function (cmd, args, opts) {
     calls.push({ cmd, args: [...args] });
     const proc = new EventEmitter();
@@ -379,9 +381,24 @@ function pipelineSpawn({ whisperJson, diarizeOutput, diarizeStderr = [], diarize
     proc.stderr = new EventEmitter();
     proc.kill = () => process.nextTick(() => proc.emit('close', null));
     let code = 0;
-    if (cmd.includes('whisper-cli')) {
+    if (cmd.includes('ffmpeg')) {
+      fs.writeFileSync(args[args.length - 1], 'RIFF');
+    } else if (cmd.includes('whisper-cli')) {
       const ofIdx = args.indexOf('-of');
       if (ofIdx >= 0) fs.writeFileSync(args[ofIdx + 1] + '.json', JSON.stringify(whisperJson));
+    } else if (cmd === 'python3' && args[0].endsWith('align.py')) {
+      const input = JSON.parse(fs.readFileSync(args[args.indexOf('--input') + 1], 'utf-8'));
+      calls[calls.length - 1].alignInput = input;
+      const out = typeof alignOutput === 'function' ? alignOutput(input) : alignOutput;
+      if (out !== undefined) {
+        fs.writeFileSync(args[args.indexOf('--output') + 1], typeof out === 'string' ? out : JSON.stringify(out));
+      }
+      if (hangAlign) return proc;
+      process.nextTick(() => {
+        for (const chunk of alignStderr) proc.stderr.emit('data', Buffer.from(chunk));
+        proc.emit('close', alignCode);
+      });
+      return proc;
     } else if (cmd === 'python3') {
       const outIdx = args.indexOf('--output');
       if (diarizeOutput !== undefined && outIdx >= 0) {
@@ -389,6 +406,7 @@ function pipelineSpawn({ whisperJson, diarizeOutput, diarizeStderr = [], diarize
       }
       code = diarizeCode;
     }
+    if (hang && cmd === 'python3') return proc;
     process.nextTick(() => {
       if (cmd.includes('whisper-cli')) proc.stdout.emit('data', Buffer.from(' Ready? Yes. Continue.\n'));
       if (cmd === 'python3') for (const chunk of diarizeStderr) proc.stderr.emit('data', Buffer.from(chunk));
@@ -438,6 +456,262 @@ test('diarised job returns merged text and additive JSON evidence', async () => 
   assert(sa && sa.version === 1 && !('text' in sa), 'additive speakerAttribution without duplicate text');
   assert(sa.words.length === 3 && sa.words.every((w) => w.timingSource === 'dtw'), JSON.stringify(sa.summary));
   assert(sa.whisperDtw && sa.whisperDtw.requested === true, JSON.stringify(sa.whisperDtw));
+});
+
+function envelope(regular, exclusive, extra = {}) {
+  return {
+    format: 'transcriber-diarization', version: 1,
+    regular, exclusive, exclusiveAvailable: exclusive !== null,
+    model: { id: 'pyannote/speaker-diarization-community-1', revision: 'abc' },
+    versions: { python: '3.12.3', 'pyannote.audio': '4.0.7', torch: '2.8.0' },
+    device: 'cpu', numSpeakersRequested: null,
+    audio: { sampleRate: 16000, channels: 1, durationSec: 3 }, processingSec: 1,
+    ...extra,
+  };
+}
+
+async function runDiarised(spawnOpts, extra = {}) {
+  const calls = [];
+  const progress = [];
+  const diarizeEvents = [];
+  const runner = makeRunner({
+    spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, calls, ...spawnOpts }),
+    capabilities: { getPythonCommand: async () => 'python3' },
+  });
+  const result = await runner.runTranscription({
+    filePath: '/fake/test.wav', modelId: 'tiny.en',
+    options: { diarization: true, outputJson: true, hfToken: 'hf_secret_value', ...extra.options },
+    signal: extra.signal,
+    onProgress: (m) => progress.push(m), onDiarizeProgress: (d) => diarizeEvents.push(d),
+  });
+  return { result, calls, progress, diarizeEvents };
+}
+
+test('exclusive timeline assigns words; regular overlap kept as evidence', async () => {
+  const regular = [{ start: 0, end: 1.2, speaker: 'A' }, { start: 0.95, end: 1.6, speaker: 'B' }, { start: 2, end: 3, speaker: 'A' }];
+  const exclusive = [{ start: 0, end: 0.95, speaker: 'A' }, { start: 0.95, end: 1.6, speaker: 'B' }, { start: 2, end: 3, speaker: 'A' }];
+  const { result } = await runDiarised({ diarizeOutput: envelope(regular, exclusive) });
+  const j = result.json;
+  assert(j.speakerAttribution.timeline === 'exclusive', j.speakerAttribution.timeline);
+  assert(result.text.includes('[Speaker 2] Yes.'), result.text);
+  assert(JSON.stringify(j.diarize) === JSON.stringify(regular), 'diarize stays the regular array');
+  assert(JSON.stringify(j.diarizeExclusive) === JSON.stringify(exclusive), 'diarizeExclusive added');
+  assert(j.diarizeInfo.model.id === 'pyannote/speaker-diarization-community-1' && !('regular' in j.diarizeInfo), 'info without arrays');
+  const yes = j.speakerAttribution.words[1];
+  assert(yes.evidence.overlapSpeakers.slice().sort().join() === 'A,B', JSON.stringify(yes.evidence));
+});
+
+test('missing exclusive output is declared and regular timeline is used', async () => {
+  const { result } = await runDiarised({ diarizeOutput: envelope(READY_YES_SPEAKERS, null) });
+  assert(result.json.diarizeExclusive === null, 'exclusive null');
+  assert(result.json.speakerAttribution.timeline === 'regular', 'regular used');
+});
+
+test('legacy bare array is accepted as a regular timeline', async () => {
+  const { result } = await runDiarised({ diarizeOutput: READY_YES_SPEAKERS });
+  assert(result.json.diarizeInfo.legacy === true, JSON.stringify(result.json.diarizeInfo));
+  assert(result.json.diarizeExclusive === null, 'no invented exclusive');
+  assert(result.text.includes('[Speaker 2] Yes.'), result.text);
+});
+
+test('malformed or unknown output falls back to the plain transcript', async () => {
+  for (const bad of ['{not json', { format: 'other', version: 1 }, envelope([{ start: 0 }], null),
+    envelope(READY_YES_SPEAKERS, [{ start: 'x', end: 1, speaker: 'A' }])]) {
+    const { result, progress } = await runDiarised({ diarizeOutput: bad });
+    assert(!('json' in result) && result.text === 'Ready? Yes. Continue.', JSON.stringify(result));
+    assert(progress.some((m) => /^Diarization failed \(.+\), using plain transcript$/.test(m)), progress.join(' | '));
+  }
+});
+
+test('missing output file falls back to the plain transcript', async () => {
+  const { result } = await runDiarised({ diarizeOutput: undefined });
+  assert(result.text === 'Ready? Yes. Continue.', result.text);
+});
+
+test('helper error code and message reach progress and fallback', async () => {
+  const err = JSON.stringify({ error: 'Speaker model not prepared. Run scripts/setup-diarization.py', code: 'model-not-prepared' });
+  const { result, progress, diarizeEvents } = await runDiarised({ diarizeOutput: undefined, diarizeStderr: [err + '\n'], diarizeCode: 1 });
+  assert(result.text === 'Ready? Yes. Continue.', result.text);
+  assert(diarizeEvents.some((d) => d.code === 'model-not-prepared'), JSON.stringify(diarizeEvents));
+  assert(progress.some((m) => m.includes('Speaker model not prepared')), progress.join(' | '));
+});
+
+test('progress JSON split across stderr chunks is parsed once', async () => {
+  const line = JSON.stringify({ message: 'Running diarization...', percent: 30 }) + '\n';
+  const { diarizeEvents } = await runDiarised({
+    diarizeOutput: envelope(READY_YES_SPEAKERS, null),
+    diarizeStderr: [line.slice(0, 12), line.slice(12, 30), line.slice(30) + 'plain log line\n'],
+  });
+  const hits = diarizeEvents.filter((d) => d.message === 'Running diarization...' && d.percent === 30);
+  assert(hits.length === 1, JSON.stringify(diarizeEvents));
+});
+
+test('no Hugging Face token reaches the inference command line', async () => {
+  const { calls } = await runDiarised({ diarizeOutput: envelope(READY_YES_SPEAKERS, null) });
+  const py = calls.find((c) => c.cmd === 'python3');
+  assert(py && !py.args.includes('--hf-token') && !py.args.some((a) => a.includes('hf_secret')), JSON.stringify(py && py.args));
+});
+
+test('temporary WAV, Whisper JSON and diarize output are removed after success and failure', async () => {
+  for (const opts of [{ diarizeOutput: envelope(READY_YES_SPEAKERS, null) }, { diarizeOutput: '{bad' }]) {
+    const { calls } = await runDiarised(opts);
+    const wav = calls.find((c) => c.cmd.includes('ffmpeg')).args.slice(-1)[0];
+    const wjson = calls.find((c) => c.cmd.includes('whisper-cli')).args[calls.find((c) => c.cmd.includes('whisper-cli')).args.indexOf('-of') + 1] + '.json';
+    const py = calls.find((c) => c.cmd === 'python3');
+    const out = py.args[py.args.indexOf('--output') + 1];
+    for (const f of [wav, wjson, out]) assert(!fs.existsSync(f), `left behind: ${f}`);
+  }
+});
+
+test('cancellation during diarisation propagates and cleans up', async () => {
+  const controller = new AbortController();
+  const calls = [];
+  const runner = makeRunner({
+    spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, diarizeOutput: envelope(READY_YES_SPEAKERS, null), calls, hang: true }),
+    capabilities: { getPythonCommand: async () => 'python3' },
+  });
+  const promise = runner.runTranscription({
+    filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, outputJson: true },
+    signal: controller.signal, onProgress: () => {}, onDiarizeProgress: () => {},
+  });
+  while (!calls.some((c) => c.cmd === 'python3')) await new Promise((r) => setTimeout(r, 5));
+  controller.abort();
+  let caught = null;
+  try { await promise; } catch (e) { caught = e; }
+  assert(caught && caught.message === 'Cancelled', `expected Cancelled, got ${caught && caught.message}`);
+  const py = calls.find((c) => c.cmd === 'python3');
+  assert(!fs.existsSync(py.args[py.args.indexOf('--output') + 1]), 'diarize output removed');
+  assert(!fs.existsSync(calls.find((c) => c.cmd.includes('ffmpeg')).args.slice(-1)[0]), 'WAV removed');
+});
+
+// --- Forced alignment pipeline tests (D3) ---
+
+console.log('\nForced alignment pipeline tests\n');
+
+/** Aligner stub: every word measured at a fixed position, optionally overridden. */
+function alignAll(times, quality = 'measured') {
+  return (input) => ({
+    format: 'transcriber-alignment', version: 1,
+    provider: { name: 'whisperx', version: '3.8.6', model: 'WAV2VEC2_ASR_BASE_960H', language: input.language },
+    device: 'cpu', processingSec: 1,
+    segments: input.segments.map((seg) => ({
+      index: seg.index, status: 'aligned', reason: null,
+      words: seg.words.map((_, k) => times[k] === null
+        ? { startMs: null, endMs: null, score: null, quality: 'unaligned' }
+        : { startMs: times[k][0], endMs: times[k][1], score: 0.9, quality }),
+    })),
+  });
+}
+
+// A forced job runs Whisper without --dtw, so its tokens carry no anchors.
+const READY_YES_NO_DTW = JSON.parse(JSON.stringify(READY_YES_JSON));
+for (const t of READY_YES_NO_DTW.transcription[0].tokens) t.t_dtw = -1;
+
+async function runForced(spawnOpts, options = {}) {
+  const calls = [];
+  const progress = [];
+  const runner = makeRunner({
+    spawn: pipelineSpawn({ whisperJson: READY_YES_NO_DTW, calls, diarizeOutput: envelope(READY_YES_SPEAKERS, null), ...spawnOpts }),
+    capabilities: { getPythonCommand: async () => 'python3' },
+  });
+  const result = await runner.runTranscription({
+    filePath: '/fake/test.wav', modelId: 'tiny.en',
+    options: { diarization: true, outputJson: true, alignment: 'forced', ...options },
+    signal: spawnOpts.signal, onProgress: (m) => progress.push(m), onDiarizeProgress: () => {},
+  });
+  return { result, calls, progress };
+}
+
+test('forced alignment: one Whisper pass without DTW, aligner before diariser, forced timing used', async () => {
+  // Aligner moves "Yes." into speaker A's time; the speaker must follow the aligner.
+  const { result, calls } = await runForced({ alignOutput: alignAll([[100, 700], [700, 850], [2100, 2700]]) });
+  const order = calls.map((c) => (c.cmd.includes('ffmpeg') ? 'ffmpeg' : c.cmd.includes('whisper-cli') ? 'whisper'
+    : c.args[0].endsWith('align.py') ? 'align' : 'diarize'));
+  assert(JSON.stringify(order) === JSON.stringify(['ffmpeg', 'whisper', 'align', 'diarize']), order.join(','));
+  const w = calls.find((c) => c.cmd.includes('whisper-cli'));
+  assert(!w.args.includes('--dtw') && !w.args.includes('--no-flash-attn'), 'no DTW for forced jobs');
+  const align = calls.find((c) => c.alignInput);
+  assert(align.alignInput.language === 'en' && align.alignInput.segments[0].words.join(' ') === 'Ready? Yes. Continue.', JSON.stringify(align.alignInput));
+  const sa = result.json.speakerAttribution;
+  assert(sa.words.every((x) => x.timingSource === 'forced' && x.timingQuality === 'measured'), JSON.stringify(sa.summary.timing));
+  assert(sa.alignment.status === 'aligned' && sa.alignment.provider.name === 'whisperx', JSON.stringify(sa.alignment));
+  assert(sa.whisperDtw.requested === false, 'DTW not requested');
+  assert(result.text.includes('[Speaker 1] Ready? Yes.'), result.text);
+});
+
+test('forced alignment: unaligned words keep Whisper timing with a reason', async () => {
+  const { result } = await runForced({ alignOutput: alignAll([[100, 700], null, [2100, 2700]]) });
+  const words = result.json.speakerAttribution.words;
+  assert(words[1].timingSource === 'token' && words[1].timingFallback === 'alignment-unaligned', JSON.stringify(words[1]));
+  assert(words[0].timingSource === 'forced', 'others aligned');
+});
+
+test('forced alignment: helper failure keeps text and Whisper timing, one message', async () => {
+  const err = JSON.stringify({ error: 'Alignment model not prepared', code: 'model-not-prepared' }) + '\n';
+  const { result, progress } = await runForced({ alignOutput: undefined, alignStderr: [err], alignCode: 1 });
+  assert(result.text.includes('[Speaker 2] Yes.'), result.text);
+  const sa = result.json.speakerAttribution;
+  assert(sa.alignment.status === 'failed' && /not prepared/.test(sa.alignment.reason), JSON.stringify(sa.alignment));
+  assert(sa.words.every((x) => x.timingSource === 'token'), JSON.stringify(sa.summary.timing));
+  assert(progress.filter((m) => m.startsWith('Word alignment failed')).length === 1, progress.join(' | '));
+  assert(!progress.some((m) => m.startsWith('Diarization failed')), 'diarisation still ran');
+});
+
+test('forced alignment: malformed output (wrong word count or format) falls back', async () => {
+  for (const bad of ['{nope', { format: 'x', version: 1, segments: [] },
+    (input) => ({ ...alignAll([[1, 2]])(input), segments: [{ index: 0, words: [{ startMs: 1, endMs: 2, quality: 'measured' }] }] })]) {
+    const { result } = await runForced({ alignOutput: bad });
+    assert(result.json.speakerAttribution.alignment.status === 'failed', JSON.stringify(result.json.speakerAttribution.alignment));
+    assert(result.text.includes('Ready?'), 'text kept');
+  }
+});
+
+test('default and plain jobs never start the aligner', async () => {
+  for (const options of [{ diarization: true, outputJson: true }, { diarization: true, alignment: 'whisper' }, {}]) {
+    const calls = [];
+    const runner = makeRunner({
+      spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, calls, diarizeOutput: envelope(READY_YES_SPEAKERS, null) }),
+      capabilities: { getPythonCommand: async () => 'python3' },
+    });
+    await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options, onProgress: () => {}, onDiarizeProgress: () => {} });
+    assert(!calls.some((c) => c.cmd === 'python3' && c.args[0].endsWith('align.py')), JSON.stringify(options));
+  }
+});
+
+test('invalid alignment values and forced without diarisation fail before any process starts', async () => {
+  for (const options of [{ diarization: true, alignment: 'wav2vec' }, { alignment: 'forced' }]) {
+    const calls = [];
+    const runner = makeRunner({ spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, calls }) });
+    let caught = null;
+    try {
+      await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options, onProgress: () => {} });
+    } catch (e) { caught = e; }
+    assert(caught && /alignment|diarisation/i.test(caught.message), caught && caught.message);
+    assert(calls.length === 0, `no subprocess expected, got ${calls.length}`);
+  }
+});
+
+test('cancellation during alignment propagates, skips diarisation and cleans up', async () => {
+  const controller = new AbortController();
+  const calls = [];
+  const runner = makeRunner({
+    spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, calls, alignOutput: undefined, hangAlign: true }),
+    capabilities: { getPythonCommand: async () => 'python3' },
+  });
+  const promise = runner.runTranscription({
+    filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, alignment: 'forced' },
+    signal: controller.signal, onProgress: () => {}, onDiarizeProgress: () => {},
+  });
+  while (!calls.some((c) => c.alignInput)) await new Promise((r) => setTimeout(r, 5));
+  controller.abort();
+  let caught = null;
+  try { await promise; } catch (e) { caught = e; }
+  assert(caught && caught.message === 'Cancelled', caught && caught.message);
+  const a = calls.find((c) => c.alignInput);
+  for (const f of [a.args[a.args.indexOf('--input') + 1], a.args[a.args.indexOf('--output') + 1], calls[0].args.slice(-1)[0]]) {
+    assert(!fs.existsSync(f), `left behind: ${f}`);
+  }
+  assert(!calls.some((c) => c.cmd === 'python3' && c.args[0].endsWith('diarize.py')), 'diarisation not started');
 });
 
 // Retry/fallback tests moved to scripts/test-whisper-runner.js

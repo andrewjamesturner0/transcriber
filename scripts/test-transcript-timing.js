@@ -10,7 +10,10 @@
  *     node scripts/test-transcript-timing.js
  */
 
-const { normaliseWhisperWords, groupTokens, wordPointMs } = require('../lib/transcript-timing');
+const {
+  normaliseWhisperWords, groupTokens, wordPointMs,
+  alignmentLanguage, buildAlignmentInput, applyForcedAlignment,
+} = require('../lib/transcript-timing');
 
 let passed = 0;
 let failed = 0;
@@ -222,6 +225,90 @@ test('summary counts sources, qualities and fallbacks', () => {
   eq(summary.bySource, { dtw: 1, token: 1, segment: 1 });
   eq(summary.byQuality, { anchor: 1, estimated: 1, segment: 1 });
   eq(summary.fallbacks, { 'dtw-anchor-missing': 1, 'token-offsets-missing': 1 });
+});
+
+// --- Forced alignment helpers (D3) ---
+
+console.log('\nForced alignment helpers\n');
+
+function twoSegments() {
+  return { result: { language: 'en' }, transcription: [
+    seg(0, 1000, [tok(' Hello,', 0, 400, -1), tok(' world', 400, 900, -1)]),
+    seg(1000, 2000, [tok(' $12', 1000, 1300, -1), tok('.6', 1300, 1500, -1), tok(' trillion.', 1500, 1900, -1)]),
+  ] };
+}
+
+test('alignment language: .en models force en, otherwise Whisper result, auto is unknown', () => {
+  eq(alignmentLanguage({ result: { language: 'fr' } }, 'small.en'), 'en');
+  eq(alignmentLanguage({ result: { language: 'fr' } }, 'small'), 'fr');
+  eq(alignmentLanguage({ result: { language: 'auto' } }, 'small'), null);
+  eq(alignmentLanguage({}, 'large-v3'), null);
+});
+
+test('alignment input holds each segment\'s words in order with its window', () => {
+  const json = twoSegments();
+  const { words } = normaliseWhisperWords(json);
+  const input = buildAlignmentInput(words, json, { language: 'en' });
+  eq(input, { language: 'en', padMs: 200, segments: [
+    { index: 0, startMs: 0, endMs: 1000, words: ['Hello,', 'world'] },
+    { index: 1, startMs: 1000, endMs: 2000, words: ['$12.6', 'trillion.'] },
+  ] });
+});
+
+test('alignment input uses timed word span when segment offsets are invalid, skips untimed segments', () => {
+  const json = { transcription: [
+    { offsets: { from: 900, to: 100 }, text: ' a b', tokens: [tok(' a', 200, 300), tok(' b', 300, 500)] },
+    { text: ' lost words', tokens: [tok(' lost'), tok(' words')] },
+  ] };
+  const { words } = normaliseWhisperWords(json);
+  eq(buildAlignmentInput(words, json, { language: 'en', padMs: 0 }).segments, [{ index: 0, startMs: 200, endMs: 500, words: ['a', 'b'] }]);
+});
+
+test('applying alignment marks measured, interpolated and unaligned words', () => {
+  const json = twoSegments();
+  const { words } = normaliseWhisperWords(json);
+  const alignment = { segments: [
+    { index: 0, status: 'aligned', words: [
+      { startMs: 120, endMs: 380, score: 0.9, quality: 'measured' },
+      { startMs: 410, endMs: 800, score: null, quality: 'interpolated' },
+    ] },
+    { index: 1, status: 'aligned', words: [
+      { startMs: null, endMs: null, score: null, quality: 'unaligned' },
+      { startMs: 1500, endMs: 1880, score: 0.7, quality: 'measured' },
+    ] },
+  ] };
+  const { words: out, summary } = applyForcedAlignment(words, alignment);
+  eq(out.map((w) => w.text), words.map((w) => w.text), 'text unchanged');
+  eq(out.map((w) => [w.timingSource, w.timingQuality, w.timingFallback]), [
+    ['forced', 'measured', null], ['forced', 'interpolated', null],
+    ['token', 'estimated', 'alignment-unaligned'], ['forced', 'measured', null],
+  ]);
+  eq([out[0].startMs, out[0].endMs, wordPointMs(out[0])], [120, 380, 250]);
+  eq(summary.bySource, { forced: 3, token: 1 });
+});
+
+test('missing segment, malformed entries and null alignment keep Whisper timing', () => {
+  const json = twoSegments();
+  const { words } = normaliseWhisperWords(json);
+  const partial = applyForcedAlignment(words, { segments: [
+    { index: 0, words: [{ startMs: 500, endMs: 100, quality: 'measured' }, { startMs: 'x', endMs: 2, quality: 'measured' }] },
+  ] }).words;
+  eq(partial.map((w) => w.timingSource), ['token', 'token', 'token', 'token']);
+  eq(partial.map((w) => w.timingFallback), Array(4).fill('alignment-unaligned'));
+  const none = applyForcedAlignment(words, null).words;
+  eq(none, words, 'null alignment returns words unchanged');
+});
+
+test('pre-timed words can be passed straight to speaker assignment', () => {
+  const { assignSpeakers } = require('../lib/diarize-merge');
+  const json = twoSegments();
+  const { words } = normaliseWhisperWords(json);
+  const timed = applyForcedAlignment(words, { segments: [{ index: 0, words: [
+    { startMs: 100, endMs: 300, quality: 'measured' }, { startMs: 1200, endMs: 1400, quality: 'measured' },
+  ] }] });
+  const r = assignSpeakers(timed, [{ start: 0, end: 1.0, speaker: 'A' }, { start: 1.0, end: 2.0, speaker: 'B' }]);
+  eq(r.words.map((w) => w.speakerId), ['A', 'B', 'B', 'B']);
+  eq(r.summary.timing.bySource, { forced: 2, token: 2 });
 });
 
 console.log(`\n${passed} passed, ${failed} failed`);

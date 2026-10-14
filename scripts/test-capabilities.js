@@ -3,7 +3,8 @@
  * Tests for lib/capabilities.js
  *
  * Covers: CPU fallback when Vulkan binary missing, preference override,
- * per-backend DTW probing, Python detection caching. Follows the same plain-node
+ * per-backend DTW probing, Python detection caching, TRANSCRIBER_PYTHON, and
+ * mapping of `lib/diarize.py --check` output. Follows the same plain-node
  * style as scripts/test-merge.js (no test framework).
  *
  * Usage:
@@ -548,6 +549,224 @@ test('getPythonCommand returns cached python command', async () => {
   const cmd2 = await caps.getPythonCommand();
   assert(cmd2 === 'python3', 'cached result should match');
   assert(callCount === 1, `python spawn should only be called once, got ${callCount}`);
+});
+
+// ---------------------------------------------------------------------------
+// Tests: diarize.py --check probe and TRANSCRIBER_PYTHON
+// ---------------------------------------------------------------------------
+
+console.log('\nDiarization check tests\n');
+
+const SCRIPT = '/fake/res/lib/diarize.py';
+
+function makeCheckPaths() {
+  return makePaths({ getResourcePath: (rel) => '/fake/res/' + rel.split(require('path').sep).join('/') });
+}
+
+function checkJson(overrides = {}) {
+  return JSON.stringify({
+    status: 'ready',
+    message: 'Speaker diarization is ready.',
+    versions: { python: '3.12.3', 'pyannote.audio': '4.0.7', torch: '2.8.0+cu128' },
+    pythonSupported: true,
+    pyannoteSupported: true,
+    cudaAvailable: true,
+    model: { id: 'pyannote/speaker-diarization-community-1', revision: '3533c8cf8e369892e6b79ff1bf80f7b0286a54ee' },
+    modelReady: true,
+    modelPath: '/home/u/.cache/huggingface/hub/x',
+    loadChecked: false,
+    ...overrides,
+  });
+}
+
+/**
+ * Spawn mock for Python probes. `runnable` lists commands that exist;
+ * `version` is the --version output; `check` is the --check stdout (string),
+ * an exit code (number) or an Error; `pyannote`/`torch` answer the legacy
+ * -c probes (string stdout, or null for an import failure).
+ */
+function makePythonSpawn({ runnable = ['python3'], version = 'Python 3.12.3\n', check, pyannote = null, torch = 'False' } = {}) {
+  const { EventEmitter } = require('events');
+  const calls = [];
+  const spawn = function (cmd, args, opts) {
+    calls.push({ cmd, args: [...args], opts });
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    const finish = (stdout, code = 0) => process.nextTick(() => {
+      if (stdout) proc.stdout.emit('data', Buffer.from(stdout));
+      proc.emit('close', code);
+    });
+    if (!runnable.includes(cmd)) {
+      process.nextTick(() => proc.emit('error', new Error('ENOENT')));
+      return proc;
+    }
+    const argStr = args.join(' ');
+    if (args.includes('--version')) finish(version);
+    else if (args.includes('--check')) {
+      if (check instanceof Error) process.nextTick(() => proc.emit('error', check));
+      else if (typeof check === 'number') finish('', check);
+      else finish(check);
+    } else if (argStr.includes('pyannote.audio')) {
+      if (pyannote === null) finish('', 1); else finish(pyannote + '\n');
+    } else if (argStr.includes('torch.cuda')) {
+      finish(torch + '\n');
+    } else finish('');
+    return proc;
+  };
+  return { spawn, calls };
+}
+
+function makeCaps(spawnMock, opts = {}) {
+  return new Capabilities({
+    paths: makeCheckPaths(),
+    fsExists: opts.fsExists || (() => true),
+    spawn: spawnMock.spawn,
+    env: opts.env || {},
+    logWrite: () => {},
+  });
+}
+
+test('TRANSCRIBER_PYTHON is used instead of the PATH search, for probes and jobs', async () => {
+  const py = '/opt/venv/bin/python';
+  const mock = makePythonSpawn({ runnable: [py, 'python3'], check: checkJson() });
+  const caps = makeCaps(mock, { env: { TRANSCRIBER_PYTHON: py } });
+  const info = await caps.getPythonInfo();
+  assert(info.pythonFound === true, 'python found');
+  assert(await caps.getPythonCommand() === py, 'getPythonCommand returns the override');
+  const spawnInfo = await caps.getPythonSpawn();
+  assert(spawnInfo.command === py && spawnInfo.args.length === 0, `unexpected spawn info ${JSON.stringify(spawnInfo)}`);
+  assert(!mock.calls.some(c => c.cmd !== py), 'no other interpreter should be spawned');
+  const checkCall = mock.calls.find(c => c.args.includes('--check'));
+  assert(checkCall, '--check should be run');
+  assert(checkCall.args[0] === SCRIPT && checkCall.args[1] === '--check', `unexpected args ${checkCall.args}`);
+  assert(checkCall.opts.timeout > 0, '--check runs with a timeout');
+});
+
+test('TRANSCRIBER_PYTHON that cannot run reports not found (no PATH fallback)', async () => {
+  const mock = makePythonSpawn({ runnable: ['python3'], check: checkJson() });
+  const caps = makeCaps(mock, { env: { TRANSCRIBER_PYTHON: '/missing/python' } });
+  const info = await caps.getPythonInfo();
+  assert(info.pythonFound === false, 'python should not be found');
+  assert(info.diarizationStatus === 'python-missing', `status ${info.diarizationStatus}`);
+  assert(!mock.calls.some(c => c.cmd === 'python3'), 'PATH python3 must not be tried');
+  assert(await caps.getPythonSpawn() === null, 'no spawn info');
+});
+
+test('py launcher given by TRANSCRIBER_PYTHON gets -3 before the script', async () => {
+  const py = 'C:\\Windows\\py.exe';
+  const mock = makePythonSpawn({ runnable: [py], check: checkJson() });
+  const caps = makeCaps(mock, { env: { TRANSCRIBER_PYTHON: py } });
+  await caps.getPythonInfo();
+  const checkCall = mock.calls.find(c => c.args.includes('--check'));
+  assert(checkCall.args[0] === '-3' && checkCall.args[1] === SCRIPT, `unexpected args ${checkCall.args}`);
+  const spawnInfo = await caps.getPythonSpawn();
+  assert(spawnInfo.args.length === 1 && spawnInfo.args[0] === '-3', 'spawn prefix should be -3');
+});
+
+test('--check JSON fills the new fields and keeps the old ones', async () => {
+  const mock = makePythonSpawn({ check: 'some torch warning\n' + checkJson() + '\n' });
+  const info = await makeCaps(mock).getPythonInfo();
+  assert(info.pythonFound === true && info.pythonVersion === '3.12.3', 'python fields');
+  assert(info.pythonSupported === true, 'python supported');
+  assert(info.pyannoteInstalled === true && info.pyannoteVersion === '4.0.7', 'pyannote fields');
+  assert(info.pyannoteSupported === true, 'pyannote supported');
+  assert(info.gpuAvailable === true, 'gpu from cudaAvailable');
+  assert(info.diarizationStatus === 'ready', `status ${info.diarizationStatus}`);
+  assert(info.modelReady === true, 'model ready');
+  assert(info.model.id === 'pyannote/speaker-diarization-community-1', 'model id');
+  assert(info.model.revision === '3533c8cf8e369892e6b79ff1bf80f7b0286a54ee', 'model revision');
+  assert(!mock.calls.some(c => c.args.join(' ').includes('import pyannote')), 'legacy probes not needed');
+});
+
+test('--check model-not-prepared is reported with its message', async () => {
+  const mock = makePythonSpawn({ check: checkJson({ status: 'model-not-prepared', modelReady: false, message: 'run setup' }) });
+  const info = await makeCaps(mock).getPythonInfo();
+  assert(info.diarizationStatus === 'model-not-prepared', `status ${info.diarizationStatus}`);
+  assert(info.modelReady === false, 'model not ready');
+  assert(info.diarizationMessage === 'run setup', 'message passed through');
+});
+
+test('Python 3.9 is found but unsupported', async () => {
+  const mock = makePythonSpawn({
+    version: 'Python 3.9.18\n',
+    check: checkJson({ status: 'python-unsupported', pythonSupported: false, versions: { python: '3.9.18', 'pyannote.audio': null, torch: null }, pyannoteSupported: false, cudaAvailable: false, modelReady: false }),
+  });
+  const info = await makeCaps(mock).getPythonInfo();
+  assert(info.pythonFound === true, '3.9 counts as found');
+  assert(info.pythonVersion === '3.9.18', 'version kept');
+  assert(info.pythonSupported === false, '3.9 is not supported');
+  assert(info.diarizationStatus === 'python-unsupported', `status ${info.diarizationStatus}`);
+});
+
+test('Python 3.9 without the check script is still found but unsupported', async () => {
+  const mock = makePythonSpawn({ version: 'Python 3.9.18\n', check: checkJson() });
+  const info = await makeCaps(mock, { fsExists: (p) => p !== SCRIPT }).getPythonInfo();
+  assert(info.pythonFound === true && info.pythonSupported === false, 'found but unsupported');
+  assert(info.diarizationStatus === 'python-unsupported', `status ${info.diarizationStatus}`);
+});
+
+test('Python 3.10 is supported', async () => {
+  const mock = makePythonSpawn({ version: 'Python 3.10.0\n', check: 7 /* exit code, forces fallback */, pyannote: '4.0.7' });
+  const info = await makeCaps(mock).getPythonInfo();
+  assert(info.pythonSupported === true, '3.10 supported');
+});
+
+test('pyannote 3.x is unsupported, not missing (from --check)', async () => {
+  const mock = makePythonSpawn({ check: checkJson({ status: 'pyannote-unsupported', pyannoteSupported: false, modelReady: false, versions: { python: '3.12.3', 'pyannote.audio': '3.1.1', torch: '2.3.0' } }) });
+  const info = await makeCaps(mock).getPythonInfo();
+  assert(info.pyannoteInstalled === true && info.pyannoteVersion === '3.1.1', 'installed with version');
+  assert(info.pyannoteSupported === false, 'not supported');
+  assert(info.diarizationStatus === 'pyannote-unsupported', `status ${info.diarizationStatus}`);
+});
+
+test('pyannote missing is distinguished from unsupported (from --check)', async () => {
+  const mock = makePythonSpawn({ check: checkJson({ status: 'pyannote-missing', pyannoteSupported: false, modelReady: false, versions: { python: '3.12.3', 'pyannote.audio': null, torch: null }, cudaAvailable: false }) });
+  const info = await makeCaps(mock).getPythonInfo();
+  assert(info.pyannoteInstalled === false && info.pyannoteVersion === null, 'not installed');
+  assert(info.diarizationStatus === 'pyannote-missing', `status ${info.diarizationStatus}`);
+});
+
+test('fallback probes distinguish pyannote 3.x (unsupported) from missing', async () => {
+  const noScript = { fsExists: (p) => p !== SCRIPT };
+  const old = await makeCaps(makePythonSpawn({ pyannote: '3.1.0' }), noScript).getPythonInfo();
+  assert(old.pyannoteInstalled === true && old.pyannoteSupported === false, 'old pyannote installed but unsupported');
+  assert(old.diarizationStatus === 'pyannote-unsupported', `status ${old.diarizationStatus}`);
+  const missing = await makeCaps(makePythonSpawn({ pyannote: null }), noScript).getPythonInfo();
+  assert(missing.pyannoteInstalled === false, 'missing');
+  assert(missing.diarizationStatus === 'pyannote-missing', `status ${missing.diarizationStatus}`);
+  const current = await makeCaps(makePythonSpawn({ pyannote: '4.0.7', torch: 'True' }), noScript).getPythonInfo();
+  assert(current.pyannoteSupported === true && current.gpuAvailable === true, '4.x supported');
+  assert(current.diarizationStatus === 'unknown', 'model readiness unknown without --check');
+  assert(current.modelReady === false && current.model === null, 'no model info without --check');
+});
+
+test('malformed --check output falls back without throwing', async () => {
+  for (const check of ['not json at all', '{"status": 5}', '[1,2,3]', '', 3, new Error('spawn EACCES')]) {
+    const mock = makePythonSpawn({ check, pyannote: '4.0.7' });
+    const info = await makeCaps(mock).getPythonInfo();
+    assert(info.pythonFound === true, `python found for ${String(check)}`);
+    assert(info.pyannoteVersion === '4.0.7', `legacy probe used for ${String(check)}`);
+    assert(info.diarizationStatus === 'unknown', `status ${info.diarizationStatus} for ${String(check)}`);
+  }
+});
+
+test('unknown --check status maps to unknown', async () => {
+  const info = await makeCaps(makePythonSpawn({ check: checkJson({ status: 'something-new' }) })).getPythonInfo();
+  assert(info.diarizationStatus === 'unknown', `status ${info.diarizationStatus}`);
+});
+
+test('concurrent getPythonInfo calls share one probe; refresh probes again', async () => {
+  const mock = makePythonSpawn({ check: checkJson({ status: 'model-not-prepared', modelReady: false }) });
+  const caps = makeCaps(mock);
+  const [a, b] = await Promise.all([caps.getPythonInfo(), caps.getPythonInfo()]);
+  assert(a === b, 'same result object');
+  const checks = () => mock.calls.filter(c => c.args.includes('--check')).length;
+  assert(checks() === 1, `one --check run, got ${checks()}`);
+  await caps.getPythonInfo();
+  assert(checks() === 1, 'cached');
+  await caps.getPythonInfo({ refresh: true });
+  assert(checks() === 2, 'refresh runs --check again');
 });
 
 // ---------------------------------------------------------------------------

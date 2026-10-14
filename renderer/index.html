@@ -73,7 +73,7 @@
             <label class="menu-toggle-row">
               <span class="menu-toggle-label">
                 Enable speaker diarization
-                <span class="menu-info-bubble" data-tooltip="Uses pyannote.audio to identify who spoke when. Requires Python 3.9+ and pyannote.audio installed separately. GPU (CUDA) strongly recommended — CPU is very slow.">
+                <span class="menu-info-bubble" data-tooltip="Uses pyannote.audio to identify who spoke when, on this computer. Needs Python 3.10 or later with the packages in requirements.txt, and a one-off download of the speaker model below. A CUDA GPU is strongly recommended; CPU is very slow.">
                   <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
                     <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
                     <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
@@ -85,11 +85,11 @@
               <span class="menu-toggle-switch"></span>
             </label>
 
-            <div class="menu-diarize-options" id="diarize-options" hidden>
+            <div class="menu-diarize-options" id="diarize-setup-block" hidden>
               <div class="menu-input-row">
                 <label class="menu-input-label" for="hf-token-input">
                   HF Token
-                  <span class="menu-info-bubble" data-tooltip="Required to download pyannote models. Create a Read token at huggingface.co/settings/tokens — you must also accept the model licenses at hf.co/pyannote/speaker-diarization-3.1, hf.co/pyannote/segmentation-3.0, and hf.co/pyannote/speaker-diarization-community-1">
+                  <span class="menu-info-bubble" data-tooltip="Used once, to download the speaker model. Create a Read token at huggingface.co/settings/tokens and accept the model licence at hf.co/pyannote/speaker-diarization-community-1. Transcription itself runs offline and does not use the token.">
                     <svg viewBox="0 0 16 16" fill="none" width="13" height="13">
                       <circle cx="8" cy="8" r="6.5" stroke="currentColor" stroke-width="1.2"/>
                       <path d="M8 7v4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/>
@@ -99,6 +99,15 @@
                 </label>
                 <input type="password" id="hf-token-input" class="menu-text-input" placeholder="hf_..." autocomplete="off" spellcheck="false">
               </div>
+              <button type="button" class="menu-action-btn" id="btn-prepare-diarization">
+                <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
+                  <path d="M8 2v8m0 0l-3-3m3 3l3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Download speaker model
+              </button>
+            </div>
+
+            <div class="menu-diarize-options" id="diarize-options" hidden>
               <div class="menu-input-row">
                 <label class="menu-input-label" for="num-speakers-select">Speakers</label>
                 <div class="menu-select-wrap">

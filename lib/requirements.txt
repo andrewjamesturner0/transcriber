@@ -1,2 +1,10 @@
-pyannote.audio>=3.1
-torch>=2.0
+# Speaker diarization (optional). Python 3.10-3.13.
+# Install with: pip install -r requirements.txt
+# Windows with an NVIDIA GPU: PyPI torch is CPU-only on Windows, so install
+# the CUDA build first, then this file:
+#   pip install torch==2.8.0 torchaudio==2.8.0 --index-url https://download.pytorch.org/whl/cu128
+pyannote.audio==4.0.7
+torch==2.8.0
+torchaudio==2.8.0
+torchcodec==0.7.0
+huggingface-hub==0.36.2

@@ -59,7 +59,8 @@ Options:
   --output <path>         write output to file instead of stdout
   --diarize               enable pyannote speaker diarization
   --anti-corruption       enable anti-corruption sampling flags
-  --hf-token <token>      Hugging Face token (or set HF_TOKEN env var)
+  --hf-token <token>      ignored (kept for old scripts); the speaker model is
+                          prepared once with scripts/setup-diarization.py
   --num-speakers <n>      hint diarizer to expect this many speakers
   --quiet                 suppress progress output on stderr
   -h, --help              show this help and exit
@@ -159,6 +160,23 @@ const TRANSCRIBE_SPEC = {
   '-h': { takesValue: false },
 };
 
+/** Plain-language fix for a diarisation setup status (design decision D2). */
+function _diarizeFix(info) {
+  switch (info.diarizationStatus) {
+    case 'python-missing':
+      return 'Install Python 3.10 or later, or set TRANSCRIBER_PYTHON to its path.';
+    case 'python-unsupported':
+      return `Python ${info.pythonVersion} is too old; install Python 3.10 or later.`;
+    case 'pyannote-missing':
+    case 'pyannote-unsupported':
+      return 'Install the supported packages: pip install -r lib/requirements.txt';
+    case 'model-not-prepared':
+      return 'Download the speaker model once: HF_TOKEN=<token> python scripts/setup-diarization.py';
+    default:
+      return info.diarizationMessage || 'Run: python scripts/setup-diarization.py --check';
+  }
+}
+
 async function cmdTranscribe(argv) {
   let parsed;
   try {
@@ -195,14 +213,6 @@ async function cmdTranscribe(argv) {
   const diarize = !!flags['--diarize'];
   const quiet = !!flags['--quiet'];
   const outputPath = flags['--output'];
-
-  let hfToken;
-  if (diarize) {
-    hfToken = flags['--hf-token'] || process.env.HF_TOKEN;
-    if (!hfToken) {
-      die('transcribe: --diarize requires --hf-token <token> or $HF_TOKEN');
-    }
-  }
 
   let numSpeakers;
   if (flags['--num-speakers'] != null) {
@@ -241,11 +251,8 @@ async function cmdTranscribe(argv) {
 
   if (diarize) {
     const pyInfo = await capabilities.getPythonInfo();
-    if (!pyInfo.pythonFound) {
-      die('transcribe: --diarize requires Python 3.9+ on PATH');
-    }
-    if (!pyInfo.pyannoteInstalled) {
-      die('transcribe: --diarize requires pyannote.audio (run: pip install pyannote.audio torch)');
+    if (pyInfo.diarizationStatus !== 'ready') {
+      die(`transcribe: --diarize is not ready (${pyInfo.diarizationStatus}). ${_diarizeFix(pyInfo)}`);
     }
   }
 
@@ -274,7 +281,6 @@ async function cmdTranscribe(argv) {
       options: {
         diarization: diarize,
         antiCorruption: !!flags['--anti-corruption'],
-        hfToken,
         numSpeakers,
         outputJson: format === 'json',
       },

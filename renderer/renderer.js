@@ -30,6 +30,8 @@ const diarizeOptions = document.getElementById('diarize-options');
 const diarizeStatusText = document.getElementById('diarize-status-text');
 const diarizeStatusDot = document.querySelector('#diarize-setup-status .menu-status-dot');
 const hfTokenInput = document.getElementById('hf-token-input');
+const diarizeSetupBlock = document.getElementById('diarize-setup-block');
+const btnPrepareDiarization = document.getElementById('btn-prepare-diarization');
 const numSpeakersSelect = document.getElementById('num-speakers-select');
 const gpuStatus = document.getElementById('gpu-status');
 const gpuStatusDot = document.getElementById('gpu-status-dot');
@@ -321,7 +323,6 @@ btnTranscribe.addEventListener('click', async () => {
     };
     if (diarizeToggle.checked) {
       options.diarization = true;
-      options.hfToken = hfTokenInput.value || undefined;
       const speakers = numSpeakersSelect.value;
       if (speakers !== 'auto') options.numSpeakers = parseInt(speakers, 10);
     }
@@ -598,25 +599,17 @@ async function checkPythonSetup() {
 
   btnCheckPython.classList.remove('checking');
 
-  if (!pythonSetup.pythonFound) {
-    diarizeStatusText.textContent = 'Python 3.9+ not found';
-    diarizeStatusDot.className = 'menu-status-dot menu-status-dot-error';
-    diarizeToggle.disabled = true;
-    diarizeToggle.checked = false;
-    diarizeOptions.hidden = true;
-    gpuStatus.hidden = true;
-  } else if (!pythonSetup.pyannoteInstalled) {
-    diarizeStatusText.textContent = 'pyannote not detected';
-    diarizeStatusDot.className = 'menu-status-dot menu-status-dot-error';
-    diarizeToggle.disabled = true;
-    diarizeToggle.checked = false;
-    diarizeOptions.hidden = true;
-    gpuStatus.hidden = true;
-  } else {
-    diarizeStatusText.textContent = `pyannote ${pythonSetup.pyannoteVersion} detected`;
-    diarizeStatusDot.className = 'menu-status-dot menu-status-dot-ready';
-    diarizeToggle.disabled = false;
-    gpuStatus.hidden = false;
+  const status = pythonSetup.diarizationStatus || (pythonSetup.pythonFound ? 'unknown' : 'python-missing');
+  const ready = status === 'ready';
+  diarizeStatusText.textContent = diarizeStatusMessage(status, pythonSetup);
+  diarizeStatusDot.className = `menu-status-dot ${ready ? 'menu-status-dot-ready' : 'menu-status-dot-error'}`;
+  diarizeToggle.disabled = !ready;
+  if (!ready) diarizeToggle.checked = false;
+  diarizeOptions.hidden = !(ready && diarizeToggle.checked);
+  // The token is only needed to download the model, so it only shows then.
+  diarizeSetupBlock.hidden = status !== 'model-not-prepared';
+  gpuStatus.hidden = !ready;
+  if (ready) {
     if (pythonSetup.gpuAvailable) {
       gpuStatusDot.className = 'menu-status-dot menu-status-dot-ready';
       gpuStatusText.textContent = 'CUDA detected';
@@ -626,6 +619,39 @@ async function checkPythonSetup() {
     }
   }
 }
+
+/** Short status line for the diarisation setup state (design decision D2). */
+function diarizeStatusMessage(status, info) {
+  switch (status) {
+    case 'ready': return `pyannote ${info.pyannoteVersion} ready`;
+    case 'python-missing': return 'Python 3.10+ not found';
+    case 'python-unsupported': return `Python ${info.pythonVersion} is too old (3.10+ needed)`;
+    case 'pyannote-missing': return 'pyannote not installed';
+    case 'pyannote-unsupported': return `pyannote ${info.pyannoteVersion} not supported (4.x needed)`;
+    case 'model-not-prepared': return 'Speaker model not downloaded';
+    default: return 'Setup could not be checked';
+  }
+}
+
+btnPrepareDiarization.addEventListener('click', async () => {
+  const token = hfTokenInput.value.trim();
+  if (!token) {
+    diarizeStatusText.textContent = 'Enter a Hugging Face token first';
+    return;
+  }
+  btnPrepareDiarization.disabled = true;
+  btnPrepareDiarization.classList.add('checking');
+  diarizeStatusText.textContent = 'Downloading speaker model...';
+  try {
+    await window.api.prepareDiarization(token);
+  } catch (err) {
+    const msg = String((err && err.message) || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
+    setStatus(`Speaker model download failed: ${msg}`, 'error');
+  }
+  btnPrepareDiarization.disabled = false;
+  btnPrepareDiarization.classList.remove('checking');
+  await checkPythonSetup();
+});
 
 btnCheckPython.addEventListener('click', checkPythonSetup);
 

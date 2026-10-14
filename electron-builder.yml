@@ -13,6 +13,8 @@ extraResources:
     to: lib/diarize.py
   - from: lib/requirements.txt
     to: lib/requirements.txt
+  - from: scripts/setup-diarization.py
+    to: scripts/setup-diarization.py
   - from: THIRD-PARTY-LICENSES.json
     to: THIRD-PARTY-LICENSES.json
   - from: "."

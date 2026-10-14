@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('api', {
   installUpdate: () => ipcRenderer.invoke('install-update'),
   cancelTranscription: () => ipcRenderer.invoke('cancel-transcription'),
   checkPythonSetup: () => ipcRenderer.invoke('check-python'),
+  prepareDiarization: (token) => ipcRenderer.invoke('prepare-diarization', token),
   getGpuStatus: () => ipcRenderer.invoke('get-gpu-status'),
   setGpuBackend: (backend) => ipcRenderer.invoke('set-gpu-backend', backend),
   onDiarizeStatus: (callback) => ipcRenderer.on('diarize-status', (_, data) => callback(data)),
