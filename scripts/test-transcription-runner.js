@@ -225,6 +225,8 @@ test('plain transcription uses --no-timestamps', async () => {
   assert(whisperCall.args.includes('--no-timestamps'), 'should have --no-timestamps for plain transcription');
   assert(!whisperCall.args.includes('--tinydiarize'), 'should not have --tinydiarize');
   assert(!whisperCall.args.includes('--output-json-full'), 'should not have --output-json-full');
+  assert(!whisperCall.args.includes('--dtw'), 'plain transcription should not have --dtw');
+  assert(!whisperCall.args.includes('--no-flash-attn'), 'plain transcription should not have --no-flash-attn');
 });
 
 test('tdrz model uses --tinydiarize', async () => {
@@ -251,6 +253,8 @@ test('diarization uses --output-json-full + --dtw', async () => {
   assert(whisperCall.args.includes('-of'), 'should have -of for output prefix');
   assert(whisperCall.args.includes('--dtw'), 'should have --dtw when supported');
   assert(whisperCall.args.includes('tiny.en'), 'should have dtw preset tiny.en');
+  assert(whisperCall.args.filter(a => a === '--no-flash-attn').length === 1,
+    'DTW needs --no-flash-attn exactly once (flash attention silently disables DTW)');
 });
 
 test('diarization without DTW support skips --dtw', async () => {
@@ -265,6 +269,7 @@ test('diarization without DTW support skips --dtw', async () => {
   const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
   assert(whisperCall.args.includes('--output-json-full'), 'should still use JSON output');
   assert(!whisperCall.args.includes('--dtw'), 'should not have --dtw when unsupported');
+  assert(!whisperCall.args.includes('--no-flash-attn'), 'should not have --no-flash-attn when unsupported');
 });
 
 test('anti-corruption adds -mc 0 and sampling flags', async () => {
@@ -301,6 +306,7 @@ test('outputJson without diarization uses --output-json-full and not --no-timest
   assert(whisperCall.args.includes('-of'), 'should have -of for output prefix');
   assert(!whisperCall.args.includes('--no-timestamps'), 'should not have --no-timestamps when JSON mode is on');
   assert(!whisperCall.args.includes('--dtw'), 'should not have --dtw without diarization');
+  assert(!whisperCall.args.includes('--no-flash-attn'), 'should not have --no-flash-attn without diarization');
 });
 
 test('runner returns { text } shape by default', async () => {
@@ -351,6 +357,87 @@ test('runner reads whisper JSON when outputJson is true', async () => {
   assert(result.text === 'hello', `expected text 'hello', got '${result.text}'`);
   assert(result.json && Array.isArray(result.json.transcription), 'result.json should be parsed whisper JSON');
   assert(result.json.transcription[0].text === 'hello', 'json content preserved');
+});
+
+// --- Diarised pipeline tests ---
+
+console.log('\nDiarised pipeline tests\n');
+
+fs.mkdirSync(path.join(FAKE_APP, 'lib'), { recursive: true });
+fs.writeFileSync(path.join(FAKE_APP, 'lib', 'diarize.py'), '');
+
+/**
+ * Spawn mock for the full diarised pipeline. whisper-cli writes `whisperJson`
+ * to its -of prefix; python writes `diarizeOutput` (raw JSON text or value)
+ * to --output and emits `diarizeStderr` chunks.
+ */
+function pipelineSpawn({ whisperJson, diarizeOutput, diarizeStderr = [], diarizeCode = 0, calls = [] }) {
+  return function (cmd, args, opts) {
+    calls.push({ cmd, args: [...args] });
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    proc.kill = () => process.nextTick(() => proc.emit('close', null));
+    let code = 0;
+    if (cmd.includes('whisper-cli')) {
+      const ofIdx = args.indexOf('-of');
+      if (ofIdx >= 0) fs.writeFileSync(args[ofIdx + 1] + '.json', JSON.stringify(whisperJson));
+    } else if (cmd === 'python3') {
+      const outIdx = args.indexOf('--output');
+      if (diarizeOutput !== undefined && outIdx >= 0) {
+        fs.writeFileSync(args[outIdx + 1], typeof diarizeOutput === 'string' ? diarizeOutput : JSON.stringify(diarizeOutput));
+      }
+      code = diarizeCode;
+    }
+    process.nextTick(() => {
+      if (cmd.includes('whisper-cli')) proc.stdout.emit('data', Buffer.from(' Ready? Yes. Continue.\n'));
+      if (cmd === 'python3') for (const chunk of diarizeStderr) proc.stderr.emit('data', Buffer.from(chunk));
+      proc.emit('close', code);
+    });
+    return proc;
+  };
+}
+
+const READY_YES_JSON = {
+  transcription: [{
+    offsets: { from: 0, to: 2800 },
+    text: ' Ready? Yes. Continue.',
+    tokens: [
+      { text: ' Ready?', offsets: { from: 0, to: 800 }, t_dtw: 10 },
+      { text: ' Yes.', offsets: { from: 1000, to: 1500 }, t_dtw: 105 },
+      { text: ' Continue.', offsets: { from: 2000, to: 2800 }, t_dtw: 205 },
+    ],
+  }],
+};
+const READY_YES_SPEAKERS = [
+  { start: 0, end: 0.9, speaker: 'A' },
+  { start: 1, end: 1.6, speaker: 'B' },
+  { start: 2, end: 3, speaker: 'A' },
+];
+
+test('diarised job returns merged text and additive JSON evidence', async () => {
+  const runner = makeRunner({
+    spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, diarizeOutput: READY_YES_SPEAKERS }),
+    capabilities: { getPythonCommand: async () => 'python3' },
+  });
+  const plain = await runner.runTranscription({
+    filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true },
+    onProgress: () => {}, onDiarizeProgress: () => {},
+  });
+  assert(typeof plain.text === 'string' && !('json' in plain), 'text-only result without outputJson');
+  assert(plain.text.includes('[Speaker 2] Yes.'), plain.text);
+
+  const result = await runner.runTranscription({
+    filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, outputJson: true },
+    onProgress: () => {}, onDiarizeProgress: () => {},
+  });
+  const j = result.json;
+  assert(j.whisper && Array.isArray(j.diarize) && typeof j.merged === 'string', 'legacy keys kept');
+  assert(j.merged === result.text, 'merged equals returned text');
+  const sa = j.speakerAttribution;
+  assert(sa && sa.version === 1 && !('text' in sa), 'additive speakerAttribution without duplicate text');
+  assert(sa.words.length === 3 && sa.words.every((w) => w.timingSource === 'dtw'), JSON.stringify(sa.summary));
+  assert(sa.whisperDtw && sa.whisperDtw.requested === true, JSON.stringify(sa.whisperDtw));
 });
 
 // Retry/fallback tests moved to scripts/test-whisper-runner.js

@@ -1,24 +1,24 @@
 #!/usr/bin/env node
 /**
- * Test 3: Transcript + diarization merge logic.
+ * Transcript + diarisation merge regressions.
  *
- * Tests mergeTranscriptWithDiarization() with sample data -- no Python,
- * no models, no HF token needed. Runs instantly.
+ * Tests assignSpeakers() / mergeTranscriptWithDiarization() with sample
+ * data -- no Python, no models, no HF token needed. Runs instantly.
+ *
+ * Retired 2026-10-14 (design decision D1): tests that required segment
+ * absorption, boundary snapping, smoothing and short-block merging. Those
+ * stages rewrote correctly supported words (investigation cases 3, 4 and 7
+ * in docs/diarization-investigation.md), so they were removed rather than
+ * tuned. Word grouping tests moved to scripts/test-transcript-timing.js.
  *
  * Usage:
  *     node scripts/test-merge.js
  */
 
-// --- Import from shared module ---
-
 const {
   DEFAULTS,
-  mergeDiarizeSegments,
-  groupTokensToWords,
-  assignWordsToSpeakers,
-  smoothSpeakerAssignments,
-  refineSpeakerBoundaries,
-  mergeShortBlocks,
+  normaliseSpeakerTimeline,
+  assignSpeakers,
   mergeTranscriptWithDiarization,
 } = require('../lib/diarize-merge');
 
@@ -31,6 +31,36 @@ function segsToJson(segs) {
       text: s.text,
     })),
   };
+}
+
+/** One segment whose tokens are [text, fromMs, toMs, tDtw?] tuples. */
+function tokensJson(tokens) {
+  const toks = tokens.map(([text, from, to, tDtw]) => ({
+    text: ' ' + text,
+    offsets: { from, to },
+    ...(tDtw === undefined ? {} : { t_dtw: tDtw }),
+  }));
+  return {
+    transcription: [{
+      offsets: { from: tokens[0][1], to: tokens[tokens.length - 1][2] },
+      text: toks.map((t) => t.text).join(''),
+      tokens: toks,
+    }],
+  };
+}
+
+/** Formatted transcript -> [[label, text], ...] in order. */
+function blocksOf(text) {
+  return text.split('\n\n').slice(1).filter(Boolean).map((b) => {
+    const m = /^\[([^\]]+)\] (.*)$/s.exec(b);
+    return [m[1], m[2]];
+  });
+}
+
+function sameBlocks(actual, expected) {
+  const a = JSON.stringify(actual);
+  const e = JSON.stringify(expected);
+  if (a !== e) throw new Error(`expected ${e}, got ${a}`);
 }
 
 // --- Test runner ---
@@ -162,9 +192,9 @@ test('fallback when tokens array is present but no token has offsets', () => {
   assert(result.includes('[Speaker 1] No timestamps here.'), 'falls back to segment text');
 });
 
-// --- Word-level token tests ---
+// --- Word-level end-to-end tests ---
 
-console.log('\nWord-level token tests\n');
+console.log('\nWord-level end-to-end tests\n');
 
 test('word-level speaker assignment across a speaker boundary', () => {
   // Single segment whose tokens span a speaker change at 3.0s
@@ -221,651 +251,256 @@ test('same speaker across multiple whisper segments collapses into one utterance
   assert(result.includes('First segment. Second segment.'), 'collapsed into one utterance');
 });
 
-test('first token of a segment with no leading space still starts a word', () => {
-  const tokens = [
-    { text: 'Hello', offsets: { from: 0, to: 500 } },
-    { text: ' world', offsets: { from: 500, to: 1000 } },
-  ];
-  const words = groupTokensToWords(tokens);
-  assert(words.length === 2, `expected 2 words, got ${words.length}`);
-  assert(words[0].text === 'Hello', `expected "Hello", got "${words[0].text}"`);
-  assert(words[1].text === 'world', `expected "world", got "${words[1].text}"`);
-});
-
-test('punctuation tokens attach to preceding word', () => {
-  const tokens = [
-    { text: ' Hello', offsets: { from: 0,    to: 500  } },
-    { text: ',',      offsets: { from: 500,  to: 510  } },
-    { text: ' world', offsets: { from: 510,  to: 1000 } },
-    { text: '.',      offsets: { from: 1000, to: 1010 } },
-  ];
-  const words = groupTokensToWords(tokens);
-  assert(words.length === 2, `expected 2 words, got ${words.length}`);
-  assert(words[0].text === 'Hello,', `expected "Hello,", got "${words[0].text}"`);
-  assert(words[1].text === 'world.', `expected "world.", got "${words[1].text}"`);
-});
-
-test("contraction tokens attach to preceding word", () => {
-  const tokens = [
-    { text: ' I',    offsets: { from: 0,   to: 200  } },
-    { text: "'m",    offsets: { from: 200, to: 400  } },
-    { text: ' fine', offsets: { from: 400, to: 800  } },
-    { text: ".",     offsets: { from: 800, to: 900  } },
-  ];
-  const words = groupTokensToWords(tokens);
-  assert(words.length === 2, `expected 2 words, got ${words.length}`);
-  assert(words[0].text === "I'm", `expected "I'm", got "${words[0].text}"`);
-  assert(words[1].text === 'fine.', `expected "fine.", got "${words[1].text}"`);
-});
-
-test('special tokens are skipped', () => {
-  const tokens = [
-    { text: '[_BEG_]', id: 50363 },
-    { text: ' Hello', offsets: { from: 0,   to: 500 } },
-    { text: '[_TT_5]', id: 50368 },
-    { text: ' world', offsets: { from: 500, to: 1000 } },
-  ];
-  const words = groupTokensToWords(tokens);
-  assert(words.length === 2, `expected 2 words, got ${words.length}`);
-  assert(words[0].text === 'Hello', `expected "Hello", got "${words[0].text}"`);
-});
-
-test('tokens without offsets inherit prevEndMs', () => {
-  const tokens = [
-    { text: ' Good', offsets: { from: 0, to: 500 } },
-    { text: 'bye',   /* no offsets */ },
-  ];
-  const words = groupTokensToWords(tokens);
-  assert(words.length === 1, `expected 1 word, got ${words.length}`);
-  assert(words[0].text === 'Goodbye', `expected "Goodbye", got "${words[0].text}"`);
-  assert(words[0].endMs === 500, `expected endMs 500, got ${words[0].endMs}`);
-});
-
-test('first token with no offsets and no prevEndMs gives null timestamps', () => {
-  const tokens = [
-    { text: ' Hey', /* no offsets */ },
-    { text: ' there', offsets: { from: 500, to: 1000 } },
-  ];
-  const words = groupTokensToWords(tokens);
-  assert(words.length === 2, `expected 2 words, got ${words.length}`);
-  assert(words[0].startMs === null, `expected null startMs, got ${words[0].startMs}`);
-  assert(words[0].endMs === null, `expected null endMs, got ${words[0].endMs}`);
-  assert(words[1].startMs === 500, `expected startMs 500, got ${words[1].startMs}`);
-});
-
-// --- Phase 5: mergeDiarizeSegments tests ---
-
-console.log('\nmergeDiarizeSegments tests\n');
-
-test('merges adjacent same-speaker segments with gap < 0.5s', () => {
-  const segs = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.4, end: 6.0, speaker: 'SPEAKER_00' },
-  ];
-  const result = mergeDiarizeSegments(segs);
-  assert(result.length === 1, `expected 1 segment, got ${result.length}`);
-  assert(result[0].start === 0.0 && result[0].end === 6.0, 'merged segment spans full range');
-});
-
-test('does not merge adjacent segments from different speakers', () => {
-  const segs = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.1, end: 6.0, speaker: 'SPEAKER_01' },
-  ];
-  const result = mergeDiarizeSegments(segs);
-  assert(result.length === 2, `expected 2 segments, got ${result.length}`);
-});
-
-test('does not merge same-speaker segments with gap >= 0.5s', () => {
-  const segs = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.6, end: 6.0, speaker: 'SPEAKER_00' },
-  ];
-  const result = mergeDiarizeSegments(segs);
-  assert(result.length === 2, `expected 2 segments, got ${result.length}`);
-});
-
-test('absorbs short segment flanked by same-speaker segments', () => {
-  const segs = [
-    { start: 0.0,  end: 5.0,  speaker: 'SPEAKER_00' },
-    { start: 4.8,  end: 5.1,  speaker: 'SPEAKER_01' },
-    { start: 5.1,  end: 10.0, speaker: 'SPEAKER_00' },
-  ];
-  const result = mergeDiarizeSegments(segs);
-  assert(result.length === 1, `expected 1 segment after absorbing short segment, got ${result.length}`);
-  assert(result[0].speaker === 'SPEAKER_00', 'merged segment should be SPEAKER_00');
-});
-
-test('does not absorb short segment flanked by different speakers', () => {
-  const segs = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.0, end: 3.2, speaker: 'SPEAKER_01' },
-    { start: 3.2, end: 6.0, speaker: 'SPEAKER_02' },
-  ];
-  const result = mergeDiarizeSegments(segs);
-  assert(result.length === 3, `expected 3 segments, got ${result.length}`);
-});
-
-// --- Phase 5: midpoint assignment tests ---
-
-console.log('\nMidpoint assignment tests\n');
-
-test('midpoint assigns word to segment containing its midpoint', () => {
-  // Word spans 3.0-5.0s, midpoint 4.0s, clearly inside SPEAKER_01 (3.0-6.0).
-  const words = [{ text: 'inside', startMs: 3000, endMs: 5000 }];
-  const segs = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.0, end: 6.0, speaker: 'SPEAKER_01' },
-  ];
-  const result = assignWordsToSpeakers(words, segs);
-  assert(result[0].speaker === 'SPEAKER_01', `expected SPEAKER_01, got ${result[0].speaker}`);
-});
-
-test('falls back to max overlap when midpoint in no segment', () => {
-  // Word spans 4.5-6.5s, midpoint 5.5s. Only segment covers 0-5.0.
-  // Midpoint 5.5 not in any segment; overlap with SPEAKER_00: 4.5-5.0 = 0.5s.
-  const words = [{ text: 'partial', startMs: 4500, endMs: 6500 }];
-  const segs = [
-    { start: 0.0, end: 5.0, speaker: 'SPEAKER_00' },
-  ];
-  const result = assignWordsToSpeakers(words, segs);
-  assert(result[0].speaker === 'SPEAKER_00', `expected SPEAKER_00 via overlap fallback, got ${result[0].speaker}`);
-});
-
-// --- Phase 5: smoothSpeakerAssignments tests ---
-
-console.log('\nsmoothSpeakerAssignments tests\n');
-
-test('corrects isolated single-word misassignment', () => {
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'Hello' },
-    { speaker: 'SPEAKER_01', text: 'there,' },
-    { speaker: 'SPEAKER_00', text: 'world.' },
-  ];
-  const result = smoothSpeakerAssignments(labeled);
-  assert(result[1].speaker === 'SPEAKER_00', `expected SPEAKER_00 after smoothing, got ${result[1].speaker}`);
-});
-
-test('corrects two consecutive misassigned words', () => {
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'Hello' },
-    { speaker: 'SPEAKER_01', text: 'there' },
-    { speaker: 'SPEAKER_01', text: 'friend,' },
-    { speaker: 'SPEAKER_00', text: 'world.' },
-  ];
-  const result = smoothSpeakerAssignments(labeled);
-  assert(result[1].speaker === 'SPEAKER_00', `word[1] should be corrected to SPEAKER_00, got ${result[1].speaker}`);
-  assert(result[2].speaker === 'SPEAKER_00', `word[2] should be corrected to SPEAKER_00, got ${result[2].speaker}`);
-});
-
-test('corrects three consecutive misassigned words (with override)', () => {
-  // Default smoothingMaxRunLen is 2; override to 3 for this test
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'A' },
-    { speaker: 'SPEAKER_01', text: 'B' },
-    { speaker: 'SPEAKER_01', text: 'C' },
-    { speaker: 'SPEAKER_01', text: 'D' },
-    { speaker: 'SPEAKER_00', text: 'E' },
-  ];
-  const result = smoothSpeakerAssignments(labeled, { smoothingMaxRunLen: 3 });
-  assert(result[1].speaker === 'SPEAKER_00', `word[1] should be SPEAKER_00, got ${result[1].speaker}`);
-  assert(result[2].speaker === 'SPEAKER_00', `word[2] should be SPEAKER_00, got ${result[2].speaker}`);
-  assert(result[3].speaker === 'SPEAKER_00', `word[3] should be SPEAKER_00, got ${result[3].speaker}`);
-});
-
-test('does not correct four consecutive misassigned words (beyond tolerance)', () => {
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'A' },
-    { speaker: 'SPEAKER_01', text: 'B' },
-    { speaker: 'SPEAKER_01', text: 'C' },
-    { speaker: 'SPEAKER_01', text: 'D' },
-    { speaker: 'SPEAKER_01', text: 'E' },
-    { speaker: 'SPEAKER_00', text: 'F' },
-  ];
-  const result = smoothSpeakerAssignments(labeled);
-  assert(result[1].speaker === 'SPEAKER_01', `word[1] should remain SPEAKER_01`);
-  assert(result[4].speaker === 'SPEAKER_01', `word[4] should remain SPEAKER_01`);
-});
-
-// --- Post-collapse mergeShortBlocks tests ---
-
-console.log('\nmergeShortBlocks tests\n');
-
-test('merges short interleaving block of 1 word', () => {
-  const blocks = [
-    { speaker: 'Speaker 1', text: 'Hello world' },
-    { speaker: 'Speaker 2', text: 'and' },
-    { speaker: 'Speaker 1', text: 'goodbye everyone' },
-  ];
-  const result = mergeShortBlocks(blocks);
-  assert(result.length === 2, `expected 2 blocks, got ${result.length}`);
-  assert(result[0].text === 'Hello world and', 'merged short block into first');
-});
-
-test('merges short interleaving block up to 3 words', () => {
-  const blocks = [
-    { speaker: 'Speaker 1', text: 'Hello' },
-    { speaker: 'Speaker 2', text: 'one two three' },
-    { speaker: 'Speaker 1', text: 'world' },
-  ];
-  const result = mergeShortBlocks(blocks);
-  assert(result.length === 2, `expected 2 blocks, got ${result.length}`);
-});
-
-test('does not merge interleaving block > 3 words', () => {
-  const blocks = [
-    { speaker: 'Speaker 1', text: 'Hello' },
-    { speaker: 'Speaker 2', text: 'one two three four' },
-    { speaker: 'Speaker 1', text: 'world' },
-  ];
-  const result = mergeShortBlocks(blocks);
-  assert(result.length === 3, `expected 3 blocks, got ${result.length}`);
-});
-
-test('does not merge when flanking speakers differ', () => {
-  const blocks = [
-    { speaker: 'Speaker 1', text: 'Hello' },
-    { speaker: 'Speaker 2', text: 'hi' },
-    { speaker: 'Speaker 3', text: 'world' },
-  ];
-  const result = mergeShortBlocks(blocks);
-  assert(result.length === 3, `expected 3 blocks, got ${result.length}`);
-});
-
-// --- End-to-end fragmentation test ---
-
-test('end-to-end: same-speaker fragmentation corrected by smoothing + block merge', () => {
-  // Simulates a plausible real-world scenario:
-  // Speaker A talks from 0-5s, but pyannote and whisper disagree at 3s,
-  // causing a single word to be misassigned to Speaker B.
-  // Smoothing should fix the single word, and if not, mergeShortBlocks catches it.
-  const whisperJson = {
-    transcription: [{
-      offsets: { from: 0, to: 5000 },
-      text: ' Hello world how are you today.',
-      tokens: [
-        { text: ' Hello',  offsets: { from: 0,    to: 1000 } },
-        { text: ' world',  offsets: { from: 1000, to: 1900 } },
-        { text: ' how',    offsets: { from: 1900, to: 2500 } },
-        { text: ' are',    offsets: { from: 2500, to: 3100 } },
-        { text: ' you',    offsets: { from: 3100, to: 3700 } },
-        { text: ' today',  offsets: { from: 3700, to: 4900 } },
-        { text: '.',       offsets: { from: 4900, to: 5000 } },
-      ],
-    }],
-  };
-  // Pyannote correctly says one speaker, but has a tiny segmentation glitch
-  const diarize = [
-    { start: 0.0, end: 5.0, speaker: 'SPEAKER_00' },
-  ];
-  const result = mergeTranscriptWithDiarization(whisperJson, diarize);
-  assert(result.includes('[1 speaker detected]'), 'should detect 1 speaker');
-  assert(result.includes('Hello world how are you today.'), 'all words in one block');
-  // Should be one continuous block: header line + 1 speaker block
-  const speakerBlocks = result.split('\n').filter(l => l.startsWith('[Speaker'));
-  assert(speakerBlocks.length === 1, `expected 1 speaker block, got ${speakerBlocks.length}: ${result}`);
-});
-
-// --- Boundary refinement tests ---
-
-console.log('\nrefineSpeakerBoundaries tests\n');
-
-test('snaps boundary word to correct speaker via pyannote boundary', () => {
-  // Two words: "hello" at 0-1s, "there" at 1-2s.
-  // Pyannote boundary at 1.2s (speaker change).
-  // Midpoint of "there" is 1.5s, past the boundary.
-  // Midpoint of "hello" is 0.5s, before the boundary.
-  // Without refinement, "there" could get prevSpeaker if timestamps drift.
-  // With refinement, it snaps to the correct side of the pyannote boundary.
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'Hello', wordMidSec: 0.5, isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'there', wordMidSec: 1.5, isSegLevel: false }, // misassigned (should be SPEAKER_01)
-  ];
-  const diarize = [
-    { start: 0.0, end: 1.2, speaker: 'SPEAKER_00' },
-    { start: 1.2, end: 3.0, speaker: 'SPEAKER_01' },
-  ];
-  const result = refineSpeakerBoundaries(labeled, diarize);
-  assert(result[0].speaker === 'SPEAKER_00', 'first word stays SPEAKER_00');
-  assert(result[1].speaker === 'SPEAKER_01', `second word should be SPEAKER_01, got ${result[1].speaker}`);
-});
-
-test('boundary refinement corrects drift at speaker change', () => {
-  // Realistic scenario: words at a speaker change with DTW timestamp imprecision.
-  // "world" (midpoint 2.75s) is assigned to SPEAKER_00 but should be SPEAKER_01
-  // because pyannote says the speaker change is at 2.5s.
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'Hello',  wordMidSec: 0.75,  isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'world',  wordMidSec: 2.75,  isSegLevel: false }, // drift
-    { speaker: 'SPEAKER_01', text: 'goodbye', wordMidSec: 4.0,  isSegLevel: false },
-  ];
-  const diarize = [
-    { start: 0.0, end: 2.5, speaker: 'SPEAKER_00' },
-    { start: 2.5, end: 6.0, speaker: 'SPEAKER_01' },
-  ];
-  const result = refineSpeakerBoundaries(labeled, diarize);
-  assert(result[1].speaker === 'SPEAKER_01', `drifted word should be SPEAKER_01, got ${result[1].speaker}`);
-  assert(result[0].speaker === 'SPEAKER_00', 'first word stays SPEAKER_00');
-  assert(result[2].speaker === 'SPEAKER_01', 'third word stays SPEAKER_01');
-});
-
-test('boundary refinement does not touch words far from boundary', () => {
-  // Words at 10-11s are correctly assigned to SPEAKER_00 per pyannote (6.0-12.0).
-  // The only boundary is at 3.0s (far away). Refinement should leave them alone.
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'A', wordMidSec: 0.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'B', wordMidSec: 1.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'C', wordMidSec: 2.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'D', wordMidSec: 10.0, isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'E', wordMidSec: 11.0, isSegLevel: false },
-  ];
-  const diarize = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.0, end: 6.0, speaker: 'SPEAKER_01' },
-    { start: 6.0, end: 12.0, speaker: 'SPEAKER_00' },
-  ];
-  const result = refineSpeakerBoundaries(labeled, diarize);
-  // D/E at 10-11s are far from the 3.0s boundary.
-  // The gap C→D is at (2.5+10)/2=6.25s, which is within 3s of the 6.0s boundary.
-  // But since D/E are already SPEAKER_00 and the pyannote boundary at 6.0
-  // says everything after 6.0 is SPEAKER_00, they should stay correct.
-  assert(result[3].speaker === 'SPEAKER_00', 'word D should stay SPEAKER_00');
-  assert(result[4].speaker === 'SPEAKER_00', 'word E should stay SPEAKER_00');
-});
-
-test('boundary refinement: end-to-end drift correction', () => {
-  // Whisper tokens span a speaker change. Without refinement,
-  // boundary words might drift. With refinement, the pyannote boundary
-  // at 3.0s forces a clean split.
-  const whisperJson = {
-    transcription: [{
-      offsets: { from: 0, to: 6000 },
-      text: ' Hello world this is goodbye now.',
-      tokens: [
-        { text: ' Hello',   offsets: { from: 0,    to: 1200 } },
-        { text: ' world',   offsets: { from: 1200, to: 2200 } },
-        { text: ' this',    offsets: { from: 2200, to: 2800 } },
-        { text: ' is',      offsets: { from: 2800, to: 3200 } }, // straddles boundary
-        { text: ' goodbye', offsets: { from: 3200, to: 4600 } },
-        { text: ' now',     offsets: { from: 4600, to: 5800 } },
-        { text: '.',        offsets: { from: 5800, to: 6000 } },
-      ],
-    }],
-  };
-  const diarize = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.0, end: 6.0, speaker: 'SPEAKER_01' },
-  ];
-  const result = mergeTranscriptWithDiarization(whisperJson, diarize);
-  // "is" has midpoint (2.8+3.2)/2 = 3.0s, right at the boundary.
-  // Midpoint containment might assign it to either speaker depending on
-  // floating-point, but boundary refinement should produce a clean split.
-  assert(result.includes('[Speaker 1]'), 'has speaker 1');
-  assert(result.includes('[Speaker 2]'), 'has speaker 2');
-  const blocks = result.split('\n').filter(l => l.startsWith('[Speaker'));
-  assert(blocks.length === 2, `expected 2 speaker blocks, got ${blocks.length}: ${result}`);
-});
-
-// --- Phase 2: config override test ---
-
-console.log('\nConfig override tests\n');
-
-test('mergeGapSec override changes merge behaviour', () => {
-  // Two same-speaker segments with a 1.0s gap are normally separate
-  const segs = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 4.0, end: 6.0, speaker: 'SPEAKER_00' },
-  ];
-  const defaultResult = mergeDiarizeSegments(segs);
-  assert(defaultResult.length === 2, `default gap=0.5s should not merge 1.0s gap, got ${defaultResult.length}`);
-
-  // With mergeGapSec=1.5, they should merge
-  const overrideResult = mergeDiarizeSegments(segs, { ...DEFAULTS, mergeGapSec: 1.5 });
-  assert(overrideResult.length === 1, `override gap=1.5s should merge, got ${overrideResult.length}`);
-});
-
-// --- Phase 4: 3-speaker boundary refinement tests ---
-
-console.log('\n3-speaker boundary refinement tests\n');
-
-test('3-speaker conversation A->B->C->A with correct labels', () => {
-  // A speaks 0-3s, B speaks 3-6s, C speaks 6-9s, A speaks 9-12s
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'A1', wordMidSec: 0.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'A2', wordMidSec: 1.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'A3', wordMidSec: 2.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_01', text: 'B1', wordMidSec: 3.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_01', text: 'B2', wordMidSec: 4.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_02', text: 'C1', wordMidSec: 6.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_02', text: 'C2', wordMidSec: 7.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'A4', wordMidSec: 9.5,  isSegLevel: false },
-    { speaker: 'SPEAKER_00', text: 'A5', wordMidSec: 10.5, isSegLevel: false },
-  ];
-  const diarize = [
-    { start: 0.0, end: 3.0,  speaker: 'SPEAKER_00' },
-    { start: 3.0, end: 6.0,  speaker: 'SPEAKER_01' },
-    { start: 6.0, end: 9.0,  speaker: 'SPEAKER_02' },
-    { start: 9.0, end: 12.0,  speaker: 'SPEAKER_00' },
-  ];
-  const result = refineSpeakerBoundaries(labeled, diarize);
-  // All labels should stay as they are — no drift to correct
-  assert(result[3].speaker === 'SPEAKER_01', 'B1 should stay SPEAKER_01');
-  assert(result[5].speaker === 'SPEAKER_02', 'C1 should stay SPEAKER_02');
-  assert(result[7].speaker === 'SPEAKER_00', 'A4 should stay SPEAKER_00');
-});
-
-test('isolated third-speaker word at A->B boundary gets reassigned', () => {
-  // A->B boundary at 3.0s. Word at index 1 is labelled C but is isolated
-  // (no other C within 2s). Should be reassigned to A or B.
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'A1', wordMidSec: 1.5, isSegLevel: false },
-    { speaker: 'SPEAKER_02', text: 'X1', wordMidSec: 3.1, isSegLevel: false }, // isolated C
-    { speaker: 'SPEAKER_01', text: 'B1', wordMidSec: 4.0, isSegLevel: false },
-  ];
-  const diarize = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.0, end: 6.0, speaker: 'SPEAKER_01' },
-  ];
-  const result = refineSpeakerBoundaries(labeled, diarize);
-  // Isolated C word at index 1 should be reassigned
-  assert(result[1].speaker !== 'SPEAKER_02', `isolated C should be reassigned, got ${result[1].speaker}`);
-});
-
-test('third-speaker word near other same-third-speaker words survives', () => {
-  // A->B boundary at 3.0s. Word at index 1 is labelled C and has another
-  // C word 0.5s away. Both should survive — genuine 3-way conversation.
-  const labeled = [
-    { speaker: 'SPEAKER_00', text: 'A1', wordMidSec: 1.5, isSegLevel: false },
-    { speaker: 'SPEAKER_02', text: 'C1', wordMidSec: 2.9, isSegLevel: false },
-    { speaker: 'SPEAKER_02', text: 'C2', wordMidSec: 3.3, isSegLevel: false },
-    { speaker: 'SPEAKER_01', text: 'B1', wordMidSec: 4.0, isSegLevel: false },
-  ];
-  const diarize = [
-    { start: 0.0, end: 3.0, speaker: 'SPEAKER_00' },
-    { start: 3.0, end: 6.0, speaker: 'SPEAKER_01' },
-  ];
-  const result = refineSpeakerBoundaries(labeled, diarize);
-  // Both C words should survive — they form a cluster near the boundary
-  assert(result[1].speaker === 'SPEAKER_02', `C1 should survive, got ${result[1].speaker}`);
-  assert(result[2].speaker === 'SPEAKER_02', `C2 should survive, got ${result[2].speaker}`);
-});
-
-test('rapid back-and-forth with distinct turn markers at each utterance', () => {
-  // A speaks 0-2s, B speaks 2-3s, A speaks 3-5s, B speaks 5-7s.
-  // With broad boundary snap windows, close boundaries can cause
-  // over-correction. But we should see at least 2 distinct speaker
-  // turns and no data loss.
-  const whisperJson = {
-    transcription: [{
-      offsets: { from: 0, to: 7000 },
-      text: ' Hello there yes indeed goodbye now.',
-      tokens: [
-        { text: ' Hello',   offsets: { from: 0,    to: 800  } },
-        { text: ' there',   offsets: { from: 800,  to: 1800 } },
-        { text: ' yes',     offsets: { from: 2000, to: 2700 } },
-        { text: ' indeed',  offsets: { from: 3000, to: 4700 } },
-        { text: ' goodbye', offsets: { from: 5000, to: 5800 } },
-        { text: ' now',     offsets: { from: 5800, to: 6900 } },
-        { text: '.',        offsets: { from: 6900, to: 7000 } },
-      ],
-    }],
-  };
+test('rapid back-and-forth keeps every turn in order', () => {
+  const whisperJson = tokensJson([
+    ['Hello', 0, 800], ['there', 800, 1800], ['yes', 2000, 2700],
+    ['indeed', 3000, 4700], ['goodbye', 5000, 5800], ['now.', 5800, 6900],
+  ]);
   const diarize = [
     { start: 0.0, end: 2.0, speaker: 'SPEAKER_00' },
     { start: 2.0, end: 3.0, speaker: 'SPEAKER_01' },
     { start: 3.0, end: 5.0, speaker: 'SPEAKER_00' },
     { start: 5.0, end: 7.0, speaker: 'SPEAKER_01' },
   ];
-  const result = mergeTranscriptWithDiarization(whisperJson, diarize);
-  assert(result.includes('[2 speakers detected]'), 'should detect 2 speakers');
-  // Both speakers appear, and all words are present
-  assert(result.includes('[Speaker 1]'), 'should have Speaker 1');
-  assert(result.includes('[Speaker 2]'), 'should have Speaker 2');
-  assert(result.includes('Hello'), 'all words present');
-  assert(result.includes('goodbye'), 'all words present');
+  sameBlocks(blocksOf(mergeTranscriptWithDiarization(whisperJson, diarize)), [
+    ['Speaker 1', 'Hello there'], ['Speaker 2', 'yes'],
+    ['Speaker 1', 'indeed'], ['Speaker 2', 'goodbye now.'],
+  ]);
 });
 
-// --- Phase 5: duration-aware short-block merge tests ---
-
-console.log('\nDuration-aware mergeShortBlocks tests\n');
-
-test('3-word block lasting 0.8s is merged (short duration)', () => {
-  const blocks = [
-    { speaker: 'Speaker 1', text: 'Hello world', startSec: 0.0, endSec: 1.0 },
-    { speaker: 'Speaker 2', text: 'one two three', startSec: 1.1, endSec: 1.9 },
-    { speaker: 'Speaker 1', text: 'goodbye', startSec: 2.0, endSec: 2.5 },
-  ];
-  const result = mergeShortBlocks(blocks);
-  assert(result.length === 2, `expected 2 blocks (0.8s merged), got ${result.length}`);
-});
-
-test('3-word block lasting 4.0s is NOT merged (long duration)', () => {
-  const blocks = [
-    { speaker: 'Speaker 1', text: 'Hello world', startSec: 0.0, endSec: 1.0 },
-    { speaker: 'Speaker 2', text: 'one two three', startSec: 1.1, endSec: 5.1 },
-    { speaker: 'Speaker 1', text: 'goodbye', startSec: 5.2, endSec: 6.0 },
-  ];
-  const result = mergeShortBlocks(blocks);
-  assert(result.length === 3, `expected 3 blocks (4s duration kept), got ${result.length}`);
-});
-
-test('block with no timing info falls back to word-count-only behaviour', () => {
-  // No startSec/endSec — should use word count only (3 words -> merge)
-  const blocks = [
-    { speaker: 'Speaker 1', text: 'Hello world' },
-    { speaker: 'Speaker 2', text: 'one two three' },
-    { speaker: 'Speaker 1', text: 'goodbye' },
-  ];
-  const result = mergeShortBlocks(blocks);
-  assert(result.length === 2, `expected 2 blocks (no timing fallback), got ${result.length}`);
-});
-
-test('4-word block lasting 0.5s is NOT merged (too many words)', () => {
-  const blocks = [
-    { speaker: 'Speaker 1', text: 'Hello world', startSec: 0.0, endSec: 1.0 },
-    { speaker: 'Speaker 2', text: 'one two three four', startSec: 1.1, endSec: 1.6 },
-    { speaker: 'Speaker 1', text: 'goodbye', startSec: 1.7, endSec: 2.0 },
-  ];
-  const result = mergeShortBlocks(blocks);
-  assert(result.length === 3, '4-word block should not merge regardless of duration');
-});
-
-// --- End-to-end with overlapping input ---
-
-console.log('\nEnd-to-end overlapping test\n');
-
-test('overlapping segments in end-to-end pipeline', () => {
-  const whisperJson = {
-    transcription: [{
-      offsets: { from: 0, to: 8000 },
-      text: ' Hello world this is a test now.',
-      tokens: [
-        { text: ' Hello', offsets: { from: 0,    to: 1500 } },
-        { text: ' world', offsets: { from: 1500, to: 3000 } },
-        { text: ' this',  offsets: { from: 3000, to: 4000 } },
-        { text: ' is',    offsets: { from: 4000, to: 4500 } },
-        { text: ' a',     offsets: { from: 4500, to: 5000 } },
-        { text: ' test',  offsets: { from: 5000, to: 6000 } },
-        { text: ' now',   offsets: { from: 6000, to: 7800 } },
-        { text: '.',      offsets: { from: 7800, to: 8000 } },
-      ],
-    }],
-  };
-  // Overlapping diarization: both speakers claim 3-5s
+test('word straddling a shared boundary goes to the side holding its midpoint', () => {
+  // "is" spans 2800-3300, midpoint 3050 -> B. Boundary 3000 belongs to B only.
+  const whisperJson = tokensJson([
+    ['Hello', 0, 1200], ['this', 2200, 2800], ['is', 2800, 3300], ['goodbye.', 3300, 4600],
+  ]);
   const diarize = [
-    { start: 0.0, end: 5.0, speaker: 'SPEAKER_00' },
-    { start: 3.0, end: 8.0, speaker: 'SPEAKER_01' },
+    { start: 0.0, end: 3.0, speaker: 'A' },
+    { start: 3.0, end: 6.0, speaker: 'B' },
   ];
-  const result = mergeTranscriptWithDiarization(whisperJson, diarize);
-  assert(result.includes('[2 speakers detected]'), 'should detect 2 speakers');
-  // Pipeline should not crash or produce garbled output
-  assert(result.includes('[Speaker'), 'should contain speaker labels');
+  sameBlocks(blocksOf(mergeTranscriptWithDiarization(whisperJson, diarize)), [
+    ['Speaker 1', 'Hello this'], ['Speaker 2', 'is goodbye.'],
+  ]);
 });
 
-// --- nearestSegMaxDistSec threshold tests ---
-
-test('nearest-segment fallback assigns word within 5s of a segment', () => {
-  // Word at 6.5s, nearest segment ends at 5.0s — distance 1.5s, within default 5s limit.
-  const words = [{ text: 'hello', startMs: 6000, endMs: 7000 }];
-  const segs = [{ start: 0.0, end: 5.0, speaker: 'SPEAKER_00' }];
-  const result = assignWordsToSpeakers(words, segs);
-  assert(result[0].speaker === 'SPEAKER_00', `expected SPEAKER_00, got ${result[0].speaker}`);
+test('exact shared boundary: midpoint equal to interval end belongs to the next speaker', () => {
+  const whisperJson = tokensJson([['one', 0, 1000], ['two', 2800, 3200], ['three', 4000, 5000]]);
+  const diarize = [{ start: 0, end: 3.0, speaker: 'A' }, { start: 3.0, end: 6.0, speaker: 'B' }];
+  const r = assignSpeakers(whisperJson, diarize);
+  assert(r.words[1].evidence.pointMs === 3000, `point ${r.words[1].evidence.pointMs}`);
+  assert(r.words[1].speakerId === 'B', `got ${r.words[1].speakerId}`);
+  assert(r.words[1].assignment === 'supported', r.words[1].assignment);
 });
 
-test('nearest-segment fallback withholds assignment when word is >= 5s from all segments', () => {
-  // Word at 12.0s, nearest segment ends at 5.0s — distance 7.0s, beyond default 5s limit.
-  const words = [{ text: 'hello', startMs: 12000, endMs: 13000 }];
-  const segs = [{ start: 0.0, end: 5.0, speaker: 'SPEAKER_00' }];
-  const result = assignWordsToSpeakers(words, segs);
-  assert(result[0].speaker === null, `expected null speaker, got ${result[0].speaker}`);
+test('boundary handling does not depend on how many words surround it', () => {
+  const diarize = [{ start: 0, end: 3.0, speaker: 'A' }, { start: 3.0, end: 6.0, speaker: 'B' }];
+  const few = assignSpeakers(tokensJson([['a', 2900, 3000], ['b', 3000, 3100]]), diarize);
+  const many = assignSpeakers(tokensJson([
+    ['w1', 0, 500], ['w2', 500, 1000], ['w3', 1000, 1500], ['w4', 1500, 2000], ['w5', 2000, 2500],
+    ['a', 2900, 3000], ['b', 3000, 3100],
+    ['w6', 3500, 4000], ['w7', 4000, 4500], ['w8', 4500, 5000], ['w9', 5000, 5500],
+  ]), diarize);
+  assert(few.words[0].speakerId === 'A' && few.words[1].speakerId === 'B', 'few words');
+  assert(many.words[5].speakerId === 'A' && many.words[6].speakerId === 'B', 'many words');
 });
 
-test('nearestSegMaxDistSec override is respected', () => {
-  // Same word at 12.0s, but override raises the threshold to 10s — should now assign.
-  const words = [{ text: 'hello', startMs: 12000, endMs: 13000 }];
-  const segs = [{ start: 0.0, end: 5.0, speaker: 'SPEAKER_00' }];
-  const result = assignWordsToSpeakers(words, segs, { ...DEFAULTS, nearestSegMaxDistSec: 10.0 });
-  assert(result[0].speaker === 'SPEAKER_00', `expected SPEAKER_00, got ${result[0].speaker}`);
+// --- Investigation regressions (docs/diarization-investigation.md) ---
+
+console.log('\nInvestigation regressions\n');
+
+test('case 1: different valid DTW anchors change the assigned speaker', () => {
+  const diarize = [{ start: 0, end: 1.0, speaker: 'A' }, { start: 1.0, end: 3.0, speaker: 'B' }];
+  // Ordinary offsets put both words in A; DTW anchors put the second in B.
+  const early = tokensJson([['Hello.', 0, 400, 10], ['Again.', 400, 800, 30], ['End.', 800, 900, 50]]);
+  const late = tokensJson([['Hello.', 0, 400, 10], ['Again.', 400, 800, 150], ['End.', 800, 900, 250]]);
+  assert(assignSpeakers(early, diarize).words[1].speakerId === 'A', 'early anchor -> A');
+  assert(assignSpeakers(late, diarize).words[1].speakerId === 'B', 'late anchor -> B');
 });
 
-// --- _nearBoundary prevents smoothing tests ---
-
-test('smoothing does not change a _nearBoundary-flagged word flanked by same speaker', () => {
-  // A A [B flagged _nearBoundary] A — smoothing must not flip B back to A.
-  const words = [
-    { speaker: 'SPEAKER_00', text: 'w1', isSegLevel: false, _nearBoundary: false },
-    { speaker: 'SPEAKER_00', text: 'w2', isSegLevel: false, _nearBoundary: false },
-    { speaker: 'SPEAKER_01', text: 'w3', isSegLevel: false, _nearBoundary: true },
-    { speaker: 'SPEAKER_00', text: 'w4', isSegLevel: false, _nearBoundary: false },
+test('case 2: a correctly timed 600 ms reply survives (A/B/A)', () => {
+  const json = tokensJson([['Ready?', 0, 800], ['Yes.', 1000, 1500], ['Continue.', 2000, 2800]]);
+  const speakers = [
+    { start: 0, end: 0.9, speaker: 'A' },
+    { start: 1, end: 1.6, speaker: 'B' },
+    { start: 2, end: 3, speaker: 'A' },
   ];
-  const result = smoothSpeakerAssignments(words);
-  assert(result[2].speaker === 'SPEAKER_01', `_nearBoundary word should not be smoothed, got ${result[2].speaker}`);
+  const text = mergeTranscriptWithDiarization(json, speakers);
+  assert(text.startsWith('[2 speakers detected]'), text);
+  sameBlocks(blocksOf(text), [['Speaker 1', 'Ready?'], ['Speaker 2', 'Yes.'], ['Speaker 1', 'Continue.']]);
 });
 
-// --- isSegLevel exclusion in smoothing tests ---
-
-test('smoothing does not absorb a run containing an isSegLevel entry', () => {
-  // A [seg-level B] A — the seg-level entry should not be corrected to A.
-  const words = [
-    { speaker: 'SPEAKER_00', text: 'w1', isSegLevel: false, _nearBoundary: false },
-    { speaker: 'SPEAKER_01', text: 'whole segment', isSegLevel: true,  _nearBoundary: false },
-    { speaker: 'SPEAKER_00', text: 'w3', isSegLevel: false, _nearBoundary: false },
+test('case 3: a correctly timed 200 ms reply survives (A/B/A)', () => {
+  const json = tokensJson([['Ready?', 0, 800], ['Yes.', 1000, 1150], ['Continue.', 1250, 2000]]);
+  const speakers = [
+    { start: 0, end: 0.9, speaker: 'A' },
+    { start: 1, end: 1.2, speaker: 'B' },
+    { start: 1.2, end: 2.1, speaker: 'A' },
   ];
-  const result = smoothSpeakerAssignments(words);
-  assert(result[1].speaker === 'SPEAKER_01', `isSegLevel entry should not be smoothed, got ${result[1].speaker}`);
+  const text = mergeTranscriptWithDiarization(json, speakers);
+  assert(text.startsWith('[2 speakers detected]'), text);
+  sameBlocks(blocksOf(text), [['Speaker 1', 'Ready?'], ['Speaker 2', 'Yes.'], ['Speaker 1', 'Continue.']]);
 });
 
-test('smoothing does not use an isSegLevel entry as the flanking anchor', () => {
-  // [seg-level A] B A — the seg-level A should not serve as left anchor, so B stays B.
-  const words = [
-    { speaker: 'SPEAKER_00', text: 'seg', isSegLevel: true,  _nearBoundary: false },
-    { speaker: 'SPEAKER_01', text: 'w2', isSegLevel: false, _nearBoundary: false },
-    { speaker: 'SPEAKER_00', text: 'w3', isSegLevel: false, _nearBoundary: false },
-  ];
-  const result = smoothSpeakerAssignments(words);
-  // left is isSegLevel so the left anchor check fires and smoothing skips; w2 must stay SPEAKER_01
-  assert(result[1].speaker === 'SPEAKER_01', `isSegLevel left anchor must be skipped, got ${result[1].speaker}`);
+test('case 4: A-only speech after nested B overlap stays A', () => {
+  const json = tokensJson([['Before.', 0, 500], ['During.', 2200, 2600], ['After.', 4000, 4500]]);
+  const speakers = [{ start: 0, end: 10, speaker: 'A' }, { start: 2, end: 3, speaker: 'B' }];
+  const r = assignSpeakers(json, speakers);
+  assert(r.words[2].speakerId === 'A' && r.words[2].assignment === 'supported', 'After. -> supported A');
+  assert(r.words[1].assignment === 'ambiguous', `During. should be ambiguous, got ${r.words[1].assignment}`);
+  sameBlocks(r.words[1].evidence.candidates.slice().sort(), ['A', 'B']);
+  assert(r.words[1].speakerId === 'A', 'ambiguous word keeps the continuing speaker');
 });
+
+test('case 5: invalid DTW anchors (-1) leave ordinary token offsets in charge', () => {
+  const json = tokensJson([['Hello.', 0, 800, -1], ['Goodbye.', 2000, 2800, -1]]);
+  const speakers = [{ start: 0, end: 1, speaker: 'A' }, { start: 1, end: 3, speaker: 'B' }];
+  const r = assignSpeakers(json, speakers);
+  sameBlocks(blocksOf(r.text), [['Speaker 1', 'Hello.'], ['Speaker 2', 'Goodbye.']]);
+  assert(r.words.every((w) => w.timingSource === 'token'), 'token timing');
+  assert(r.words.every((w) => w.timingFallback === null), 'no DTW fallback reported when DTW is absent');
+});
+
+test('case 6: negative token times fall back to valid segment times', () => {
+  const speakers = [{ start: 0, end: 1, speaker: 'A' }, { start: 4, end: 5, speaker: 'B' }];
+  const segment = {
+    text: ' Yes.',
+    offsets: { from: 4000, to: 5000 },
+    tokens: [{ text: ' Yes.', offsets: { from: -10, to: -10 } }],
+  };
+  const r = assignSpeakers({ transcription: [segment] }, speakers);
+  assert(r.words[0].timingSource === 'segment', r.words[0].timingSource);
+  assert(r.words[0].timingFallback === 'token-offsets-invalid', r.words[0].timingFallback);
+  sameBlocks(blocksOf(r.text), [['Speaker 2', 'Yes.']]);
+});
+
+test('case 7: Unknown beyond the gap distance survives formatting', () => {
+  const json = tokensJson([['Before.', 100, 800], ['Unsupported.', 10000, 10500], ['After.', 20100, 20800]]);
+  const speakers = [{ start: 0, end: 1, speaker: 'A' }, { start: 20, end: 21, speaker: 'A' }];
+  const r = assignSpeakers(json, speakers);
+  sameBlocks(blocksOf(r.text), [['Speaker 1', 'Before.'], ['Unknown', 'Unsupported.'], ['Speaker 1', 'After.']]);
+  assert(r.words[1].assignment === 'unknown', r.words[1].assignment);
+});
+
+// --- Gaps, overlap and exclusive timelines ---
+
+console.log('\nGaps, overlap and exclusive timelines\n');
+
+test('gap fill within the declared distance is recorded', () => {
+  const json = tokensJson([['hello', 6000, 7000]]);
+  const r = assignSpeakers(json, [{ start: 0.0, end: 5.0, speaker: 'S0' }]);
+  assert(r.words[0].speakerId === 'S0', r.words[0].speakerId);
+  assert(r.words[0].assignment === 'gap-filled', r.words[0].assignment);
+  assert(r.words[0].evidence.distanceMs === 1500, `distance ${r.words[0].evidence.distanceMs}`);
+});
+
+test('gap fill is withheld at or beyond gapFillMaxMs', () => {
+  const json = tokensJson([['hello', 12000, 13000]]);
+  const r = assignSpeakers(json, [{ start: 0.0, end: 5.0, speaker: 'S0' }]);
+  assert(r.words[0].speakerId === null && r.words[0].speaker === 'Unknown', r.words[0].speaker);
+  const wider = assignSpeakers(json, [{ start: 0.0, end: 5.0, speaker: 'S0' }], { gapFillMaxMs: 10000 });
+  assert(wider.words[0].speakerId === 'S0', 'override respected');
+  assert(DEFAULTS.gapFillMaxMs === 5000, 'declared default');
+});
+
+test('gap tie goes to the speaker that ended before the word', () => {
+  const json = tokensJson([['mid', 1400, 1600]]);
+  const r = assignSpeakers(json, [{ start: 0, end: 1.0, speaker: 'A' }, { start: 2.0, end: 3.0, speaker: 'B' }]);
+  assert(r.words[0].speakerId === 'A', r.words[0].speakerId);
+});
+
+test('point in a gap but span touching speech uses span overlap', () => {
+  // Word 800-2000, point 1400 in the gap; overlaps A by 200 ms, B by 0.
+  const json = tokensJson([['long', 800, 2000]]);
+  const r = assignSpeakers(json, [{ start: 0, end: 1.0, speaker: 'A' }, { start: 2.0, end: 3.0, speaker: 'B' }]);
+  assert(r.words[0].speakerId === 'A' && r.words[0].evidence.method === 'overlap', JSON.stringify(r.words[0].evidence));
+  assert(r.words[0].assignment === 'supported', r.words[0].assignment);
+});
+
+test('regular overlap is ambiguous and records candidates', () => {
+  const json = tokensJson([['Hello', 0, 1500], ['world', 1500, 3000], ['this', 3500, 4200], ['is', 4200, 4600], ['test', 6000, 7000]]);
+  const diarize = [{ start: 0.0, end: 5.0, speaker: 'S0' }, { start: 3.0, end: 8.0, speaker: 'S1' }];
+  const r = assignSpeakers(json, diarize);
+  assert(r.timeline === 'regular', r.timeline);
+  assert(r.words[2].assignment === 'ambiguous' && r.words[3].assignment === 'ambiguous', 'overlap words ambiguous');
+  assert(r.words[4].speakerId === 'S1' && r.words[4].assignment === 'supported', 'after overlap -> S1 supported');
+  assert(r.summary.assignment.ambiguous === 2, JSON.stringify(r.summary.assignment));
+});
+
+test('exclusive timeline decides the speaker; regular adds overlap evidence', () => {
+  const json = tokensJson([['Hello', 0, 1500], ['this', 3500, 4200], ['test', 6000, 7000]]);
+  const regular = [{ start: 0.0, end: 5.0, speaker: 'S0' }, { start: 3.0, end: 8.0, speaker: 'S1' }];
+  const exclusive = [{ start: 0.0, end: 3.5, speaker: 'S0' }, { start: 3.5, end: 8.0, speaker: 'S1' }];
+  const r = assignSpeakers(json, { regular, exclusive });
+  assert(r.timeline === 'exclusive', r.timeline);
+  assert(r.words[1].speakerId === 'S1' && r.words[1].assignment === 'supported', JSON.stringify(r.words[1]));
+  sameBlocks(r.words[1].evidence.overlapSpeakers.slice().sort(), ['S0', 'S1']);
+  sameBlocks(blocksOf(r.text), [['Speaker 1', 'Hello'], ['Speaker 2', 'this test']]);
+});
+
+test('empty exclusive timeline falls back to regular, legacy array is regular', () => {
+  const json = tokensJson([['Hi', 0, 500]]);
+  const regular = [{ start: 0, end: 1, speaker: 'S0' }];
+  assert(assignSpeakers(json, { regular, exclusive: [] }).timeline === 'regular', 'empty exclusive');
+  assert(assignSpeakers(json, { regular, exclusive: null }).timeline === 'regular', 'null exclusive');
+  assert(assignSpeakers(json, regular).timeline === 'regular', 'legacy array');
+});
+
+// --- Formatting and structure ---
+
+console.log('\nFormatting and structured result\n');
+
+test('no duplicate adjacent blocks and no phantom speakers', () => {
+  const json = tokensJson([['a', 0, 400], ['b', 500, 900], ['c', 1000, 1400], ['d', 1500, 1900]]);
+  const diarize = [
+    { start: 0, end: 0.45, speaker: 'A' }, { start: 0.45, end: 0.95, speaker: 'A' },
+    { start: 0.95, end: 1.45, speaker: 'B' }, { start: 1.45, end: 2.0, speaker: 'B' },
+  ];
+  const text = mergeTranscriptWithDiarization(json, diarize);
+  assert(text.startsWith('[2 speakers detected]'), text);
+  sameBlocks(blocksOf(text), [['Speaker 1', 'a b'], ['Speaker 2', 'c d']]);
+});
+
+test('malformed speaker intervals are dropped and counted', () => {
+  const { intervals, dropped } = normaliseSpeakerTimeline([
+    { start: 0, end: 1, speaker: 'A' },
+    { start: 2, end: 2, speaker: 'A' },
+    { start: 3, end: 2, speaker: 'B' },
+    { start: NaN, end: 4, speaker: 'B' },
+    { start: 4, end: 5 },
+    { start: -1, end: 1, speaker: 'C' },
+  ]);
+  assert(intervals.length === 1 && dropped === 5, `${intervals.length} kept, ${dropped} dropped`);
+});
+
+test('structured result keeps text, order, timing and evidence for every word', () => {
+  const json = tokensJson([['Ready?', 0, 800, 5], ['Yes.', 1000, 1500, 102], ['Go.', 2000, 2800, 205]]);
+  const speakers = [{ start: 0, end: 0.9, speaker: 'A' }, { start: 1, end: 1.6, speaker: 'B' }, { start: 2, end: 3, speaker: 'A' }];
+  const r = assignSpeakers(json, speakers);
+  assert(r.version === 1, 'version');
+  sameBlocks(r.words.map((w) => w.text), ['Ready?', 'Yes.', 'Go.']);
+  sameBlocks(r.words.map((w) => w.timingSource), ['dtw', 'dtw', 'dtw']);
+  sameBlocks(r.words.map((w) => w.anchorMs), [50, 1020, 2050]);
+  sameBlocks(r.words.map((w) => w.assignment), ['supported', 'supported', 'supported']);
+  sameBlocks(r.speakers, [{ id: 'A', label: 'Speaker 1' }, { id: 'B', label: 'Speaker 2' }]);
+  assert(r.blocks.length === 3 && r.blocks[1].firstWord === 1 && r.blocks[1].lastWord === 1, JSON.stringify(r.blocks));
+  assert(r.summary.timing.bySource.dtw === 3, JSON.stringify(r.summary.timing));
+  assert(r.text === mergeTranscriptWithDiarization(json, speakers), 'wrapper returns the same text');
+});
+
+test('words without any timing are Unknown, not guessed', () => {
+  const json = { transcription: [{ text: ' Floating words', tokens: [{ text: ' Floating' }, { text: ' words' }] }] };
+  const r = assignSpeakers(json, [{ start: 0, end: 5, speaker: 'A' }]);
+  assert(r.words.every((w) => w.timingSource === 'none' && w.assignment === 'unknown'), JSON.stringify(r.words));
+  sameBlocks(blocksOf(r.text), [['Unknown', 'Floating words']]);
+});
+
+test('assignmentPoint "start" uses word onset (evaluation variant)', () => {
+  const json = tokensJson([['word', 800, 1400]]);
+  const diarize = [{ start: 0, end: 1.0, speaker: 'A' }, { start: 1.0, end: 2.0, speaker: 'B' }];
+  assert(assignSpeakers(json, diarize).words[0].speakerId === 'B', 'midpoint 1100 -> B');
+  assert(assignSpeakers(json, diarize, { assignmentPoint: 'start' }).words[0].speakerId === 'A', 'start 800 -> A');
+});
+
+// --- Summary ---
 
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);
