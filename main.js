@@ -218,9 +218,12 @@ ipcMain.handle('cancel-transcription', () => {
 ipcMain.handle('check-python', async () => capabilities.getPythonInfo({ refresh: true }));
 
 // User-directed download of the speaker model (D2). Jobs never download.
-ipcMain.handle('prepare-diarization', async (event, token) => {
+ipcMain.handle('check-alignment', async () => capabilities.getAlignmentInfo({ language: 'en', refresh: true }));
+
+ipcMain.handle('prepare-diarization', async (event, token, opts) => {
   return diarizationSetup.prepare({
     token,
+    alignment: !!(opts && opts.alignment),
     onProgress: (data) => event.sender.send('diarize-status', data),
   });
 });

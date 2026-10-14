@@ -62,6 +62,11 @@ Options:
   --hf-token <token>      ignored (kept for old scripts); the speaker model is
                           prepared once with scripts/setup-diarization.py
   --num-speakers <n>      hint diarizer to expect this many speakers
+  --alignment whisper|forced
+                          word timing for speaker assignment (default: whisper).
+                          "forced" re-times words against the audio before
+                          speakers are assigned; needs --diarize and the
+                          optional alignment setup
   --quiet                 suppress progress output on stderr
   -h, --help              show this help and exit
 `;
@@ -155,6 +160,7 @@ const TRANSCRIBE_SPEC = {
   '--anti-corruption': { takesValue: false },
   '--hf-token': { takesValue: true },
   '--num-speakers': { takesValue: true },
+  '--alignment': { takesValue: true },
   '--quiet': { takesValue: false },
   '--help': { takesValue: false },
   '-h': { takesValue: false },
@@ -174,6 +180,19 @@ function _diarizeFix(info) {
       return 'Download the speaker model once: HF_TOKEN=<token> python scripts/setup-diarization.py';
     default:
       return info.diarizationMessage || 'Run: python scripts/setup-diarization.py --check';
+  }
+}
+
+/** Plain-language fix for an alignment setup status (design decisions D3, D4). */
+function _alignmentFix(info) {
+  switch (info.alignmentStatus) {
+    case 'alignment-missing':
+    case 'alignment-unsupported':
+      return 'Install the optional packages: pip install -r lib/requirements-alignment.txt';
+    case 'model-not-prepared':
+      return 'Download the alignment model once: python scripts/setup-diarization.py --alignment';
+    default:
+      return info.alignmentMessage || 'Run: python lib/align.py --check';
   }
 }
 
@@ -211,6 +230,13 @@ async function cmdTranscribe(argv) {
     die(`transcribe: --format must be txt or json (got "${format}")`);
   }
   const diarize = !!flags['--diarize'];
+  const alignment = flags['--alignment'] || 'whisper';
+  if (!['whisper', 'forced'].includes(alignment)) {
+    die(`transcribe: --alignment must be whisper or forced (got "${alignment}")`);
+  }
+  if (alignment === 'forced' && !diarize) {
+    die('transcribe: --alignment forced needs --diarize');
+  }
   const quiet = !!flags['--quiet'];
   const outputPath = flags['--output'];
 
@@ -254,6 +280,17 @@ async function cmdTranscribe(argv) {
     if (pyInfo.diarizationStatus !== 'ready') {
       die(`transcribe: --diarize is not ready (${pyInfo.diarizationStatus}). ${_diarizeFix(pyInfo)}`);
     }
+    if (alignment === 'forced') {
+      // English-only models are checked fully. For other models the language
+      // is only known after Whisper runs, so only the packages are checked
+      // here; a missing language model falls back to Whisper timing.
+      const englishOnly = /\.en(?:$|-)/.test(modelId);
+      const alignInfo = await capabilities.getAlignmentInfo({ language: 'en' });
+      const okStatuses = englishOnly ? ['ready'] : ['ready', 'model-not-prepared'];
+      if (!okStatuses.includes(alignInfo.alignmentStatus)) {
+        die(`transcribe: --alignment forced is not ready (${alignInfo.alignmentStatus}). ${_alignmentFix(alignInfo)}`);
+      }
+    }
   }
 
   const runner = createTranscriptionRunner({
@@ -282,6 +319,7 @@ async function cmdTranscribe(argv) {
         diarization: diarize,
         antiCorruption: !!flags['--anti-corruption'],
         numSpeakers,
+        alignment,
         outputJson: format === 'json',
       },
       signal: abortController.signal,

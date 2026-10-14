@@ -69,10 +69,14 @@ function makeBrowserContext() {
       checked: false,
       href: '',
       style: {},
-      classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+      classList: (() => {
+        const set = new Set();
+        return { add(c) { set.add(c); }, remove(c) { set.delete(c); }, toggle(c, on) { if (on === undefined ? !set.has(c) : on) set.add(c); else set.delete(c); }, contains(c) { return set.has(c); } };
+      })(),
       setAttribute() {},
       getAttribute() { return null; },
-      addEventListener() {},
+      _listeners: {},
+      addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); },
       removeEventListener() {},
       appendChild(c) { return c; },
       replaceWith(el) {},
@@ -94,7 +98,11 @@ function makeBrowserContext() {
     },
     addEventListener() {},
     removeEventListener() {},
-    querySelector() { return null; },
+    querySelector(sel) {
+      const key = `selector:${sel}`;
+      if (!els.has(key)) els.set(key, makeEl('span'));
+      return els.get(key);
+    },
   };
 
   // Stub the preload API (window.api) so renderer.js top-level code
@@ -110,6 +118,8 @@ function makeBrowserContext() {
     // Init calls that fire at load time
     getModels: () => noopPromise([]),
     checkPythonSetup: () => noopPromise({ pythonFound: false }),
+    checkAlignment: () => noopPromise({ alignmentStatus: 'ready' }),
+    prepareDiarization: () => noopPromise({ status: 'ready' }),
     getGpuStatus: () => noopPromise({ backend: 'cpu', detected: null, deviceName: null, setting: 'auto', available: ['cpu'] }),
     isDebugBuild: () => noopPromise(false),
     getVersion: () => noopPromise('0.0.0'),
@@ -176,6 +186,7 @@ test('renderer.js parses without errors', () => {
     'media-extensions.js',
     'time-estimates.js',
     'transcript-format.js',
+    'job-options.js',
   ];
   for (const mod of modules) {
     vm.runInContext(
@@ -204,10 +215,11 @@ test('queue.js + renderer.js together parse without errors', () => {
   const mediaSrc = fs.readFileSync(path.join(RENDERER_DIR, 'media-extensions.js'), 'utf-8');
   const timeSrc = fs.readFileSync(path.join(RENDERER_DIR, 'time-estimates.js'), 'utf-8');
   const formatSrc = fs.readFileSync(path.join(RENDERER_DIR, 'transcript-format.js'), 'utf-8');
+  const jobSrc = fs.readFileSync(path.join(RENDERER_DIR, 'job-options.js'), 'utf-8');
   const rendererSrc = fs.readFileSync(path.join(RENDERER_DIR, 'renderer.js'), 'utf-8');
 
   // Simulate loading all scripts
-  const combined = `${queueSrc}\n${mediaSrc}\n${timeSrc}\n${formatSrc}\n${rendererSrc}`;
+  const combined = `${queueSrc}\n${mediaSrc}\n${timeSrc}\n${formatSrc}\n${jobSrc}\n${rendererSrc}`;
   vm.runInContext(combined, sandbox, { filename: 'renderer-combined.js' });
 
   // If we got here without throwing, all scripts parsed and top-level code ran.
@@ -228,5 +240,76 @@ test('media-extensions.js accepts .dss files', () => {
   assert(sandbox.window.mediaExtensions.isValidMediaFile('recording.ds2') === false, '.ds2 should not be valid');
 });
 
-console.log(`\n${passed} passed, ${failed} failed`);
-process.exit(failed > 0 ? 1 : 0);
+// --- Setup-state flow (diarisation + alignment, design decisions D2/D4) ---
+
+async function loadRenderer(apiOverrides) {
+  const ctx = makeBrowserContext();
+  Object.assign(ctx.window.api, apiOverrides);
+  const sandbox = { window: ctx.window, document: ctx.document, console, ...makeBrowserGlobals() };
+  vm.createContext(sandbox);
+  for (const mod of ['queue.js', 'media-extensions.js', 'time-estimates.js', 'transcript-format.js', 'job-options.js', 'renderer.js']) {
+    vm.runInContext(fs.readFileSync(path.join(RENDERER_DIR, mod), 'utf-8'), sandbox, { filename: mod });
+  }
+  for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+  const el = (id) => sandbox.document.getElementById(id);
+  const fire = (id, type) => (el(id)._listeners[type] || []).forEach((fn) => fn({ preventDefault() {} }));
+  return { el, fire, sandbox };
+}
+
+const READY_PY = { pythonFound: true, pythonVersion: '3.12.3', diarizationStatus: 'ready', pyannoteVersion: '4.0.7', gpuAvailable: true };
+
+const asyncTests = [
+  ['speaker model not prepared: setup block shown, diarisation and alignment unavailable', async () => {
+    const { el } = await loadRenderer({ checkPythonSetup: () => Promise.resolve({ ...READY_PY, diarizationStatus: 'model-not-prepared' }) });
+    assert(el('diarize-setup-block').hidden === false, 'token/download block visible');
+    assert(el('diarize-toggle').disabled === true, 'diarisation switch disabled');
+    assert(el('diarize-status-text').textContent === 'Speaker model not downloaded', el('diarize-status-text').textContent);
+    assert(el('alignment-status').hidden === true, 'alignment row hidden until diarisation is ready');
+  }],
+  ['ready diarisation + ready alignment: switch appears with diarisation and is usable', async () => {
+    const { el, fire } = await loadRenderer({
+      checkPythonSetup: () => Promise.resolve(READY_PY),
+      checkAlignment: () => Promise.resolve({ alignmentStatus: 'ready' }),
+    });
+    assert(el('diarize-setup-block').hidden === true, 'no setup block when ready');
+    assert(el('alignment-status-text').textContent === 'Word alignment ready', el('alignment-status-text').textContent);
+    assert(el('align-option').hidden === true, 'hidden while diarisation is off');
+    el('diarize-toggle').checked = true;
+    fire('diarize-toggle', 'change');
+    assert(el('align-option').hidden === false, 'shown once diarisation is on');
+    assert(el('align-toggle').disabled === false, 'usable');
+  }],
+  ['alignment not prepared: switch disabled with reason, download button shown', async () => {
+    const { el, fire } = await loadRenderer({
+      checkPythonSetup: () => Promise.resolve(READY_PY),
+      checkAlignment: () => Promise.resolve({ alignmentStatus: 'model-not-prepared' }),
+    });
+    el('diarize-toggle').checked = true;
+    fire('diarize-toggle', 'change');
+    assert(el('align-toggle').disabled === true, 'disabled');
+    assert(el('align-option').classList.contains('is-disabled'), 'styled as disabled');
+    assert(/Download the alignment model in Settings/.test(el('align-option-help').textContent), el('align-option-help').textContent);
+    assert(el('alignment-setup-block').hidden === false, 'download button visible');
+  }],
+  ['alignment download button calls setup with alignment and re-checks', async () => {
+    const calls = [];
+    let status = 'model-not-prepared';
+    const { el, fire } = await loadRenderer({
+      checkPythonSetup: () => Promise.resolve(READY_PY),
+      checkAlignment: () => Promise.resolve({ alignmentStatus: status }),
+      prepareDiarization: (token, opts) => { calls.push(opts); status = 'ready'; return Promise.resolve({ status: 'ready' }); },
+    });
+    fire('btn-prepare-alignment', 'click');
+    for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
+    assert(calls.length === 1 && calls[0].alignment === true, JSON.stringify(calls));
+    assert(el('alignment-status-text').textContent === 'Word alignment ready', el('alignment-status-text').textContent);
+  }],
+];
+
+(async () => {
+  for (const [name, fn] of asyncTests) {
+    try { await fn(); console.log(`  PASS: ${name}`); passed++; } catch (e) { console.log(`  FAIL: ${name} -- ${e.message}`); failed++; }
+  }
+  console.log(`\n${passed} passed, ${failed} failed`);
+  process.exit(failed > 0 ? 1 : 0);
+})();

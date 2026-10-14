@@ -167,6 +167,35 @@ test('transcribe --diarize without a usable Python exits non-zero before any wor
   }
 });
 
+test('transcribe --alignment rejects unknown values before any work', () => {
+  const tmpFile = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-')) + '/a.wav';
+  fs.writeFileSync(tmpFile, '');
+  try {
+    const r = runCli(['transcribe', '--alignment', 'wav2vec', '--diarize', tmpFile]);
+    assert(r.status !== 0, 'should fail');
+    assert(r.stderr.includes('--alignment must be whisper or forced'), `got: ${r.stderr}`);
+  } finally {
+    try { fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('transcribe --alignment forced without --diarize is rejected before any work', () => {
+  const tmpFile = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-')) + '/a.wav';
+  fs.writeFileSync(tmpFile, '');
+  try {
+    const r = runCli(['transcribe', '--alignment', 'forced', tmpFile]);
+    assert(r.status !== 0, 'should fail');
+    assert(r.stderr.includes('--alignment forced needs --diarize'), `got: ${r.stderr}`);
+  } finally {
+    try { fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true }); } catch (_) {}
+  }
+});
+
+test('transcribe --help documents --alignment', () => {
+  const r = runCli(['transcribe', '--help']);
+  assert(r.status === 0 && r.stdout.includes('--alignment whisper|forced'), r.stdout);
+});
+
 test('transcribe accepts --anti-corruption flag combo (parses successfully)', () => {
   // Pass a valid model id but missing file, so we exit on file-not-found AFTER arg parsing succeeded.
   const r = runCli(['transcribe', '--model', 'tiny.en', '--anti-corruption', '--quiet', '/no/such/file.wav']);

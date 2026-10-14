@@ -800,4 +800,34 @@ test('getStatus reports only cpu when vulkan binary missing', () => {
 
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Tests: align.py --check probe (design decisions D3, D4)
+// ---------------------------------------------------------------------------
+
+test('getAlignmentInfo runs align.py --check with the job Python and caches per language', async () => {
+  const py = '/opt/venv/bin/python';
+  const mock = makePythonSpawn({ runnable: [py], check: JSON.stringify({ status: 'ready', message: 'ok', versions: { whisperx: '3.8.6' }, model: { name: 'WAV2VEC2_ASR_BASE_960H', type: 'torchaudio' } }) });
+  const caps = makeCaps(mock, { env: { TRANSCRIBER_PYTHON: py } });
+  const info = await caps.getAlignmentInfo({ language: 'en' });
+  assert(info.alignmentStatus === 'ready' && info.whisperxVersion === '3.8.6', JSON.stringify(info));
+  const call = mock.calls.find((c) => c.args.includes('--check'));
+  assert(call.cmd === py && call.args[0] === '/fake/res/lib/align.py' && call.args.join(' ').includes('--language en'), JSON.stringify(call));
+  const before = mock.calls.length;
+  await caps.getAlignmentInfo({ language: 'en' });
+  assert(mock.calls.length === before, 'cached');
+  await caps.getAlignmentInfo({ language: 'en', refresh: true });
+  assert(mock.calls.length > before, 'refresh probes again');
+});
+
+test('getAlignmentInfo reports missing Python, missing script and unreadable output', async () => {
+  const none = await makeCaps(makePythonSpawn({ runnable: [] })).getAlignmentInfo();
+  assert(none.alignmentStatus === 'python-missing', none.alignmentStatus);
+  const noScript = await makeCaps(makePythonSpawn({ check: '{}' }), { fsExists: (p) => !p.endsWith('align.py') }).getAlignmentInfo();
+  assert(noScript.alignmentStatus === 'unknown', noScript.alignmentStatus);
+  const garbled = await makeCaps(makePythonSpawn({ check: 'Traceback...' })).getAlignmentInfo();
+  assert(garbled.alignmentStatus === 'unknown', garbled.alignmentStatus);
+  const missing = await makeCaps(makePythonSpawn({ check: JSON.stringify({ status: 'alignment-missing', message: 'pip install' }) })).getAlignmentInfo();
+  assert(missing.alignmentStatus === 'alignment-missing' && missing.alignmentMessage === 'pip install', JSON.stringify(missing));
+});
+
 runAll();

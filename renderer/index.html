@@ -107,6 +107,15 @@
               </button>
             </div>
 
+            <div class="menu-diarize-options" id="alignment-setup-block" hidden>
+              <button type="button" class="menu-action-btn" id="btn-prepare-alignment">
+                <svg viewBox="0 0 16 16" fill="none" width="12" height="12">
+                  <path d="M8 2v8m0 0l-3-3m3 3l3-3M3 13h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                Download alignment model
+              </button>
+            </div>
+
             <div class="menu-diarize-options" id="diarize-options" hidden>
               <div class="menu-input-row">
                 <label class="menu-input-label" for="num-speakers-select">Speakers</label>
@@ -134,6 +143,10 @@
               <div class="menu-status-row" id="diarize-setup-status">
                 <span class="menu-status-dot menu-status-dot-unknown"></span>
                 <span class="menu-status-text" id="diarize-status-text">Checking...</span>
+              </div>
+              <div class="menu-status-row" id="alignment-status" hidden>
+                <span class="menu-status-dot" id="alignment-status-dot"></span>
+                <span class="menu-status-text" id="alignment-status-text"></span>
               </div>
               <div class="menu-status-row" id="gpu-status" hidden>
                 <span class="menu-status-dot" id="gpu-status-dot"></span>
@@ -210,6 +223,14 @@
             <div class="estimate-all-body" id="estimate-all-body"></div>
           </div>
         </div>
+        <label class="job-option" id="align-option" hidden>
+          <span class="job-option-text">
+            <span class="job-option-label">Align words to the audio</span>
+            <span class="job-option-help" id="align-option-help">Re-times each word against the recording before speakers are assigned. Adds a short extra step.</span>
+          </span>
+          <input type="checkbox" id="align-toggle" class="menu-toggle-input">
+          <span class="menu-toggle-switch"></span>
+        </label>
       </section>
 
       <!-- File Selection -->
@@ -308,6 +329,7 @@
   <script src="media-extensions.js"></script>
   <script src="time-estimates.js"></script>
   <script src="transcript-format.js"></script>
+  <script src="job-options.js"></script>
   <script src="renderer.js"></script>
 </body>
 </html>
