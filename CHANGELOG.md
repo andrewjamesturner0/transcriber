@@ -11,7 +11,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Optional local word alignment of the existing Whisper transcript, with an "Align words to the audio" job switch and CLI `--alignment whisper|forced`.
 - Explicit speaker and alignment model downloads in Settings or `scripts/setup-diarization.py`; `TRANSCRIBER_PYTHON` selects the interpreter.
 - JSON speaker attribution evidence, word timing sources, alignment status and regular/exclusive speaker timelines, while retaining `whisper`, `diarize` and `merged`.
-- A reproducible speaker evaluation harness and partial benchmark results. Community-1 word speaker scores are recorded on one tuning episode; legacy comparisons, independent timing annotations and held-out validation remain pending.
+- A reproducible speaker evaluation harness and partial benchmark results. Community-1 and legacy word speaker scores are recorded on one tuning episode; independent timing annotations and held-out validation remain pending.
 
 ### Changed
 
@@ -22,6 +22,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Completed in-app model/font disclosures, distinguished optional downloaded assets, and recorded unresolved Punkt data licensing and FFmpeg source-delivery requirements.
 - Excluded local credentials, environments and benchmark recordings from packaged app files.
 - Requested DTW timing now disables flash attention and uses validated token anchors; unsupported DTW falls back with a recorded reason.
 - Speaker merging preserves supported short replies, overlap evidence and Unknown labels instead of rewriting them during cleanup.

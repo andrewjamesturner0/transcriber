@@ -170,5 +170,17 @@ test('credentials and private working data are excluded from app files', () => {
   }
 });
 
+test('bundled fonts retain their full licence and copyright notices', () => {
+  const licenses = JSON.parse(fs.readFileSync(path.join(ROOT, 'THIRD-PARTY-LICENSES.json'), 'utf-8'));
+  for (const [name, file] of [['DM Sans', 'OFL-DM-Sans.txt'], ['DM Mono', 'OFL-DM-Mono.txt']]) {
+    const text = fs.readFileSync(path.join(ROOT, 'renderer/fonts', file), 'utf-8');
+    assert(text.includes(`The ${name} Project Authors`), `${name} copyright notice missing`);
+    assert(text.includes('SIL OPEN FONT LICENSE Version 1.1'), `${name} licence missing`);
+    assert(text.includes('PERMISSION & CONDITIONS') && text.includes('DISCLAIMER'), `${name} licence is incomplete`);
+    const entry = licenses.find(lic => lic.name === name);
+    assert(entry && entry.text === text, `${name} in-app notice must retain the bundled licence`);
+  }
+});
+
 console.log(`\n${passed} passed, ${failed} failed`);
 process.exit(failed > 0 ? 1 : 0);

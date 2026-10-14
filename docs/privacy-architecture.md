@@ -66,7 +66,9 @@ recording or transcript.
 | Electron | Desktop framework | MIT | [Source](https://www.electronjs.org) |
 
 Some non-English alignment models have separate licences, including
-non-commercial terms for fr/de/es/it. See [the setup guide](diarization-setup.md).
+non-commercial terms for fr/de/es/it. The separate Punkt tokenizer data used
+for alignment has unclarified terms upstream. See [the licensing review](licensing.md)
+and [the setup guide](diarization-setup.md).
 Optional Python packages and models are installed separately from the app.
 
 ## Verification

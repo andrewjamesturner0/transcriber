@@ -144,7 +144,7 @@ Transcriber is free software. If it's useful to you, consider [sponsoring develo
 
 - [whisper.cpp](https://github.com/ggml-org/whisper.cpp): C/C++ Whisper inference (MIT)
 - [OpenAI Whisper](https://github.com/openai/whisper): speech recognition models (MIT)
-- [FFmpeg](https://ffmpeg.org): multimedia processing (licence depends on build; bundled Linux build is GPLv3)
+- [FFmpeg](https://ffmpeg.org): multimedia processing (configured Windows and Linux builds are GPLv3)
 - [Electron](https://www.electronjs.org): desktop framework (MIT)
 - [ggml](https://github.com/ggml-org/ggml): tensor library (MIT)
 - [pyannote.audio](https://github.com/pyannote/pyannote-audio): speaker diarization (MIT)
@@ -154,4 +154,11 @@ Transcriber is free software. If it's useful to you, consider [sponsoring develo
 
 ## Licence
 
-[GPLv3](LICENSE): free to use, modify, and distribute. Derivative works must also be open-source under GPLv3.
+Transcriber's code uses [GPL-3.0-only](LICENSE). You may use it, including
+commercially, and modify it. Distributing copies or modified versions requires
+following the GPL's notice and source requirements.
+
+Third-party software, fonts and downloaded models keep their own licences.
+Some optional alignment weights have non-commercial terms, and the downloaded
+Punkt tokenizer data has unclarified terms. See [the licensing review](docs/licensing.md)
+for the component list, evidence and outstanding release requirements.

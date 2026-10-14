@@ -519,25 +519,25 @@ const licenseModalBody = document.getElementById('license-modal-body');
 let cachedLicenses = null;
 
 function getBadgeClass(license) {
-  return license.toLowerCase().includes('lgpl') ? 'license-badge-lgpl' : 'license-badge-mit';
+  return /gpl|noncommercial|cc-by-nc|unclarified/i.test(license) ? 'license-badge-lgpl' : 'license-badge-mit';
 }
 
 function buildLicenseHTML(licenses) {
   return licenses.map((lic, i) => `
     <div class="license-section">
       <div class="license-section-header">
-        <span class="license-name">${lic.name}</span>
-        <span class="license-badge ${getBadgeClass(lic.license)}">${lic.license}</span>
+        <span class="license-name">${escapeHtml(lic.name)}</span>
+        <span class="license-badge ${getBadgeClass(lic.license)}">${escapeHtml(lic.license)}</span>
       </div>
-      <div class="license-description">${lic.description}</div>
-      <div class="license-url">${lic.url.replace('https://', '')}</div>
+      <div class="license-description">${escapeHtml(lic.description)}</div>
+      <div class="license-url">${escapeHtml(lic.url.replace('https://', ''))}</div>
       <button class="license-toggle" data-index="${i}" type="button">
         <svg viewBox="0 0 16 16" fill="none" width="10" height="10">
           <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
-        View license text
+        View licence details
       </button>
-      <div class="license-full-text" id="license-text-${i}" hidden>${lic.text}</div>
+      <div class="license-full-text" id="license-text-${i}" hidden>${escapeHtml(lic.text)}</div>
     </div>
   `).join('');
 }

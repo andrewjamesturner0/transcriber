@@ -64,6 +64,12 @@ words to the audio** in the Model card (shown while diarisation is on), or
 pass `--alignment forced` on the CLI. The fr/de/es/it alignment models are
 licensed CC BY-NC 4.0 (non-commercial); setup says so.
 
+The alignment model and tokenizer data have separate terms. The English
+alignment weights are MIT, but NLTK lists the downloaded `punkt_tab` tokenizer
+data as having unclarified licensing. Commercial use or redistribution of the
+complete alignment stack has not been cleared. Other languages also need their
+own model licence checked. See [the licensing review](licensing.md).
+
 ## Privacy
 
 Jobs set `HF_HUB_OFFLINE=1`, turn pyannote metrics off and block NLTK and

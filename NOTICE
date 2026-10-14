@@ -2,7 +2,10 @@ Transcriber
 Copyright (c) 2026 Andrew James Turner
 Licensed under the GNU General Public License v3.0
 
-This software includes the following third-party components:
+The app bundles whisper.cpp/ggml, a default Whisper model, FFmpeg, Electron
+and interface fonts. Optional Python software and model/tokenizer assets
+are installed or downloaded separately by the user; their terms are
+separate from Transcriber's GPLv3 licence.
 
 ---
 
@@ -23,9 +26,10 @@ https://github.com/openai/whisper
 FFmpeg
 Copyright (c) the FFmpeg developers
 Base project: GNU Lesser General Public License version 2.1 or later;
-GPL-enabled builds use the GNU General Public License. The bundled Linux
-static builds from johnvansickle.com use GPLv3. Check ffmpeg -L for each
-distributed platform binary.
+GPL-enabled builds use the GNU General Public License. Both configured
+suppliers (gyan.dev for Windows and johnvansickle.com for Linux) distribute
+GPLv3 builds. Check ffmpeg -L for each distributed platform binary.
+Matching source delivery remains a release requirement; see docs/ffmpeg.md.
 https://ffmpeg.org | https://github.com/FFmpeg/FFmpeg
 
 ---
@@ -45,7 +49,7 @@ https://www.electronjs.org
 
 ---
 
-pyannote.audio
+pyannote.audio (optional, user-installed)
 Copyright (c) 2020 CNRS
 Licensed under the MIT License
 https://github.com/pyannote/pyannote-audio
@@ -75,14 +79,44 @@ https://github.com/facebookresearch/fairseq/tree/ce6c9eeae163ac04b79539c78e74f29
 
 ---
 
-PyTorch
+VoxPopuli alignment models (fr/de/es/it, downloaded by the user)
+Released by the VoxPopuli authors under CC BY-NC 4.0. Non-commercial use
+only; commercial use requires separate permission or different weights.
+https://docs.pytorch.org/audio/2.8.0/pipelines.html
+https://creativecommons.org/licenses/by-nc/4.0/legalcode
+
+---
+
+NLTK Punkt tokenizer data (punkt_tab, downloaded by the user for alignment)
+Licence unclarified upstream. NLTK's software licence does not establish
+the terms for this separate data. Commercial use and redistribution have
+not been cleared by this review.
+https://github.com/nltk/nltk_data/blob/gh-pages/LICENSE-OVERVIEW.md
+
+---
+
+DM Sans (bundled interface font)
+Copyright 2014 The DM Sans Project Authors
+https://github.com/googlefonts/dm-fonts
+SIL Open Font License 1.1; full text: renderer/fonts/OFL-DM-Sans.txt
+
+---
+
+DM Mono (bundled interface font)
+Copyright 2020 The DM Mono Project Authors
+https://www.github.com/googlefonts/dm-mono
+SIL Open Font License 1.1; full text: renderer/fonts/OFL-DM-Mono.txt
+
+---
+
+PyTorch (optional, user-installed)
 Copyright (c) 2016 Facebook, Inc. and its affiliates
 Licensed under the BSD 3-Clause License
 https://github.com/pytorch/pytorch
 
 ---
 
-NumPy
+NumPy (optional, user-installed)
 Copyright (c) 2005-2026 NumPy Developers
 Licensed under the BSD 3-Clause License
 https://github.com/numpy/numpy

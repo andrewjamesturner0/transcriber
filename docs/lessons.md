@@ -11,6 +11,9 @@ record - link to them.
 
 - **Check ignored Examples/ before designing evaluation.** Tracked-file searches can miss local gold recordings and reference transcripts. Inspect available examples before assuming a new reference set is needed, and check which annotations they actually provide before choosing accuracy metrics. `Examples/` is excluded by [.gitignore](../.gitignore).
 
+- **Gitignore does not protect application packages.** A private file can stay out of git and still enter an installer. Check the built archive as well as the explicit file allowlist; preserve the exclusions guarded by [test-packaging.js](../scripts/test-packaging.js). See [electron-builder.yml](../electron-builder.yml).
+- **A library's licence does not cover its downloaded assets.** Check weights, tokenizer data and bundled fonts separately before calling a feature permissively licensed. The alignment review found different terms and an unresolved data licence; keep the evidence and open questions in [the licensing review](licensing.md).
+
 ## Decisions & deliberate behaviours
 
 The model-playground entries below record work on another branch. This
