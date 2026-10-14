@@ -9,6 +9,8 @@ record - link to them.
 
 <!-- generalisable traps and lessons; each links its evidence -->
 
+- **Check ignored Examples/ before designing evaluation.** Tracked-file searches can miss local gold recordings and reference transcripts. Inspect available examples before assuming a new reference set is needed, and check which annotations they actually provide before choosing accuracy metrics. `Examples/` is excluded by [.gitignore](../.gitignore).
+
 ## Decisions & deliberate behaviours
 
 <!-- design decisions and intentional behaviours; behaviours name a guarding test, decisions give the trade-off -->

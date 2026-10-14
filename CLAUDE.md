@@ -10,6 +10,8 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for full build instructions, project struct
 
 Before changing existing behaviour, check `docs/lessons.md` for durable gotchas and deliberate behaviours maintained by `/lesson`.
 
+Machine-specific notes that must stay private live in `.agents/local.md` (untracked); read it when working with local data.
+
 ## Commands
 
 ```bash
