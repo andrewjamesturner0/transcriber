@@ -455,5 +455,53 @@ belong in git. When quoting results, use counts and anonymised names.
 
 ## Results
 
-Results are recorded by task T4.4. Until then this section has no
-measurements.
+### 2026-10-14: first benchmark recording (partial)
+
+One recording so far: a nine-minute two-presenter radio podcast with two
+short inserted interview clips (four reference speakers plus a music intro,
+30 speaker turns, 1353 reference words). It is a **tune** recording; there is
+no held-out recording yet, so nothing below is evidence that a change
+generalises. Recognised text comes from whisper.cpp `small.en` (libwhisper
+1.8.4 built locally, CPU, 4 threads), converted to 16 kHz mono as in the app.
+
+**No speaker diarisation output exists yet.** The machine used has no
+Hugging Face access to the gated pyannote model, so every speaker metric
+(word speaker error, unknown and ambiguous rates, short-turn retention,
+errors near changes, overlap subsets) is **missing** for every variant,
+including the original pipeline baseline. No timing annotation exists
+either, so word start error and time-weighted speaker error are **missing**.
+The table records what was executed.
+
+| Variant | Status | Recognised words | Matched / reference | Turns with no matched words | Whisper time | Extra step |
+| --- | --- | ---: | ---: | --- | ---: | --- |
+| Original decoder (flash attention, no DTW anchors) | executed, text only | 1344 | 1308 / 1353 (96.7%) | 1 (music intro) | 3 min 45 s | - |
+| DTW decoder (`--no-flash-attn`) | executed, text only | 1298 | 1261 / 1353 (93.2%) | 1, 3, 4 (intro and both inserted clips) | 5 min 05 s | - |
+| Original decoder + forced alignment | executed, text and timing provenance | 1344 | 1308 / 1353 (96.7%) | 1 | 3 min 45 s | 25.7 s wall (12.0 s GPU alignment), all 1340 words acoustically matched |
+| Any variant with pyannote 3.1 or Community-1 | missing (no model access) | - | - | - | - | - |
+
+Timing evidence that does not need a reference annotation (from design
+record D1, same recording; the aligner output is itself a machine estimate,
+checked against voicing onsets after quiet pauses):
+
+| Timing source | Start vs aligner, median | abs p95 | Assignment point inside aligned word |
+| --- | ---: | ---: | ---: |
+| Ordinary token offsets | +15 ms | 906 ms | 25.9% |
+| DTW anchor | +154 ms | 424 ms | 77.1% |
+| Forced alignment vs voicing onset (69 words after quiet pauses) | +9 ms to -18 ms by padding | - | - |
+
+### Promotion decisions
+
+- **Defaults unchanged.** Diarised jobs keep Whisper timing (DTW anchors)
+  by default and forced alignment stays an opt-in job option. No speaker
+  accuracy evidence exists for either choice yet.
+- **DTW carries a text cost on this recording.** Turning flash attention off
+  for DTW lost both inserted interview clips (49 reference words); matched
+  words fell from 1308 to 1261, 3.5 points of coverage. This is one decoder run on one recording; it must be checked
+  on held-out recordings before DTW is kept or replaced as the default
+  timing source for diarised jobs.
+- **Still to run (T4.4):** reproduce the original `a08e386` pipeline with
+  pyannote 3.1 in an isolated checkout; Community-1 regular and exclusive;
+  cleanup-only comparison on frozen text and timelines; DTW versus ordinary
+  versus forced timing with frozen diarisation; auto and explicit
+  four-speaker runs; manual timing annotations for speaker changes and short
+  replies; held-out recordings with acceptance rules fixed beforehand.
