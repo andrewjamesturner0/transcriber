@@ -1,0 +1,7 @@
+# Forced word alignment (optional, on top of speaker diarization).
+# Install with: pip install -r requirements-alignment.txt
+# Only the WhisperX alignment functions are used (lib/align.py); its speech
+# recognition packages are installed as dependencies but never imported.
+# Then prepare the alignment model: python scripts/setup-diarization.py --alignment
+-r requirements.txt
+whisperx==3.8.6

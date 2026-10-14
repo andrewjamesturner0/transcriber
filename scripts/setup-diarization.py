@@ -5,9 +5,21 @@ Downloads the pinned pyannote Community-1 snapshot into the standard Hugging
 Face cache, then checks in a fresh offline process that lib/diarize.py can
 load it. After this, diarization runs fully offline and needs no token.
 
+With --alignment it also prepares forced word alignment (lib/align.py): it
+downloads the NLTK punkt_tab data and the wav2vec2 alignment model for each
+language, then checks each language with lib/align.py --check in a fresh
+offline process. The speaker model is downloaded in the same run only if it
+is not already prepared, so alignment can be added later without a token
+(the English, French, German, Spanish and Italian alignment models come from
+download.pytorch.org; other languages from public Hugging Face repos). The
+two parts are reported separately and one failing does not stop the other.
+
 Usage:
     HF_TOKEN=hf_... python scripts/setup-diarization.py
     python scripts/setup-diarization.py --check
+    python scripts/setup-diarization.py --alignment [en,fr,...]
+    python scripts/setup-diarization.py --alignment --language en,fr   (same thing)
+    python scripts/setup-diarization.py --check --alignment [LANGS]
     python scripts/setup-diarization.py --model ID --revision SHA   (evaluation only)
 
 Before the first run:
@@ -20,12 +32,19 @@ Before the first run:
 The token is read only from the environment. It is never accepted on the
 command line and never printed.
 
+Alignment needs the optional packages first:
+    pip install -r lib/requirements-alignment.txt
+
 Output: JSON progress lines {"message", "percent"} on stderr, plus one
-{"error", "code"} line on failure; one JSON summary object on stdout.
+{"error", "code"} line for each part that fails; one JSON summary object on
+stdout. With --alignment the summary is {"status", "message", "speaker",
+"alignment"}, where "speaker" has the same shape as the summary without
+--alignment and "status" is "ready" only when both parts are ready.
 Exit 0 when ready (--check always exits 0), 1 on failure.
 """
 
 import argparse
+import contextlib
 import importlib.util
 import json
 import os
@@ -36,6 +55,7 @@ import sys
 TOKEN_ENV_VARS = ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
 TOKEN_PAGE = "https://hf.co/settings/tokens"
 VERIFY_TIMEOUT_SEC = 600
+DEFAULT_ALIGNMENT_LANGUAGES = "en"
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -66,6 +86,28 @@ def find_diarize_script():
 def load_diarize_module(path=None):
     path = path or find_diarize_script()
     spec = importlib.util.spec_from_file_location("transcriber_diarize", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.SCRIPT_PATH = path
+    return module
+
+
+# lib/align.py plays the same role for word alignment.
+
+def find_align_script():
+    candidates = [
+        os.path.join(_HERE, "..", "lib", "align.py"),
+        os.path.join(_HERE, "align.py"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    return os.path.abspath(candidates[0])
+
+
+def load_align_module(path=None):
+    path = path or find_align_script()
+    spec = importlib.util.spec_from_file_location("transcriber_align", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.SCRIPT_PATH = path
@@ -219,10 +261,10 @@ def verify_offline(diarize, model, revision, environ):
 # Main flow
 # ---------------------------------------------------------------------------
 
-def run(args, environ=None, diarize=None):
-    """Return (summary dict, exit code). Prints progress and errors itself."""
+def run_speaker(args, environ, diarize):
+    """Prepare the speaker model. Returns (summary dict, exit code). Prints
+    progress and errors itself."""
     environ = os.environ if environ is None else environ
-    diarize = diarize or load_diarize_module()
     model, revision = args.model or diarize.DEFAULT_MODEL, args.revision or diarize.DEFAULT_REVISION
 
     if args.check:
@@ -291,6 +333,290 @@ def run(args, environ=None, diarize=None):
         return make_summary("setup-failed", message, model, revision, versions), 1
 
 
+# ---------------------------------------------------------------------------
+# Word alignment (--alignment)
+# ---------------------------------------------------------------------------
+
+ALIGNMENT_NETWORK_NAMES = {
+    "OfflineModeIsEnabled", "LocalEntryNotFoundError", "ConnectionError",
+    "Timeout", "TimeoutError", "TimeoutException", "TransportError",
+    "NetworkError", "ConnectError", "ProxyError", "SSLError", "URLError",
+    "HTTPError", "gaierror",
+}
+
+
+def parse_languages(value):
+    """"en, FR,en" -> ["en", "fr"]. Empty -> the default."""
+    langs = []
+    for part in (value or DEFAULT_ALIGNMENT_LANGUAGES).split(","):
+        lang = part.strip().lower()
+        if lang and lang not in langs:
+            langs.append(lang)
+    return langs or [DEFAULT_ALIGNMENT_LANGUAGES]
+
+
+def alignment_languages(args):
+    """Languages asked for with --alignment [LANGS] or --language LANGS."""
+    if args.alignment and args.language:
+        raise SetupError("bad-arguments",
+                         "Give the alignment languages once: --alignment LANGS or --language LANGS.")
+    return parse_languages(args.alignment or args.language)
+
+
+def classify_alignment_error(exc, token):
+    """Map a failed alignment download to (code, message)."""
+    names = set()
+    for e in _exception_chain(exc):
+        names.update(k.__name__ for k in type(e).__mro__)
+    if names & ALIGNMENT_NETWORK_NAMES:
+        return (
+            "network-error",
+            "Could not download the alignment data (%s). Check the internet "
+            "connection and any proxy settings, then run this again." % scrub(exc, token),
+        )
+    return "download-failed", "Alignment download failed: %s" % scrub(exc, token)
+
+
+def download_punkt():
+    """Fetch NLTK punkt_tab into NLTK's default data folder."""
+    import nltk
+    with contextlib.redirect_stdout(sys.stderr):
+        ok = nltk.download("punkt_tab", quiet=True, raise_on_error=True)
+    if ok is False:
+        raise SetupError("download-failed", "NLTK could not download punkt_tab.")
+
+
+def fetch_alignment_model(language):
+    """Load the alignment model once on the CPU so the caches fill.
+
+    WhisperX downloads the torchaudio checkpoint (torch hub) or the Hugging
+    Face snapshot when it is missing; when it is already cached nothing is
+    downloaded and the load just proves the files are readable.
+    """
+    # Imported inside the redirect: WhisperX's log handler binds to the
+    # current stdout, which must stay clean for the JSON summary.
+    with contextlib.redirect_stdout(sys.stderr):
+        import whisperx.alignment
+        model, _ = whisperx.alignment.load_align_model(language, "cpu")
+    del model
+
+
+def verify_alignment(align, language, environ):
+    """Run lib/align.py --check --language xx in a fresh offline process.
+
+    No token is passed: inference never needs one.
+    """
+    env = dict(environ)
+    for name in TOKEN_ENV_VARS:
+        env.pop(name, None)
+    env["HF_HUB_OFFLINE"] = "1"
+    env["TRANSFORMERS_OFFLINE"] = "1"
+    cmd = [sys.executable, align.SCRIPT_PATH, "--check", "--language", language]
+    proc = subprocess.run(cmd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          universal_newlines=True, timeout=VERIFY_TIMEOUT_SEC)
+    for line in reversed(proc.stdout.strip().splitlines()):
+        try:
+            result = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(result, dict) and "status" in result:
+            return result
+    raise SetupError(
+        "verify-failed",
+        "The offline alignment check did not report a result (exit %s): %s"
+        % (proc.returncode, proc.stderr.strip()[-500:]),
+    )
+
+
+def _language_entry(language, result):
+    return {
+        "language": language,
+        "status": result.get("status"),
+        "message": result.get("message"),
+        "model": result.get("model"),
+        "modelPath": result.get("modelPath"),
+        "punktPath": result.get("punktPath"),
+    }
+
+
+def alignment_summary(status, message, languages, entries, versions):
+    return {
+        "status": status,
+        "message": message,
+        "languages": languages,
+        "results": entries,
+        "versions": versions,
+    }
+
+
+def alignment_versions(align):
+    vi = align.current_version_info()
+    return {
+        "python": ".".join(str(p) for p in tuple(vi)[:3]),
+        "whisperx": align.package_version("whisperx"),
+        "torch": align.package_version("torch"),
+        "transformers": align.package_version("transformers"),
+        "nltk": align.package_version("nltk"),
+    }
+
+
+def check_alignment(align, languages):
+    """--check --alignment: readiness per language, in process, offline."""
+    entries = [_language_entry(lang, align.check_environment(lang)) for lang in languages]
+    bad = [e for e in entries if e["status"] != "ready"]
+    if bad:
+        status, message = bad[0]["status"], bad[0]["message"]
+    else:
+        status, message = "ready", "Word alignment is ready for: %s." % ", ".join(languages)
+    return alignment_summary(status, message, languages, entries, alignment_versions(align))
+
+
+def setup_alignment(align, languages, environ):
+    """Download and verify alignment assets. Returns (summary, exit code).
+
+    The caller has already allowed network access in this process. No token
+    is needed: the default models are public.
+    """
+    token = read_token(environ)
+    versions = alignment_versions(align)
+    entries = []
+    try:
+        progress("Word alignment: checking the Python environment...", 5)
+        problem = align.python_problem() or align.whisperx_problem(versions["whisperx"])
+        if problem:
+            raise SetupError(*problem)
+
+        tables = align.model_tables()
+        models = {}
+        for lang in languages:
+            model = align.resolve_model(lang, tables)
+            if model is None:
+                raise SetupError("language-unsupported",
+                                 align.unsupported_language_message(lang, tables))
+            models[lang] = model
+
+        for punkt in sorted(set(m["punkt"] for m in models.values())):
+            ready, _ = align.punkt_status(punkt)
+            if not ready:
+                progress("Word alignment: downloading NLTK punkt_tab...", 10)
+                try:
+                    download_punkt()
+                except SetupError:
+                    raise
+                except Exception as e:
+                    raise SetupError(*classify_alignment_error(e, token))
+                break
+
+        count = len(languages)
+        for n, lang in enumerate(languages):
+            model = models[lang]
+            ready, _, _ = align.model_status(model)
+            progress("Word alignment: %s the %s model for '%s'..."
+                     % ("checking" if ready else "downloading", model["name"], lang),
+                     15 + int(60 * n / count))
+            try:
+                fetch_alignment_model(lang)
+            except Exception as e:
+                raise SetupError(*classify_alignment_error(e, token))
+
+        progress("Word alignment: checking it works offline...", 80)
+        for lang in languages:
+            try:
+                result = verify_alignment(align, lang, environ)
+            except SetupError:
+                raise
+            except Exception as e:
+                raise SetupError("verify-failed",
+                                 "The offline alignment check failed: %s" % scrub(e, token))
+            entries.append(_language_entry(lang, result))
+            if result.get("status") != "ready":
+                raise SetupError("verify-failed",
+                                 "Downloaded, but the offline alignment check for '%s' "
+                                 "failed: %s" % (lang, scrub(result.get("message",
+                                                                     result.get("status")), token)))
+            versions = result.get("versions") or versions
+
+        progress("Word alignment: done", 100)
+        return alignment_summary("ready", "Word alignment is ready for: %s." % ", ".join(languages),
+                                 languages, entries, versions), 0
+    except SetupError as e:
+        message = scrub(e.message, token)
+        emit_error(e.code, message)
+        return alignment_summary(e.code, message, languages, entries, versions), 1
+    except Exception as e:
+        message = "Alignment setup failed: %s" % scrub(e, token)
+        emit_error("setup-failed", message)
+        return alignment_summary("setup-failed", message, languages, entries, versions), 1
+
+
+def combined_summary(speaker, alignment):
+    """One summary for both parts. "ready" only when both are ready."""
+    if speaker["status"] == "ready" and alignment["status"] == "ready":
+        status = "ready"
+    elif speaker["status"] != "ready":
+        status = speaker["status"]
+    else:
+        status = alignment["status"]
+    message = "%s %s" % (speaker["message"], alignment["message"])
+    return {"status": status, "message": message, "speaker": speaker, "alignment": alignment}
+
+
+def run_with_alignment(args, environ, diarize, align):
+    """--alignment: the speaker part (only if not prepared) and the alignment
+    part, each reported on its own. Returns (summary, exit code)."""
+    model, revision = args.model or diarize.DEFAULT_MODEL, args.revision or diarize.DEFAULT_REVISION
+    try:
+        languages = alignment_languages(args)
+    except SetupError as e:
+        emit_error(e.code, e.message)
+        return {"status": e.code, "message": e.message}, 1
+
+    if args.check:
+        diarize.configure_environment(offline=True, environ=environ)
+        align.configure_environment(offline=True, environ=environ)
+        speaker, _ = run_speaker(args, environ, diarize)
+        alignment = check_alignment(align, languages)
+        return combined_summary(speaker, alignment), 0
+
+    # Network allowed in this process only (both parts download); telemetry
+    # off. This must happen before huggingface_hub or transformers is
+    # imported, because they read these variables at import time.
+    diarize.configure_environment(offline=False, environ=environ)
+    align.configure_environment(offline=False, environ=environ)
+    for name in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
+        environ.pop(name, None)
+    environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+
+    progress("Speaker diarization: checking whether the model is already prepared...", 1)
+    current = diarize.check_environment(model, revision)
+    if current["status"] == "ready":
+        speaker = make_summary("ready", "Speaker diarization is ready (already prepared).",
+                               model, revision, current["versions"], current.get("modelPath"),
+                               current.get("cudaAvailable"))
+        speaker["action"] = "already-prepared"
+        speaker_code = 0
+    else:
+        speaker, speaker_code = run_speaker(args, environ, diarize)
+        speaker["action"] = "prepared" if speaker_code == 0 else "failed"
+
+    alignment, alignment_code = setup_alignment(align, languages, environ)
+    return combined_summary(speaker, alignment), (0 if speaker_code == 0 and alignment_code == 0 else 1)
+
+
+def run(args, environ=None, diarize=None, align=None):
+    """Return (summary dict, exit code). Prints progress and errors itself."""
+    environ = os.environ if environ is None else environ
+    diarize = diarize or load_diarize_module()
+    if getattr(args, "alignment", None) is None:
+        if getattr(args, "language", None):
+            message = "--language is only used with --alignment."
+            emit_error("bad-arguments", message)
+            return {"status": "bad-arguments", "message": message}, 1
+        return run_speaker(args, environ, diarize)
+    align = align or load_align_module()
+    return run_with_alignment(args, environ, diarize, align)
+
+
 class _ScrubbingParser(argparse.ArgumentParser):
     """argparse echoes unrecognised arguments; never echo a token."""
 
@@ -298,25 +624,24 @@ class _ScrubbingParser(argparse.ArgumentParser):
         argparse.ArgumentParser.error(self, re.sub(r"hf_\S+", "hf_***", message))
 
 
-class _NotAvailableYet(argparse.Action):
-    def __call__(self, parser, namespace, values, option_string=None):
-        parser.error("%s is not available yet" % option_string)
-
-
 def build_parser():
     parser = _ScrubbingParser(
-        description="Download and check the speaker diarization model. "
-                    "Reads the Hugging Face token from HF_TOKEN.")
+        description="Download and check the speaker diarization model, and "
+                    "optionally the word-alignment model. Reads the Hugging "
+                    "Face token from HF_TOKEN.")
     parser.add_argument("--check", action="store_true",
                         help="Report readiness without downloading anything")
     parser.add_argument("--model", default=None,
                         help="Pipeline repository id (evaluation only)")
     parser.add_argument("--revision", default=None,
                         help="Pipeline revision (evaluation only)")
-    # Phase 3 hook: --alignment will also prepare the word-alignment model.
-    # Not implemented yet, so it is rejected rather than silently ignored.
-    parser.add_argument("--alignment", nargs="?", action=_NotAvailableYet,
-                        help="Prepare the word-alignment model (not available yet)")
+    # nargs="?" with const "" so that a bare --alignment means the default
+    # language and can still be combined with --language.
+    parser.add_argument("--alignment", nargs="?", const="", default=None, metavar="LANGS",
+                        help="Also prepare word alignment for these comma-separated "
+                             "languages (default: en). Needs lib/requirements-alignment.txt")
+    parser.add_argument("--language", default=None, metavar="LANGS",
+                        help="Same as --alignment LANGS")
     return parser
 
 

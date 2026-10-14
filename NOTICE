@@ -49,6 +49,29 @@ https://github.com/pyannote/pyannote-audio
 
 ---
 
+pyannote speaker-diarization-community-1 (model, downloaded by the user)
+Released by pyannote under the Creative Commons Attribution 4.0
+International licence (CC-BY-4.0)
+https://huggingface.co/pyannote/speaker-diarization-community-1
+
+---
+
+WhisperX (optional, user-installed; alignment functions only)
+Copyright (c) 2024, Max Bain
+Licensed under the BSD 2-Clause License
+https://github.com/m-bain/whisperX
+
+---
+
+wav2vec 2.0 English alignment model (torchaudio WAV2VEC2_ASR_BASE_960H,
+downloaded by the user)
+Copyright (c) Facebook, Inc. and its affiliates
+Licensed under the MIT License
+Trained on LibriSpeech (https://www.openslr.org/12), licensed under CC BY 4.0
+https://github.com/facebookresearch/fairseq/tree/ce6c9eeae163ac04b79539c78e74f292f29eaa18/examples/wav2vec
+
+---
+
 PyTorch
 Copyright (c) 2016 Facebook, Inc. and its affiliates
 Licensed under the BSD 3-Clause License

@@ -123,7 +123,8 @@ test('lib/diarize.py IS in extraResources (needed for Python subprocess)', () =>
 
 test('Python helpers and requirements are packaged individually', () => {
   const patterns = parseExtraResources(path.join(ROOT, 'electron-builder.yml'));
-  const want = ['lib/diarize.py', 'lib/requirements.txt', 'scripts/setup-diarization.py'];
+  const want = ['lib/diarize.py', 'lib/requirements.txt', 'lib/align.py',
+    'lib/requirements-alignment.txt', 'scripts/setup-diarization.py'];
   for (const w of want) {
     assert(patterns.includes(w), `${w} must be in extraResources; got ${patterns.join(', ')}`);
     assert(fs.existsSync(path.join(ROOT, w)), `${w} must exist`);

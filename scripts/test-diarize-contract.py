@@ -771,10 +771,11 @@ def _():
     check("HF_HUB_OFFLINE" not in environ, "offline removed for the explicit download")
 
 
-@test("setup: token is not accepted on the command line; --alignment is not available yet")
+@test("setup: token is not accepted on the command line")
 def _():
     s = load_setup()
-    for argv in (["--hf-token", SECRET], ["--alignment"], ["--alignment", "wav2vec2"]):
+    # --alignment is covered by scripts/test-align-contract.py.
+    for argv in (["--hf-token", SECRET], ["--alignment", "en", "--hf-token", SECRET]):
         err = io.StringIO()
         with contextlib.redirect_stderr(err):
             try:
@@ -783,8 +784,6 @@ def _():
             except SystemExit as e:
                 check(e.code == 2, "exit code %s" % e.code)
         check(SECRET not in err.getvalue(), "token echoed: %s" % err.getvalue())
-        if argv[0] == "--alignment":
-            check("not available yet" in err.getvalue(), err.getvalue())
 
 
 @test("setup: gated / 401 / 403 errors explain the licence and hide the token")
