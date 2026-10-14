@@ -494,6 +494,10 @@ def setup_alignment(align, languages, environ):
                 raise SetupError("language-unsupported",
                                  align.unsupported_language_message(lang, tables))
             models[lang] = model
+            if model["name"].startswith("VOXPOPULI_"):
+                # torchaudio documents the VoxPopuli ASR weights as CC BY-NC 4.0.
+                progress("Word alignment: note that the %s model for '%s' is licensed "
+                         "CC BY-NC 4.0 (non-commercial use only)." % (model["name"], lang), 8)
 
         for punkt in sorted(set(m["punkt"] for m in models.values())):
             ready, _ = align.punkt_status(punkt)

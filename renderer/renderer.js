@@ -653,6 +653,7 @@ btnPrepareDiarization.addEventListener('click', async () => {
   diarizeStatusText.textContent = 'Downloading speaker model...';
   try {
     await window.api.prepareDiarization(token);
+    hfTokenInput.value = '';
   } catch (err) {
     const msg = String((err && err.message) || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
     setStatus(`Speaker model download failed: ${msg}`, 'error');
@@ -745,11 +746,9 @@ btnPrepareAlignment.addEventListener('click', async () => {
   await checkAlignmentSetup(true);
 });
 
-// Persist HF token
-hfTokenInput.value = localStorage.getItem('hf-token') || '';
-hfTokenInput.addEventListener('input', () => {
-  localStorage.setItem('hf-token', hfTokenInput.value);
-});
+// The token is only needed for the one-off model download, so it is not
+// stored. Remove any token an older version saved.
+try { localStorage.removeItem('hf-token'); } catch (_) {}
 
 // Listen for diarization progress
 window.api.onDiarizeStatus((data) => {
