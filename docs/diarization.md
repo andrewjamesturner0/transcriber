@@ -26,7 +26,7 @@ Every word gets one declared timing source:
 
 | `timingSource` | `timingQuality` | Meaning |
 | --- | --- | --- |
-| `forced` | `measured` / `interpolated` | Matched to the audio by the optional aligner, or placed between matched neighbours |
+| `forced` | `measured` / `interpolated` | Matched to the audio by the optional aligner. `interpolated` means the aligner placed the word between matched characters but recognised none of its own (digits, symbols), so it has no score |
 | `dtw` | `anchor` | Whisper DTW anchor (`t_dtw * 10` ms) of the word's first token: an estimated onset, not a measured span. The end is the next word's anchor |
 | `token` | `estimated` | Whisper's ordinary token offsets |
 | `segment` | `segment` | Only the Whisper segment interval is valid |

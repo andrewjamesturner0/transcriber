@@ -51,7 +51,7 @@ The pipeline runs these steps in order:
 
    The anti-corruption mode (`-mc 0 --temperature 0.4 --entropy-thold 1.8`) disables cross-segment text conditioning, preventing whisper from entering hallucination loops that produce repeating lines. These specific values come from whisper.cpp issue discussions about repetitive output on certain audio.
 
-3. **Optional alignment.** For `alignment: 'forced'`, `lib/align.py` matches the existing words to the same WAV. It uses only WhisperX's alignment functions and returns times and quality labels. A failure keeps Whisper timing and reports the reason; cancellation propagates.
+3. **Optional alignment.** For `alignment: 'forced'`, `lib/align.py` matches the existing words to the same WAV with a wav2vec2 model and returns times and quality labels. The path search in `lib/alignment_core.py` is adapted from WhisperX 3.8.6 (itself from a TorchAudio tutorial) without installing WhisperX; `lib/alignment_models.py` holds the language-to-model table and the cache-only loaders. A failure keeps Whisper timing and reports the reason; cancellation propagates.
 
 4. **Optional diarisation.** For pyannote jobs (excluding tdrz models), `lib/diarize.py` runs Community-1 offline on the same WAV. `lib/transcript-timing.js` normalises word timing, and `lib/diarize-merge.js` assigns speakers using the exclusive timeline when available. Each Python process exits before the next starts.
 
@@ -92,7 +92,9 @@ See [diarization.md](diarization.md) for the full contract and
 It reads the app's PCM WAV with the stdlib `wave` module, runs pyannote.audio
 4.x, and writes a versioned envelope with regular and exclusive timelines,
 model revision, versions and device. `lib/align.py` loads a prepared language
-model and writes per-word timing and quality without replacement text.
+model and writes per-word timing and quality without replacement text. It
+loads its two sibling modules by file path, so it works from any working
+directory and from the installed `resources/lib` folder.
 
 Both helpers send JSON progress/errors on stderr, a summary on stdout and
 results through a temporary output file. `lib/_subprocess.js` runs and reads

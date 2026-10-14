@@ -575,6 +575,37 @@ original merge's ambiguity diagnostics were not available. The private manifest
 and replay files identify this explicitly. Neither reference timing nor overlap
 accuracy was inferred from this replay.
 
+### 2026-10-14: local aligner replacing the WhisperX package
+
+The earlier forced-alignment rows used `lib/align.py` with WhisperX 3.8.6.
+Alignment now runs the adapted path search in `lib/alignment_core.py`
+(provider `transcriber-align` 1.0) from a clean Python 3.12 environment
+without WhisperX or NLTK. Both providers were rerun on the same WAV, the same
+1340-word request, the same English checkpoint and the frozen Community-1
+timelines, offline, on CPU and CUDA separately (CPU and CUDA results differ
+slightly from each other, so each device is compared with itself).
+
+- 1294 of 1340 word records are identical on each device. 18 digit- or
+  symbol-only words are now labelled `interpolated` instead of `measured`
+  with unchanged times. Two windows gained one audio sample that the old
+  float conversion dropped, which moved 27 scores by at most 0.057 and no
+  times. One word end moved by 1 ms where the old code computed the window
+  length by float subtraction.
+- Speaker scores are unchanged on all eight comparisons (two devices, two
+  speaker-count settings, two timelines): 18 / 1308 wrong, 0 Unknown, 3 / 4
+  short turns and clips retained. Every word has the same speaker and
+  assignment state as before.
+- Old and new helpers ran alternately in fresh processes, three timed runs
+  each: median wall time 78.4 s -> 67.0 s on CPU and 25.1 s -> 11.6 s on CUDA
+  (4 GB RTX 3050 Ti), peak RAM about 1.6 GB -> 1.3 GB. This laptop's speed
+  varied by over 50% across the day, so only these paired numbers are
+  comparable; an unpaired CPU run against earlier baseline timings looked
+  30% slower and was traced to the machine, not the helper.
+
+This checks one English recording on Linux. Non-English models, Windows and
+human-annotated word times remain untested. The earlier tables still
+describe the WhisperX runs.
+
 ### Promotion decisions
 
 - **Default DTW disabled by user decision.** Diarised jobs now keep ordinary
@@ -605,6 +636,18 @@ accuracy was inferred from this replay.
 | Linux production unpacked package | Installed helper paths, cache readiness and real offline forced-alignment job passed; archive excludes private data and build trees |
 | Windows, packaged Windows and Vulkan inference | Unavailable here; no usable Vulkan device was detected |
 | Pinned Whisper 1.9.2 CPU runtime | Built from tag commit `306c88f4d1286aec1bf96e544632897886af5501`; offline DTW, plain CLI JSON and full forced-alignment/diarisation checks passed. Packaged smoke tests used the existing local 1.8.4 resources |
+
+### Repeated after the local aligner replaced WhisperX (2026-10-14)
+
+| Check | Result |
+| --- | --- |
+| Deterministic JS/Python contracts | All 19 suites passed, including the alignment registry, kernel (real torch tensors) and contract tests |
+| Clean Python 3.12 environment | `pip check` clean; English readiness, a real alignment and setup checks passed with WhisperX, NLTK, pandas, recogniser packages and transformers blocked and hidden; a Hugging Face language reported missing transformers; no cache file changed |
+| CLI plain, default diarised and forced JSON | Passed offline with the clean environment, on CUDA and with the GPU hidden (CPU); forced jobs report `transcriber-align` and keep the default job's words |
+| Alignment failures | Hidden torchaudio, a cache deleted after readiness and a corrupt checkpoint each gave one fallback message, Whisper timing and unchanged words |
+| Cancellation | FFmpeg, Whisper, alignment and diarisation cancelled with no temporary files left |
+| Linux production unpacked package | Started from an unrelated directory with the clean environment and no external network: readiness, a real forced job through the installed `resources/lib` helpers, and the licence dialog's WhisperX, TorchAudio and Transformers notices all passed |
+| Windows CPU/CUDA runtime, Hugging Face models on real weights | Unavailable here |
 
 The Electron runtime was 44.7.0. Python inference used prepared caches without a
 token. Linux network namespaces disabled external networking; the packaged-window

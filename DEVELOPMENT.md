@@ -185,7 +185,10 @@ lib/
   diarize-merge.js        Speaker assignment and transcript formatting
   diarization-setup.js    Explicit Python model setup runner
   diarize.py              Offline Community-1 speaker inference and readiness check
-  align.py                Optional offline WhisperX word alignment and readiness check
+  align.py                Optional offline word alignment and readiness check
+  alignment_models.py     Alignment language/model registry and cache-only loaders
+  alignment_core.py       Alignment path search (adapted from WhisperX 3.8.6 / TorchAudio)
+  third_party/            Upstream licence notices for the adapted alignment code
   requirements.txt        Pinned Python dependencies for diarization
   requirements-alignment.txt Optional alignment dependencies
 assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
@@ -206,6 +209,10 @@ scripts/
   test-diarize-pipeline.py End-to-end diarization test (requires prepared model + Python)
   test-diarize-contract.py Offline diarization/setup contract tests
   test-align-contract.py  Offline alignment contract tests
+  test-alignment-models.py Offline alignment registry/loader tests (stubbed)
+  test-alignment-core.py   Alignment maths tests with real torch tensors (no model)
+  test-alignment-isolation.py Real offline check with removed packages blocked (needs the English model)
+  test-alignment-runtime.py Real comparison against a saved alignment (needs a model)
   test-audio-load.py       Checks ffmpeg can load a given audio file
 electron-builder.yml Packaging config (extraResources, targets per platform)
 ```
@@ -241,15 +248,17 @@ dist/                Built distributables
 `electron-builder.yml` lists the app code, assets and public documentation to
 include. It excludes `.env` files, `.agents/`, `Examples/` and local build trees;
 binaries and models are copied separately as extra resources. Gitignore alone does not
-exclude private data from a package. Runtime Python helpers remain explicit
-extra resources; JavaScript stays inside the asar.
+exclude private data from a package. Runtime Python helpers, the two alignment
+sibling modules and their upstream notices remain explicit extra resources
+(Python cannot import from inside the asar); JavaScript stays inside the asar.
 
 ## Diarization Architecture
 
 Speaker diarisation is optional. Install Python 3.10 to 3.13 and the pinned
 `lib/requirements.txt` packages, then prepare Community-1 with
 `scripts/setup-diarization.py`. Alignment adds `lib/requirements-alignment.txt`
-(WhisperX 3.8.6) and its language model. `TRANSCRIBER_PYTHON` selects the same
+(transformers 4.57.6, used only by the non-torchaudio languages) and its
+language model. `TRANSCRIBER_PYTHON` selects the same
 interpreter for checks, setup and jobs. See [the setup guide](docs/diarization-setup.md)
 for installation and the measured package footprint.
 
@@ -304,10 +313,16 @@ for test_file in scripts/test-*.js; do
 done
 python3 scripts/test-diarize-contract.py
 python3 scripts/test-align-contract.py
+python3 scripts/test-alignment-models.py
+"$ALIGN_PY" scripts/test-alignment-core.py   # needs torch; fails rather than skips
 ```
 
-`scripts/test-whisper-dtw.js` and `scripts/test-diarize-pipeline.py` use real
-local assets and are separate smoke checks. The evaluation harness replays
+`ALIGN_PY` is a Python with the alignment requirements installed.
+`scripts/test-whisper-dtw.js`, `scripts/test-diarize-pipeline.py`,
+`scripts/test-alignment-isolation.py` and `scripts/test-alignment-runtime.py`
+use real local assets and are separate smoke checks. Run the last two under
+`unshare -Urn` on Linux so external networking is absent; their docstrings
+give the full commands. The evaluation harness replays
 saved results and records missing metrics explicitly; see
 [the evaluation guide](docs/diarization-evaluation.md). Current speaker accuracy
 and Windows/Linux acceptance checks remain incomplete.

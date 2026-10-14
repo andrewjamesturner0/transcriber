@@ -19,10 +19,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Optional speaker diarisation uses pyannote.audio 4.0.7 and Community-1 with its exclusive timeline for word assignment. Python packages are pinned; Python 3.10 to 3.13 is the supported setup.
 - Speaker and alignment inference load prepared local caches with telemetry disabled. Tokens are used only during setup and are no longer saved; the CLI's old `--hf-token` option is ignored.
 - Alignment setup warns about the non-commercial fr/de/es/it model licences.
+- Word alignment no longer needs the WhisperX package or NLTK's Punkt data. Its path search is adapted into `lib/alignment_core.py` with the WhisperX and TorchAudio notices kept; the 41 language models and their caches are unchanged. `lib/requirements-alignment.txt` now adds transformers 4.57.6 instead of whisperx 3.8.6, so a clean install skips WhisperX, NLTK, faster-whisper, CTranslate2, ONNX Runtime, torchvision and other unused packages (470 MB less on the tested Linux CUDA setup). Existing environments are not changed.
+- Alignment labels words with no characters the model knows (digits, symbols) `interpolated` instead of `measured`, and multi-character Japanese/Chinese words are matched to their own characters rather than lost (covered by synthetic tests; not yet checked on real Japanese or Chinese audio). The provider is reported as `transcriber-align`; older saved WhisperX results still load.
 
 ### Fixed
 
-- Completed in-app model/font disclosures, distinguished optional downloaded assets, and recorded unresolved Punkt data licensing and FFmpeg source-delivery requirements.
+- Completed in-app model/font disclosures, distinguished optional downloaded assets, and recorded the unresolved FFmpeg source-delivery requirements.
 - Excluded local credentials, environments and benchmark recordings from packaged app files.
 - Requested DTW timing now disables flash attention and uses validated token anchors; unsupported DTW falls back with a recorded reason.
 - Speaker merging preserves supported short replies, overlap evidence and Unknown labels instead of rewriting them during cleanup.

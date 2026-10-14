@@ -2,10 +2,11 @@ Transcriber
 Copyright (c) 2026 Andrew James Turner
 Licensed under the GNU General Public License v3.0
 
-The app bundles whisper.cpp/ggml, a default Whisper model, FFmpeg, Electron
-and interface fonts. Optional Python software and model/tokenizer assets
-are installed or downloaded separately by the user; their terms are
-separate from Transcriber's GPLv3 licence.
+The app bundles whisper.cpp/ggml, a default Whisper model, FFmpeg, Electron,
+interface fonts and word-alignment code adapted from WhisperX and TorchAudio.
+Optional Python software and model assets are installed or downloaded
+separately by the user; their terms are separate from Transcriber's GPLv3
+licence.
 
 ---
 
@@ -63,10 +64,27 @@ https://huggingface.co/pyannote/speaker-diarization-community-1
 
 ---
 
-WhisperX (optional, user-installed; alignment functions only)
+WhisperX 3.8.6 (code adapted into lib/alignment_core.py; bundled)
 Copyright (c) 2024, Max Bain
-Licensed under the BSD 2-Clause License
-https://github.com/m-bain/whisperX
+Licensed under the BSD 2-Clause License; full text:
+lib/third_party/whisperx-LICENSE.txt
+https://github.com/m-bain/whisperX/blob/v3.8.6/LICENSE
+
+---
+
+TorchAudio v0.12.1 forced-alignment tutorial (code adapted into
+lib/alignment_core.py through WhisperX; bundled)
+Copyright (c) 2017 Facebook Inc. (Soumith Chintala)
+Licensed under the BSD 2-Clause License; full text:
+lib/third_party/torchaudio-LICENSE.txt
+https://github.com/pytorch/audio/blob/v0.12.1/LICENSE
+
+---
+
+Transformers (optional, user-installed; loads non-English alignment models)
+Copyright 2018- The Hugging Face team
+Licensed under the Apache License 2.0
+https://github.com/huggingface/transformers
 
 ---
 
@@ -85,13 +103,6 @@ only; commercial use requires separate permission or different weights.
 https://docs.pytorch.org/audio/2.8.0/pipelines.html
 https://creativecommons.org/licenses/by-nc/4.0/legalcode
 
----
-
-NLTK Punkt tokenizer data (punkt_tab, downloaded by the user for alignment)
-Licence unclarified upstream. NLTK's software licence does not establish
-the terms for this separate data. Commercial use and redistribution have
-not been cleared by this review.
-https://github.com/nltk/nltk_data/blob/gh-pages/LICENSE-OVERVIEW.md
 
 ---
 

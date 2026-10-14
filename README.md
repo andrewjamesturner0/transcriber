@@ -148,7 +148,8 @@ Transcriber is free software. If it's useful to you, consider [sponsoring develo
 - [Electron](https://www.electronjs.org): desktop framework (MIT)
 - [ggml](https://github.com/ggml-org/ggml): tensor library (MIT)
 - [pyannote.audio](https://github.com/pyannote/pyannote-audio): speaker diarization (MIT)
-- [WhisperX](https://github.com/m-bain/whisperX): optional word alignment (BSD-2-Clause)
+- [WhisperX](https://github.com/m-bain/whisperX) and [TorchAudio](https://github.com/pytorch/audio): word-alignment path search adapted into Transcriber (BSD-2-Clause)
+- [Transformers](https://github.com/huggingface/transformers): optional loader for non-English alignment models (Apache-2.0)
 - [PyTorch](https://pytorch.org): machine learning framework (BSD-3-Clause)
 - [NumPy](https://numpy.org): numerical computing (BSD-3-Clause)
 
@@ -159,6 +160,5 @@ commercially, and modify it. Distributing copies or modified versions requires
 following the GPL's notice and source requirements.
 
 Third-party software, fonts and downloaded models keep their own licences.
-Some optional alignment weights have non-commercial terms, and the downloaded
-Punkt tokenizer data has unclarified terms. See [the licensing review](docs/licensing.md)
+Some optional alignment weights have non-commercial terms. See [the licensing review](docs/licensing.md)
 for the component list, evidence and outstanding release requirements.

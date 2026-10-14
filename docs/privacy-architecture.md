@@ -39,8 +39,9 @@ Network use is limited to setup and application maintenance:
 - External documentation links opened by the user in their browser.
 
 Speaker and alignment jobs set Hugging Face offline flags before imports and
-disable pyannote/Hugging Face telemetry. Alignment also uses local transformer,
-NLTK and torch caches and blocks their download paths during inference. Missing
+disable pyannote/Hugging Face telemetry. Alignment also loads its models from
+the local Hugging Face and torch caches only and blocks torch hub downloads
+during inference. It uses no NLTK data. Missing
 models produce a setup message or a declared fallback, rather than an inference
 download. The Hugging Face token is passed to setup through the process
 environment and is not saved by Transcriber. Later inference needs no token.
@@ -61,13 +62,13 @@ recording or transcript.
 | TinyDiarize | Speaker change detection | MIT | [Source](https://github.com/akashmjn/tinydiarize-whisper.cpp) |
 | pyannote.audio | Optional speaker inference | MIT | [Source](https://github.com/pyannote/pyannote-audio) |
 | Community-1 | Optional speaker model | CC BY 4.0 | [Model](https://huggingface.co/pyannote/speaker-diarization-community-1) |
-| WhisperX | Optional alignment functions | BSD 2-Clause | [Source](https://github.com/m-bain/whisperX) |
+| WhisperX and TorchAudio tutorial code | Alignment path search adapted into `lib/alignment_core.py` | BSD 2-Clause | [WhisperX](https://github.com/m-bain/whisperX/blob/v3.8.6/LICENSE), [TorchAudio](https://github.com/pytorch/audio/blob/v0.12.1/LICENSE) |
+| transformers | Optional loader for non-English alignment models | Apache-2.0 | [Source](https://github.com/huggingface/transformers) |
 | English wav2vec2 model | Optional alignment weights | MIT | [Attribution](../NOTICE) |
 | Electron | Desktop framework | MIT | [Source](https://www.electronjs.org) |
 
 Some non-English alignment models have separate licences, including
-non-commercial terms for fr/de/es/it. The separate Punkt tokenizer data used
-for alignment has unclarified terms upstream. See [the licensing review](licensing.md)
+non-commercial terms for fr/de/es/it. See [the licensing review](licensing.md)
 and [the setup guide](diarization-setup.md).
 Optional Python packages and models are installed separately from the app.
 
@@ -75,7 +76,8 @@ Optional Python packages and models are installed separately from the app.
 
 The [source code](https://github.com/andrewjamesturner0/transcriber) is public
 under GPLv3. Relevant code is `lib/transcription-runner.js`, `lib/diarize.py`,
-`lib/align.py`, `scripts/setup-diarization.py` and the update handler in `main.js`.
+`lib/align.py`, `lib/alignment_models.py`, `scripts/setup-diarization.py` and
+the update handler in `main.js`.
 
 Verify a prepared installation by running a transcription job with networking
 disabled, or monitoring its processes' network activity. Distinguish inference

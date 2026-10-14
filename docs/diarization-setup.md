@@ -15,8 +15,10 @@ every job runs offline on this computer and needs no token.
 | Model | Community-1, downloaded once by the setup step |
 | Hugging Face token | Only for that download, after accepting the model licence |
 
-Optional word alignment adds `lib/requirements-alignment.txt` (WhisperX
-3.8.6, about 0.6 GB more) and a 360 MB English model.
+Optional word alignment adds `lib/requirements-alignment.txt` (transformers
+4.57.6; about 66 MB more, measured on Linux) and a 360 MB English model.
+English, French, German, Spanish and Italian need only torch and torchaudio;
+the other languages' models load with transformers.
 
 ## 1. Install Python and packages
 
@@ -64,16 +66,17 @@ words to the audio** in the Model card (shown while diarisation is on), or
 pass `--alignment forced` on the CLI. The fr/de/es/it alignment models are
 licensed CC BY-NC 4.0 (non-commercial); setup says so.
 
-The alignment model and tokenizer data have separate terms. The English
-alignment weights are MIT, but NLTK lists the downloaded `punkt_tab` tokenizer
-data as having unclarified licensing. Commercial use or redistribution of the
-complete alignment stack has not been cleared. Other languages also need their
-own model licence checked. See [the licensing review](licensing.md).
+Alignment no longer installs WhisperX or uses NLTK's `punkt_tab` data;
+updating the requirements does not remove packages or data an older version
+installed, and the app never deletes them. The English alignment weights are
+MIT. Other languages need their own model licence checked. See
+[the licensing review](licensing.md).
 
 ## Privacy
 
-Jobs set `HF_HUB_OFFLINE=1`, turn pyannote metrics off and block NLTK and
-torch hub downloads, so audio and text never leave the computer. Only the
+Jobs set `HF_HUB_OFFLINE=1`, turn pyannote metrics off, load alignment
+models with `local_files_only` and block torch hub downloads, so audio and
+text never leave the computer. Only the
 setup step uses the network.
 
 ## Troubleshooting
