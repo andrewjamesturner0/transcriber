@@ -232,13 +232,11 @@ async function cmdTranscribe(argv) {
     probes.push(capabilities.detectGpu());
   }
   if (diarize) {
-    probes.push(capabilities._detectDtw().then((s) => { capabilities._dtwSupported = s; }));
+    // Probes the CPU binary and, if present, the Vulkan binary.
+    probes.push(capabilities.detectDtw());
     probes.push(capabilities.getPythonInfo());
-  } else {
-    // DTW is only consulted when diarization is on; mark as supported
-    // to avoid an unneeded probe.
-    capabilities._dtwSupported = true;
   }
+  // Without diarization DTW is never consulted, so no probe is needed.
   await Promise.allSettled(probes);
 
   if (diarize) {
@@ -437,10 +435,10 @@ async function cmdGpuStatus(argv) {
 
   const capabilities = new Capabilities({ logWrite: () => {} });
   await capabilities.detectGpu();
-  const dtwSupported = await capabilities._detectDtw();
-  capabilities._dtwSupported = dtwSupported;
+  await capabilities.detectDtw();
+  // dtwSupported is for the active backend; dtwSupport is per backend.
   const status = capabilities.getStatus();
-  status.dtwSupported = dtwSupported;
+  const dtwSupported = status.dtwSupported;
 
   if (flags['--json']) {
     process.stdout.write(JSON.stringify(status, null, 2) + '\n');
@@ -453,6 +451,10 @@ async function cmdGpuStatus(argv) {
   process.stdout.write(`Device:              ${status.deviceName || 'n/a'}\n`);
   process.stdout.write(`Available backends:  ${status.available.join(', ')}\n`);
   process.stdout.write(`DTW supported:       ${dtwSupported ? 'yes' : 'no'}\n`);
+  const perBackend = status.available
+    .map((b) => `${b}=${status.dtwSupport[b] == null ? 'unknown' : (status.dtwSupport[b] ? 'yes' : 'no')}`)
+    .join(', ');
+  process.stdout.write(`DTW per backend:     ${perBackend}\n`);
 }
 
 // ---------------------------------------------------------------------------

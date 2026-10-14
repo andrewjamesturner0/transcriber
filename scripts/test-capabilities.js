@@ -3,7 +3,7 @@
  * Tests for lib/capabilities.js
  *
  * Covers: CPU fallback when Vulkan binary missing, preference override,
- * DTW probe caching, Python detection caching. Follows the same plain-node
+ * per-backend DTW probing, Python detection caching. Follows the same plain-node
  * style as scripts/test-merge.js (no test framework).
  *
  * Usage:
@@ -229,11 +229,14 @@ test('setBackendPreference rejects invalid values', () => {
 
 console.log('\nDTW detection tests\n');
 
-test('DTW supported when --dtw flag present in help output', async () => {
+const DTW_HELP = '  -dtw MODEL --dtw MODEL  compute token-level timestamps\n'
+  + '  -nfa,      --no-flash-attn  disable flash attention\n';
+
+test('DTW supported when --dtw and --no-flash-attn present in help output', async () => {
   const caps = new Capabilities({
     paths: makePaths(),
     fsExists: () => true,
-    spawn: makeSpawn({ default: '  --dtw         enable DTW alignment\n' }),
+    spawn: makeSpawn({ default: DTW_HELP }),
     logWrite: () => {},
   });
 
@@ -241,7 +244,80 @@ test('DTW supported when --dtw flag present in help output', async () => {
   assert(caps.isDtwSupported() === true, 'should be optimistic before probe');
 
   await caps.detect();
-  assert(caps.isDtwSupported() === true, 'DTW should be supported when --dtw flag present');
+  assert(caps.isDtwSupported() === true, 'DTW should be supported when both flags present');
+  assert(caps.isDtwSupported('vulkan') === true, 'vulkan DTW should be supported too');
+});
+
+test('DTW not supported when --dtw present but --no-flash-attn absent', async () => {
+  const caps = new Capabilities({
+    paths: makePaths(),
+    fsExists: () => true,
+    spawn: makeSpawn({ default: '  --dtw         enable DTW alignment\n' }),
+    logWrite: () => {},
+  });
+  await caps.detect();
+  assert(caps.isDtwSupported() === false, 'DTW needs --no-flash-attn as well');
+  assert(caps.isDtwSupported('vulkan') === false, 'vulkan DTW needs --no-flash-attn as well');
+});
+
+test('DTW supported when only the short -nfa form is listed', async () => {
+  const caps = new Capabilities({
+    paths: makePaths(),
+    fsExists: () => true,
+    spawn: makeSpawn({ default: '  --dtw MODEL  token timestamps\n  -nfa  disable flash attention\n' }),
+    logWrite: () => {},
+  });
+  await caps.detect();
+  assert(caps.isDtwSupported('cpu') === true, '-nfa should count as --no-flash-attn');
+});
+
+test('DTW probe checks cpu and vulkan binaries, each with its own lib path env', async () => {
+  const { EventEmitter } = require('events');
+  const helpCalls = [];
+  const spawn = function (cmd, args, opts) {
+    if (args.includes('--help')) helpCalls.push({ cmd, opts });
+    const proc = new EventEmitter();
+    proc.stdout = new EventEmitter();
+    proc.stderr = new EventEmitter();
+    // CPU binary supports both flags; Vulkan binary lacks --no-flash-attn.
+    const text = cmd.includes('/cpu/') ? DTW_HELP : '  --dtw MODEL  token timestamps\n';
+    process.nextTick(() => {
+      proc.stderr.emit('data', Buffer.from(text));
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+  const caps = new Capabilities({
+    paths: makePaths({ makeEnvWithLibPath: (dir) => ({ LIBDIR: dir }) }),
+    fsExists: () => true,
+    spawn,
+    logWrite: () => {},
+  });
+  const result = await caps.detectDtw();
+  const cpuCall = helpCalls.find(c => c.cmd === '/fake/bin/linux/cpu/whisper-cli');
+  const vkCall = helpCalls.find(c => c.cmd === '/fake/bin/linux/vulkan/whisper-cli');
+  assert(cpuCall, 'cpu binary should be probed');
+  assert(vkCall, 'vulkan binary should be probed');
+  assert(cpuCall.opts.env && cpuCall.opts.env.LIBDIR === '/fake/bin/linux/cpu', 'cpu probe needs cpu lib path env');
+  assert(vkCall.opts.env && vkCall.opts.env.LIBDIR === '/fake/bin/linux/vulkan', 'vulkan probe needs vulkan lib path env');
+  assert(cpuCall.opts.timeout > 0 && vkCall.opts.timeout > 0, 'probes keep their timeout');
+  assert(result.cpu === true && result.vulkan === false, `unexpected result ${JSON.stringify(result)}`);
+  assert(caps.isDtwSupported('cpu') === true, 'cpu supported');
+  assert(caps.isDtwSupported('vulkan') === false, 'vulkan unsupported');
+  assert(caps.isDtwSupported() === true, 'no-arg call reports cpu');
+});
+
+test('DTW probe skips vulkan when its binary is missing', async () => {
+  const probed = [];
+  const caps = new Capabilities({
+    paths: makePaths(),
+    fsExists: (p) => !p.includes('/vulkan/'),
+    spawn: (cmd, args, opts) => { probed.push(cmd); return makeSuccessfulSpawn(DTW_HELP); },
+    logWrite: () => {},
+  });
+  const result = await caps.detectDtw();
+  assert(!probed.some(c => c.includes('/vulkan/')), 'vulkan binary should not be probed');
+  assert(result.cpu === true && result.vulkan === null, `unexpected result ${JSON.stringify(result)}`);
 });
 
 test('DTW not supported when --dtw flag absent', async () => {
@@ -270,13 +346,47 @@ test('disableDtw sets supported to false after session', async () => {
   const caps = new Capabilities({
     paths: makePaths(),
     fsExists: () => true,
-    spawn: makeSpawn({ default: '  --dtw   DTW alignment\n' }),
+    spawn: makeSpawn({ default: DTW_HELP }),
     logWrite: () => {},
   });
   await caps.detect();
   assert(caps.isDtwSupported() === true, 'initially supported');
   caps.disableDtw();
   assert(caps.isDtwSupported() === false, 'disabled after call');
+  assert(caps.isDtwSupported('vulkan') === false, 'no-arg disableDtw disables every backend');
+});
+
+test('disableDtw(backend) disables only that backend', async () => {
+  const caps = new Capabilities({
+    paths: makePaths(),
+    fsExists: () => true,
+    spawn: makeSpawn({ default: DTW_HELP }),
+    logWrite: () => {},
+  });
+  await caps.detectDtw();
+  caps.disableDtw('vulkan');
+  assert(caps.isDtwSupported('vulkan') === false, 'vulkan disabled');
+  assert(caps.isDtwSupported('cpu') === true, 'cpu still supported');
+});
+
+test('getStatus reports DTW support for the active backend and per backend', async () => {
+  const caps = new Capabilities({
+    paths: makePaths(),
+    fsExists: () => true,
+    spawn: makeSpawn({ default: DTW_HELP }),
+    logWrite: () => {},
+  });
+  await caps.detectDtw();
+  caps.setBackendPreference('vulkan');
+  caps.disableDtw('vulkan');
+  let status = caps.getStatus();
+  assert(status.backend === 'vulkan', 'vulkan active');
+  assert(status.dtwSupported === false, 'active backend dtwSupported should follow vulkan');
+  assert(status.dtwSupport.cpu === true && status.dtwSupport.vulkan === false,
+    `unexpected dtwSupport ${JSON.stringify(status.dtwSupport)}`);
+  caps.setBackendPreference('cpu');
+  status = caps.getStatus();
+  assert(status.dtwSupported === true, 'active backend dtwSupported should follow cpu');
 });
 
 // ---------------------------------------------------------------------------
