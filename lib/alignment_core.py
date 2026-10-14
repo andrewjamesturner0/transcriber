@@ -235,6 +235,19 @@ def merge_repeats(path):
     return merged
 
 
+def word_score(token_scores):
+    """Mean of a word's (already rounded) token scores, to 3 places.
+
+    Reproduces upstream exactly: WhisperX took the mean with pandas (a numpy
+    float64 sum divided by the count) and rounded the numpy value twice,
+    which rounds x * 1000 half to even. Python's round() on the same float
+    can differ in the last place (0.7895 -> 0.789 instead of 0.79).
+    """
+    import numpy as np
+    mean = np.asarray(token_scores, dtype=np.float64).sum() / len(token_scores)
+    return float(np.round(np.round(mean, 3), 3))
+
+
 # ---------------------------------------------------------------------------
 # One segment
 # ---------------------------------------------------------------------------
@@ -309,7 +322,7 @@ def align_segment(emission, words, dictionary, blank_id, no_spaces,
         start_ms = min(max(int(round(min(p[0] for p in parts) * 1000)), lo_ms), hi_ms)
         end_ms = min(max(int(round(max(p[1] for p in parts) * 1000)), lo_ms), hi_ms)
         if any(p[3] == KNOWN for p in parts):
-            score = round(sum(p[2] for p in parts) / len(parts), 3)
+            score = word_score([p[2] for p in parts])
             records.append({"startMs": start_ms, "endMs": end_ms, "score": score,
                             "quality": "measured"})
         else:

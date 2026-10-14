@@ -695,7 +695,7 @@ function alignmentStatusMessage(info) {
     case 'ready': return 'Word alignment ready';
     case 'model-not-prepared': return 'Word alignment model not downloaded';
     case 'alignment-missing': return 'Word alignment not installed (optional)';
-    case 'alignment-unsupported': return `WhisperX ${info.whisperxVersion} not supported (3.8 needed)`;
+    case 'alignment-unsupported': return 'Word alignment needs newer packages (optional)';
     default: return 'Word alignment unavailable';
   }
 }

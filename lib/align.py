@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Forced word alignment using the WhisperX 3.8 alignment functions, offline.
+"""Forced word alignment with a local wav2vec2 aligner, offline.
 
 Spawned as a subprocess by the Electron app and the CLI after Whisper has
 run. Re-times the words Whisper recognised against the audio with a wav2vec2
 model loaded from the local cache (it never downloads), writes a result
 envelope to --output, and prints JSON progress lines to stderr.
 
-Only whisperx.alignment is imported, never whisperx.asr: no second
-recogniser is loaded and the recognised text is never changed. The output
-holds times, scores and quality labels only, never text.
+The model registry and loaders are in alignment_models.py and the path
+search in alignment_core.py, both beside this file. No speech recogniser is
+loaded and the recognised text is never changed. The output holds times,
+scores and quality labels only, never text.
 
-The alignment model and NLTK punkt_tab data must be prepared first with
+The alignment model must be prepared first with
 scripts/setup-diarization.py --alignment.
 
 Usage:
@@ -23,13 +24,17 @@ Input (written by lib/transcript-timing.js buildAlignmentInput):
 
 Output:
     {"format": "transcriber-alignment", "version": 1,
-     "provider": {"name": "whisperx", "version", "model", "language"},
+     "provider": {"name": "transcriber-align", "version", "model", "language"},
      "device", "processingSec",
      "segments": [{"index", "status": "aligned"|"failed", "reason",
                    "words": [{"startMs", "endMs", "score", "quality"}]}]}
     Each segment's words list has exactly as many entries as the input
-    segment. quality is "measured" (has a score), "interpolated" (times but
-    no score) or "unaligned" (no times; startMs, endMs and score are null).
+    segment. quality is "measured" (has a score), "interpolated" (times
+    but no score: none of the word's characters is known to the model, as
+    with digits) or "unaligned" (no times; startMs, endMs and score are
+    null). Failed segment reasons: empty-segment, outside-audio,
+    no-characters, too-short, too-long, no-path, invalid-emissions,
+    align-error.
 
 stderr protocol:
     progress: {"message": "...", "percent": 30}
@@ -42,38 +47,36 @@ language-unsupported, model-not-prepared, audio-invalid, alignment-failed.
 always exits 0. It uses no network, loads no audio and no model.
 
 This file is imported by scripts/setup-diarization.py and by the contract
-tests, so nothing here may import whisperx, torch, transformers or nltk at
-module level, and the syntax must stay parseable by old Python versions so
-that the version gate can report a clear error.
+tests, so nothing here may import torch, torchaudio, transformers or
+huggingface_hub at module level, and the syntax must stay parseable by old
+Python versions so that the version gate can report a clear error.
 """
 
 import argparse
-import ast
 import contextlib
 import importlib.util
 import io
 import json
-import logging
 import math
 import os
-import platform
 import re
 import sys
 import time
 import wave
 
 MIN_PYTHON = (3, 10)
-SUPPORTED_WHISPERX = (3, 8)
 EXPECTED_SAMPLE_RATE = 16000
 EXPECTED_CHANNELS = 1
 EXPECTED_SAMPLE_WIDTH = 2  # bytes, i.e. 16-bit PCM
 
 ENVELOPE_FORMAT = "transcriber-alignment"
 ENVELOPE_VERSION = 1
-PROVIDER_NAME = "whisperx"
+# The provider names this aligner and its timing/quality rules. Bump the
+# version when the numbers or labels it produces can change.
+PROVIDER_NAME = "transcriber-align"
+PROVIDER_VERSION = "1.0"
 DEFAULT_LANGUAGE = "en"
 DEFAULT_PAD_MS = 200
-INTERPOLATE_METHOD = "nearest"
 
 CHECK_STATUSES = (
     "ready",
@@ -83,13 +86,6 @@ CHECK_STATUSES = (
     "language-unsupported",
     "python-unsupported",
 )
-
-# Files a Hugging Face wav2vec2 alignment model needs in the cache: the
-# processor (feature extractor and tokenizer vocabulary), the model config
-# and one form of weights. The real load still has the final say.
-HF_REQUIRED_FILES = ("config.json", "preprocessor_config.json", "vocab.json")
-HF_WEIGHT_FILES = ("model.safetensors", "pytorch_model.bin",
-                   "model.safetensors.index.json", "pytorch_model.bin.index.json")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIREMENTS_PATH = os.path.join(_HERE, "requirements-alignment.txt")
@@ -105,8 +101,41 @@ class AlignError(Exception):
         self.message = message
 
 
-class DownloadBlocked(Exception):
-    """Raised by the stand-ins for nltk.download and torch hub downloads."""
+# ---------------------------------------------------------------------------
+# Sibling modules
+# ---------------------------------------------------------------------------
+
+def _sibling(name):
+    """Import alignment_models or alignment_core from this file's folder.
+
+    By path, so it works whatever the working directory or sys.path, when
+    this file is itself loaded with spec_from_file_location (the setup
+    script) and in the installed resources/lib folder.
+    """
+    key = "transcriber_" + name
+    module = sys.modules.get(key)
+    if module is None:
+        path = os.path.join(_HERE, name + ".py")
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or not os.path.isfile(path):
+            raise AlignError("alignment-missing",
+                             "Word alignment is incomplete: %s is missing." % path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[key] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            del sys.modules[key]
+            raise
+    return module
+
+
+def models():
+    return _sibling("alignment_models")
+
+
+def core():
+    return _sibling("alignment_core")
 
 
 # ---------------------------------------------------------------------------
@@ -133,9 +162,9 @@ def emit_error(code, message):
 def configure_environment(offline=True, environ=None):
     """Turn off telemetry (and, for inference and --check, network access).
 
-    Must run before huggingface_hub, transformers or whisperx are imported:
-    they read these variables at import time. Values are forced, not
-    defaulted, so an inherited setting cannot switch them back.
+    Must run before huggingface_hub or transformers is imported: they read
+    these variables at import time. Values are forced, not defaulted, so an
+    inherited setting cannot switch them back.
     """
     env = os.environ if environ is None else environ
     env["HF_HUB_DISABLE_TELEMETRY"] = "1"
@@ -182,35 +211,10 @@ def python_problem(version_info=None):
     return None
 
 
-def _leading_ints(version, count):
-    parts = []
-    for piece in str(version).split(".")[:count]:
-        digits = ""
-        for ch in piece:
-            if not ch.isdigit():
-                break
-            digits += ch
-        if not digits:
-            break
-        parts.append(int(digits))
-    return tuple(parts)
-
-
-def whisperx_problem(version):
-    """Return (code, message) if WhisperX is missing or not 3.8.x, else None."""
-    if not version:
-        return (
-            "alignment-missing",
-            "WhisperX is not installed, so word alignment is not available. "
-            "Run: %s" % _pip_fix(),
-        )
-    if _leading_ints(version, 2) != SUPPORTED_WHISPERX:
-        return (
-            "alignment-unsupported",
-            "WhisperX %s is not supported: version %d.%d.x is needed. Run: %s"
-            % (version, SUPPORTED_WHISPERX[0], SUPPORTED_WHISPERX[1], _pip_fix()),
-        )
-    return None
+def dependency_problem(model):
+    """Return (code, message) if a package the model's backend needs is
+    missing or too old, else None. Uses package metadata only."""
+    return models().dependency_problem(model, _pip_fix(), package_version)
 
 
 def not_prepared_message(language, model, detail=None):
@@ -224,68 +228,27 @@ def not_prepared_message(language, model, detail=None):
     return msg
 
 
-# ---------------------------------------------------------------------------
-# Language and model tables
-# ---------------------------------------------------------------------------
-
-def _whisperx_dir():
-    """Folder of the installed whisperx package, found without importing it."""
-    try:
-        spec = importlib.util.find_spec("whisperx")
-    except Exception:
-        return None
-    locations = list(getattr(spec, "submodule_search_locations", None) or []) if spec else []
-    return locations[0] if locations else None
+def provider_info():
+    return {"name": PROVIDER_NAME, "version": PROVIDER_VERSION}
 
 
-def _literal_assignments(path, names):
-    """Read top-level literal dict assignments from a source file."""
-    with open(path, "r", encoding="utf-8") as fp:
-        tree = ast.parse(fp.read(), filename=path)
-    found = {}
-    for node in tree.body:
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            target = node.targets[0]
-            if isinstance(target, ast.Name) and target.id in names:
-                found[target.id] = ast.literal_eval(node.value)
-    return found
-
-
-def model_tables(module=None):
-    """WhisperX's default model tables as {"torchaudio", "huggingface", "punkt"}.
-
-    With an imported whisperx.alignment module, read them from it. Without
-    one (--check), read the installed source files instead, because
-    importing whisperx.alignment loads transformers and pandas and takes
-    several seconds. If the source cannot be read, fall back to importing.
-    Returns None when WhisperX is not installed.
-    """
-    if module is None:
-        folder = _whisperx_dir()
-        if folder:
-            try:
-                align_src = _literal_assignments(
-                    os.path.join(folder, "alignment.py"),
-                    ("DEFAULT_ALIGN_MODELS_TORCH", "DEFAULT_ALIGN_MODELS_HF"))
-                utils_src = _literal_assignments(
-                    os.path.join(folder, "utils.py"), ("PUNKT_LANGUAGES",))
-                return {
-                    "torchaudio": align_src["DEFAULT_ALIGN_MODELS_TORCH"],
-                    "huggingface": align_src["DEFAULT_ALIGN_MODELS_HF"],
-                    "punkt": utils_src.get("PUNKT_LANGUAGES", {}),
-                }
-            except Exception:
-                pass
-        try:
-            import whisperx.alignment as module
-        except Exception:
-            return None
+def backend_versions(version_info=None):
+    """Versions for --check and setup. whisperx and nltk are deprecated keys,
+    always null: they are no longer used and never decide readiness."""
+    vi = current_version_info() if version_info is None else version_info
     return {
-        "torchaudio": dict(getattr(module, "DEFAULT_ALIGN_MODELS_TORCH", {}) or {}),
-        "huggingface": dict(getattr(module, "DEFAULT_ALIGN_MODELS_HF", {}) or {}),
-        "punkt": dict(getattr(module, "PUNKT_LANGUAGES", {}) or {}),
+        "python": _version_string(vi),
+        "torch": package_version("torch"),
+        "torchaudio": package_version("torchaudio"),
+        "transformers": package_version("transformers"),
+        "whisperx": None,
+        "nltk": None,
     }
 
+
+# ---------------------------------------------------------------------------
+# Languages and models (lib/alignment_models.py owns the registry)
+# ---------------------------------------------------------------------------
 
 def normalise_language(language):
     if not isinstance(language, str):
@@ -294,112 +257,22 @@ def normalise_language(language):
     return language or None
 
 
-def resolve_model(language, tables):
-    """Return {"name", "type", "punkt"} for a language, or None if unsupported."""
-    if not tables or not language:
-        return None
-    punkt = tables["punkt"].get(language, "english")
-    if language in tables["torchaudio"]:
-        return {"name": tables["torchaudio"][language], "type": "torchaudio", "punkt": punkt}
-    if language in tables["huggingface"]:
-        return {"name": tables["huggingface"][language], "type": "huggingface", "punkt": punkt}
-    return None
+def resolve_model(language):
+    """Model spec {"language", "name", "backend", "noSpaces", "licence"},
+    or None if the language has no alignment model."""
+    return models().resolve(language) if language else None
 
 
-def unsupported_language_message(language, tables):
-    known = sorted(set(tables["torchaudio"]) | set(tables["huggingface"])) if tables else []
+def unsupported_language_message(language):
     return (
         "Word alignment has no model for language '%s'. Supported languages: %s."
-        % (language, ", ".join(known) if known else "none found")
+        % (language, ", ".join(models().languages()))
     )
 
 
-# ---------------------------------------------------------------------------
-# Cache checks (no network, no model load)
-# ---------------------------------------------------------------------------
-
-def torchaudio_checkpoint_path(model_name):
-    """Where torch hub keeps a torchaudio bundle's weights.
-
-    torchaudio fetches https://download.pytorch.org/torchaudio/models/<_path>
-    with torch.hub.load_state_dict_from_url, which saves it as
-    <torch hub dir>/checkpoints/<basename>.
-    """
-    import torch.hub
-    import torchaudio.pipelines
-
-    bundle = getattr(torchaudio.pipelines, model_name)
-    basename = os.path.basename(str(bundle._path))
-    return os.path.join(torch.hub.get_dir(), "checkpoints", basename)
-
-
-def huggingface_model_status(repo_id):
-    """Return (ready, snapshot_path, detail) from the Hugging Face cache only."""
-    try:
-        from huggingface_hub import try_to_load_from_cache
-    except Exception:
-        return False, None, "huggingface_hub is not installed"
-
-    def cached(filename):
-        try:
-            found = try_to_load_from_cache(repo_id, filename)
-        except Exception:
-            return None
-        return found if isinstance(found, str) else None
-
-    missing = [name for name in HF_REQUIRED_FILES if not cached(name)]
-    weights = [name for name in HF_WEIGHT_FILES if cached(name)]
-    if not weights:
-        missing.append("model weights")
-    if missing:
-        return False, None, "missing from the cache: " + ", ".join(missing)
-    return True, os.path.dirname(cached(HF_REQUIRED_FILES[0])), None
-
-
-def punkt_status(punkt_language):
-    """Return (ready, path) for NLTK punkt_tab data for one language."""
-    try:
-        import nltk.data
-    except Exception:
-        return False, None
-    try:
-        return True, str(nltk.data.find("tokenizers/punkt_tab/%s/" % punkt_language))
-    except LookupError:
-        return False, None
-    except Exception:
-        return False, None
-
-
 def model_status(model):
-    """Return (ready, path, detail) for an alignment model's cached weights."""
-    if model["type"] == "torchaudio":
-        try:
-            path = torchaudio_checkpoint_path(model["name"])
-        except Exception as e:
-            return False, None, "could not locate the torchaudio checkpoint (%s)" % e
-        if os.path.isfile(path):
-            return True, path, None
-        return False, None, "%s is missing" % path
-    return huggingface_model_status(model["name"])
-
-
-def assets_status(language, model):
-    """Readiness of everything inference needs for one language."""
-    m_ready, m_path, m_detail = model_status(model)
-    p_ready, p_path = punkt_status(model["punkt"])
-    details = []
-    if not m_ready:
-        details.append(m_detail or "model weights are missing")
-    if not p_ready:
-        details.append("NLTK punkt_tab data for %s is missing" % model["punkt"])
-    return {
-        "ready": m_ready and p_ready,
-        "modelReady": m_ready,
-        "modelPath": m_path,
-        "punktReady": p_ready,
-        "punktPath": p_path,
-        "detail": "; ".join(details) or None,
-    }
+    """Return (ready, path, detail) for a model's cached weights."""
+    return models().cache_status(model)
 
 
 # ---------------------------------------------------------------------------
@@ -409,41 +282,38 @@ def assets_status(language, model):
 def check_environment(language=DEFAULT_LANGUAGE, version_info=None):
     """Describe the alignment environment as a dict (the --check output).
 
-    WhisperX is not imported (see model_tables); torch is imported to ask
-    about CUDA and torchaudio to locate the checkpoint.
+    torch is imported to ask about CUDA, and torchaudio to locate an English
+    or VoxPopuli checkpoint; no model is loaded.
     """
     vi = current_version_info() if version_info is None else version_info
     language = normalise_language(language) or DEFAULT_LANGUAGE
-    versions = {
-        "python": _version_string(vi),
-        "whisperx": package_version("whisperx"),
-        "torch": package_version("torch"),
-        "torchaudio": package_version("torchaudio"),
-        "transformers": package_version("transformers"),
-        "nltk": package_version("nltk"),
-    }
+    versions = backend_versions(vi)
 
     cuda_available = False
-    try:
-        import torch
-        versions["torch"] = str(getattr(torch, "__version__", "")) or versions["torch"]
-        cuda_available = bool(torch.cuda.is_available())
-    except Exception:
-        pass
+    if versions["torch"]:
+        try:
+            import torch
+            versions["torch"] = str(getattr(torch, "__version__", "")) or versions["torch"]
+            cuda_available = bool(torch.cuda.is_available())
+        except Exception:
+            pass
 
     py_problem = python_problem(vi)
-    wx_problem = whisperx_problem(versions["whisperx"])
-    tables = model_tables() if versions["whisperx"] else None
-    model = resolve_model(language, tables)
-    assets = assets_status(language, model) if model else None
+    model = resolve_model(language)
+    # An unknown language still reports missing packages for the default
+    # (torchaudio) backend first, as before.
+    dep_problem = dependency_problem(model or {"language": language, "backend": "torchaudio"})
+    ready = path = detail = None
+    if model and not py_problem and not dep_problem:
+        ready, path, detail = model_status(model)
 
-    if py_problem or wx_problem:
-        status, message = py_problem or wx_problem
+    if py_problem or dep_problem:
+        status, message = py_problem or dep_problem
     elif model is None:
-        status, message = "language-unsupported", unsupported_language_message(language, tables)
-    elif not assets["ready"]:
+        status, message = "language-unsupported", unsupported_language_message(language)
+    elif not ready:
         status = "model-not-prepared"
-        message = not_prepared_message(language, model["name"], assets["detail"])
+        message = not_prepared_message(language, model["name"], detail)
     else:
         status, message = "ready", "Word alignment is ready for language '%s'." % language
 
@@ -451,16 +321,18 @@ def check_environment(language=DEFAULT_LANGUAGE, version_info=None):
         "status": status,
         "message": message,
         "language": language,
+        "provider": provider_info(),
         "versions": versions,
         "pythonSupported": py_problem is None,
-        "alignmentSupported": wx_problem is None,
-        "languageSupported": (model is not None) if tables is not None else None,
+        "alignmentSupported": dep_problem is None,
+        "languageSupported": model is not None,
         "cudaAvailable": cuda_available,
-        "model": {"name": model["name"], "type": model["type"]} if model else None,
-        "modelReady": bool(assets and assets["modelReady"]),
-        "modelPath": assets["modelPath"] if assets else None,
-        "punktReady": bool(assets and assets["punktReady"]),
-        "punktPath": assets["punktPath"] if assets else None,
+        "model": {"name": model["name"], "type": model["backend"]} if model else None,
+        "modelReady": bool(ready),
+        "modelPath": path if ready else None,
+        # Deprecated: Punkt is no longer used. Always null.
+        "punktReady": None,
+        "punktPath": None,
         "requirements": REQUIREMENTS_PATH,
         "executable": sys.executable,
     }
@@ -578,139 +450,8 @@ def segment_window(segment, pad_ms, duration_ms):
 
 
 # ---------------------------------------------------------------------------
-# Mapping WhisperX words back to the input words
-# ---------------------------------------------------------------------------
-
-def lcs_pairs(a, b):
-    """Index pairs (i, j) of a longest common subsequence of a and b.
-
-    Exact string equality. Prefers the earliest match, so identical lists
-    map one to one.
-    """
-    n, m = len(a), len(b)
-    if n == 0 or m == 0:
-        return []
-    table = [[0] * (m + 1) for _ in range(n + 1)]
-    for i in range(n - 1, -1, -1):
-        row, below = table[i], table[i + 1]
-        ai = a[i]
-        for j in range(m - 1, -1, -1):
-            if ai == b[j]:
-                row[j] = below[j + 1] + 1
-            else:
-                row[j] = below[j] if below[j] >= row[j + 1] else row[j + 1]
-    pairs = []
-    i = j = 0
-    while i < n and j < m:
-        if a[i] == b[j] and table[i][j] == table[i + 1][j + 1] + 1:
-            pairs.append((i, j))
-            i += 1
-            j += 1
-        elif table[i + 1][j] >= table[i][j + 1]:
-            i += 1
-        else:
-            j += 1
-    return pairs
-
-
-UNALIGNED = {"startMs": None, "endMs": None, "score": None, "quality": "unaligned"}
-
-
-def _finite(value):
-    try:
-        value = float(value)
-    except (TypeError, ValueError):
-        return None
-    return value if math.isfinite(value) else None
-
-
-def word_timing(word):
-    """Timing record for one WhisperX word (times in seconds, absolute)."""
-    start = _finite(word.get("start"))
-    end = _finite(word.get("end"))
-    if start is None or end is None or start < 0 or end < start:
-        return dict(UNALIGNED)
-    score = _finite(word.get("score"))
-    return {
-        "startMs": int(round(start * 1000)),
-        "endMs": int(round(end * 1000)),
-        "score": round(score, 3) if score is not None else None,
-        "quality": "measured" if score is not None else "interpolated",
-    }
-
-
-def map_words(input_words, output_words):
-    """One timing record per input word, matched by exact text in order."""
-    texts = [w.get("word") if isinstance(w, dict) else None for w in output_words]
-    result = [dict(UNALIGNED) for _ in input_words]
-    for i, j in lcs_pairs(input_words, texts):
-        result[i] = word_timing(output_words[j])
-    return result
-
-
-def output_words(aligned):
-    """All words WhisperX returned for one align() call, in order."""
-    words = []
-    for seg in (aligned or {}).get("segments") or []:
-        words.extend(w for w in (seg.get("words") or []) if isinstance(w, dict))
-    return words
-
-
-# ---------------------------------------------------------------------------
 # Inference
 # ---------------------------------------------------------------------------
-
-def _refuse_nltk_download(*args, **kwargs):
-    raise DownloadBlocked("NLTK data download blocked during inference")
-
-
-def _refuse_url_download(*args, **kwargs):
-    raise DownloadBlocked("model download blocked during inference")
-
-
-def import_alignment():
-    """Import whisperx.alignment and enforce the 3.8.x gate.
-
-    Returns (module, version). Also replaces nltk.download and torch hub's
-    downloader with functions that raise, so a missing asset can never
-    trigger a network call, and quietens WhisperX's logger (its warnings
-    quote segment text).
-    """
-    version = package_version("whisperx")
-    problem = whisperx_problem(version)
-    if problem:
-        raise AlignError(*problem)
-    try:
-        import whisperx.alignment as module
-    except Exception as e:
-        code, message = whisperx_problem(None)
-        raise AlignError(code, "%s (import failed: %s)" % (message, e))
-    logging.getLogger("whisperx").setLevel(logging.ERROR)
-
-    import nltk
-    nltk.download = _refuse_nltk_download
-    try:
-        import nltk.downloader
-        nltk.downloader.download = _refuse_nltk_download
-    except Exception:
-        pass
-    import torch.hub
-    torch.hub.download_url_to_file = _refuse_url_download
-    return module, str(version)
-
-
-def _is_cache_miss(exc):
-    """True if exc (or anything it wraps) means files are not cached."""
-    names = ("LocalEntryNotFoundError", "OfflineModeIsEnabled", "DownloadBlocked")
-    seen = set()
-    while exc is not None and id(exc) not in seen:
-        seen.add(id(exc))
-        for klass in type(exc).__mro__:
-            if klass.__name__ in names:
-                return True
-        exc = exc.__cause__ or exc.__context__
-    return False
-
 
 def _is_out_of_memory(exc):
     return "OutOfMemory" in type(exc).__name__ or "out of memory" in str(exc).lower()
@@ -736,44 +477,46 @@ def select_device(requested):
     return "cpu"
 
 
-def load_model(module, language, model, device):
+def load_model(model, device):
     """Load the alignment model from the local cache only. Never downloads.
 
-    Returns (model, metadata, device). If loading on the GPU fails for a
-    reason other than a cache miss, tries the CPU once.
+    Returns (loaded model, device). The weights are read on the CPU first,
+    so a missing or damaged cache is reported as model-not-prepared and
+    never confused with a GPU problem; if moving to the GPU fails, the CPU
+    is used.
     """
+    m = models()
+    language = model["language"]
+
+    def not_prepared(detail):
+        return not_prepared_message(language, model["name"], detail)
+
     captured = io.StringIO()
     try:
         with contextlib.redirect_stdout(captured):
-            loaded, metadata = module.load_align_model(
-                language, device, model_name=model["name"], model_cache_only=True)
-        return loaded, metadata, device
+            loaded = m.load(model, _pip_fix(), not_prepared)
+    except m.ModelError as e:
+        raise AlignError(e.code, e.message)
     except Exception as e:
-        # WhisperX turns any Hugging Face load failure into ValueError; we
-        # checked the files are cached, so treat it as missing or damaged.
-        if _is_cache_miss(e) or (model["type"] == "huggingface" and isinstance(e, ValueError)):
-            raise AlignError("model-not-prepared",
-                             not_prepared_message(language, model["name"],
-                                                  "could not load it from the cache"))
-        if device != "cpu":
+        raise AlignError("alignment-failed", "Could not load the alignment model: %s" % e)
+    if device != "cpu":
+        try:
+            loaded.to(device)
+        except m.DeviceError as e:
             progress("Could not load the alignment model on the GPU (%s), using CPU" % e, 20)
-            return load_model(module, language, model, "cpu")
-        raise AlignError(
-            "alignment-failed",
-            "Could not load the alignment model: %s. If the cached files are "
-            "damaged, run %s %s again." % (e, SETUP_COMMAND, language),
-        )
+            device = "cpu"
+    return loaded, device
 
 
-def align_segments(module, segments, pad_ms, duration_ms, loaded, metadata, waveform, device,
-                   not_prepared=None):
-    """Align each input segment separately and map words back. Returns the
-    output segment list. Raises AlignError for whole-step failures.
+def align_segments(loaded, model, segments, pad_ms, audio, waveform, not_prepared=None):
+    """Align each input segment separately. Returns the output segment list.
+    Raises AlignError for whole-step failures.
 
-    One align() call per input segment: WhisperX splits and merges its
-    output by sentence, so this is the only way to know which input segment
-    each returned word belongs to.
+    Each segment is cropped from the shared waveform, run through the model
+    once and aligned on its own, so every returned time belongs to its own
+    segment and window.
     """
+    m, c = models(), core()
     results = []
     attempted = errors = 0
     first_error = None
@@ -782,38 +525,35 @@ def align_segments(module, segments, pad_ms, duration_ms, loaded, metadata, wave
     for n, seg in enumerate(segments):
         words = seg["words"]
         record = {"index": seg["index"], "status": "failed", "reason": None,
-                  "words": [dict(UNALIGNED) for _ in words]}
+                  "words": [dict(c.UNALIGNED) for _ in words]}
         results.append(record)
 
-        window = segment_window(seg, pad_ms, duration_ms)
+        window = segment_window(seg, pad_ms, audio["durationMs"])
         if not words:
             record["reason"] = "empty-segment"
         elif window is None:
             record["reason"] = "outside-audio"
         else:
-            attempted += 1
-            transcript = [{"start": window[0] / 1000.0, "end": window[1] / 1000.0,
-                           "text": " ".join(words)}]
-            try:
-                aligned = module.align(transcript, loaded, metadata, waveform, device,
-                                       interpolate_method=INTERPOLATE_METHOD,
-                                       return_char_alignments=False)
-            except Exception as e:
-                if _is_cache_miss(e):
-                    raise AlignError("model-not-prepared", not_prepared or str(e))
-                if _is_out_of_memory(e):
-                    raise AlignError("alignment-failed", "Word alignment ran out of memory: %s" % e)
-                errors += 1
-                first_error = first_error or e
-                record["reason"] = "align-error"
-                aligned = None
-            if aligned is not None:
-                returned = output_words(aligned)
-                if returned:
-                    record["status"] = "aligned"
-                    record["words"] = map_words(words, returned)
+            start, end = c.crop_samples(window[0], window[1], audio["frames"])
+            problem = c.crop_problem(start, end)
+            if problem:
+                record["reason"] = problem
+            else:
+                attempted += 1
+                try:
+                    emission = loaded.emissions(waveform[:, start:end])
+                    result = c.align_segment(emission, words, loaded.dictionary, loaded.blank_id,
+                                             model["noSpaces"], start, end)
+                except Exception as e:
+                    if m.is_cache_miss(e):
+                        raise AlignError("model-not-prepared", not_prepared or str(e))
+                    if _is_out_of_memory(e):
+                        raise AlignError("alignment-failed", "Word alignment ran out of memory: %s" % e)
+                    errors += 1
+                    first_error = first_error or e
+                    record["reason"] = "align-error"
                 else:
-                    record["reason"] = "no-words-returned"
+                    record.update(result)
 
         percent = 25 + int(70 * (n + 1) / total)
         if last_percent is None or percent - last_percent >= 5 or n + 1 == total:
@@ -827,12 +567,13 @@ def align_segments(module, segments, pad_ms, duration_ms, loaded, metadata, wave
     return results
 
 
-def build_envelope(whisperx_version, model_name, language, device, processing_sec, segments):
+def build_envelope(model_name, language, device, processing_sec, segments):
+    provider = provider_info()
+    provider.update({"model": model_name, "language": language})
     return {
         "format": ENVELOPE_FORMAT,
         "version": ENVELOPE_VERSION,
-        "provider": {"name": PROVIDER_NAME, "version": whisperx_version,
-                     "model": model_name, "language": language},
+        "provider": provider,
         "device": device,
         "processingSec": processing_sec,
         "segments": segments,
@@ -853,30 +594,29 @@ def run(args):
     request = read_input(args.input)
     audio = read_wav(args.audio)
 
-    progress("Loading WhisperX alignment...", 5)
-    module, whisperx_version = import_alignment()
-
+    progress("Loading word alignment...", 5)
     language = request["language"]
-    tables = model_tables(module)
-    model = resolve_model(language, tables)
+    model = resolve_model(language)
     if model is None:
         if not language:
             raise AlignError("language-unsupported", "No language was given for word alignment.")
-        raise AlignError("language-unsupported", unsupported_language_message(language, tables))
+        raise AlignError("language-unsupported", unsupported_language_message(language))
+    problem = dependency_problem(model)
+    if problem:
+        raise AlignError(*problem)
 
-    assets = assets_status(language, model)
-    if not assets["ready"]:
-        raise AlignError("model-not-prepared",
-                         not_prepared_message(language, model["name"], assets["detail"]))
+    ready, _, detail = model_status(model)
+    if not ready:
+        raise AlignError("model-not-prepared", not_prepared_message(language, model["name"], detail))
 
     device = select_device(getattr(args, "device", "auto") or "auto")
     segments = request["segments"]
     if not segments:
         progress("Nothing to align", 90)
-        return build_envelope(whisperx_version, model["name"], language, device, 0.0, [])
+        return build_envelope(model["name"], language, device, 0.0, [])
 
     progress("Loading the alignment model from the local cache...", 20)
-    loaded, metadata, device = load_model(module, language, model, device)
+    loaded, device = load_model(model, device)
 
     try:
         waveform = to_waveform(audio["data"])
@@ -884,12 +624,11 @@ def run(args):
         raise AlignError("audio-invalid", "Failed to load audio: %s" % e)
 
     progress("Aligning words...", 25)
-    # processingSec times the alignment calls only (not imports or model
+    # processingSec times the alignment loop only (not imports or model
     # load), so it can be compared with the audio duration.
     started = time.time()
     try:
-        results = align_segments(module, segments, request["padMs"], audio["durationMs"],
-                                 loaded, metadata, waveform, device,
+        results = align_segments(loaded, model, segments, request["padMs"], audio, waveform,
                                  not_prepared_message(language, model["name"],
                                                       "a download was needed during alignment"))
     except AlignError:
@@ -898,8 +637,16 @@ def run(args):
         raise AlignError("alignment-failed", "Word alignment failed: %s" % e)
     processing_sec = round(time.time() - started, 3)
 
-    return build_envelope(whisperx_version, model["name"], language, device,
-                          processing_sec, results)
+    return build_envelope(model["name"], language, device, processing_sec, results)
+
+
+def fetch_model(language):
+    """Setup only (network allowed): download the language's model into the
+    standard cache, or just read it if it is already there."""
+    model = resolve_model(normalise_language(language))
+    if model is None:
+        raise AlignError("language-unsupported", unsupported_language_message(language))
+    models().fetch(model)
 
 
 def write_envelope(path, envelope):
@@ -933,7 +680,7 @@ class _ScrubbingParser(argparse.ArgumentParser):
 
 
 def build_parser():
-    parser = _ScrubbingParser(description="Forced word alignment via WhisperX (offline)")
+    parser = _ScrubbingParser(description="Forced word alignment with a local wav2vec2 model (offline)")
     parser.add_argument("--audio", help="Path to input WAV (16 kHz, mono, 16-bit PCM)")
     parser.add_argument("--input", help="Path to the words JSON to align")
     parser.add_argument("--output", help="Path to write the result envelope JSON")
@@ -952,7 +699,11 @@ def main(argv=None):
 
     if args.check:
         configure_environment(offline=True)
-        result = check_environment(args.language)
+        try:
+            result = check_environment(args.language)
+        except AlignError as e:
+            # For example a sibling module missing from an installation.
+            result = {"status": e.code, "message": e.message, "provider": provider_info()}
         print(json.dumps(result), flush=True)
         return 0
 

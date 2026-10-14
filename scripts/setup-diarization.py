@@ -6,9 +6,8 @@ Face cache, then checks in a fresh offline process that lib/diarize.py can
 load it. After this, diarization runs fully offline and needs no token.
 
 With --alignment it also prepares forced word alignment (lib/align.py): it
-downloads the NLTK punkt_tab data and the wav2vec2 alignment model for each
-language, then checks each language with lib/align.py --check in a fresh
-offline process. The speaker model is downloaded in the same run only if it
+downloads the wav2vec2 alignment model for each language, then checks each
+language with lib/align.py --check in a fresh offline process. The speaker model is downloaded in the same run only if it
 is not already prepared, so alignment can be added later without a token
 (the English, French, German, Spanish and Italian alignment models come from
 download.pytorch.org; other languages from public Hugging Face repos). The
@@ -377,28 +376,17 @@ def classify_alignment_error(exc, token):
     return "download-failed", "Alignment download failed: %s" % scrub(exc, token)
 
 
-def download_punkt():
-    """Fetch NLTK punkt_tab into NLTK's default data folder."""
-    import nltk
-    with contextlib.redirect_stdout(sys.stderr):
-        ok = nltk.download("punkt_tab", quiet=True, raise_on_error=True)
-    if ok is False:
-        raise SetupError("download-failed", "NLTK could not download punkt_tab.")
-
-
-def fetch_alignment_model(language):
+def fetch_alignment_model(align, language):
     """Load the alignment model once on the CPU so the caches fill.
 
-    WhisperX downloads the torchaudio checkpoint (torch hub) or the Hugging
-    Face snapshot when it is missing; when it is already cached nothing is
-    downloaded and the load just proves the files are readable.
+    lib/alignment_models.py (through align.fetch_model) downloads the
+    torchaudio checkpoint (torch hub) or the Hugging Face snapshot when it
+    is missing; when it is already cached nothing is downloaded and the
+    load just proves the files are readable. stdout must stay clean for the
+    JSON summary.
     """
-    # Imported inside the redirect: WhisperX's log handler binds to the
-    # current stdout, which must stay clean for the JSON summary.
     with contextlib.redirect_stdout(sys.stderr):
-        import whisperx.alignment
-        model, _ = whisperx.alignment.load_align_model(language, "cpu")
-    del model
+        align.fetch_model(language)
 
 
 def verify_alignment(align, language, environ):
@@ -435,7 +423,7 @@ def _language_entry(language, result):
         "message": result.get("message"),
         "model": result.get("model"),
         "modelPath": result.get("modelPath"),
-        "punktPath": result.get("punktPath"),
+        "punktPath": None,  # deprecated: Punkt is no longer used
     }
 
 
@@ -450,14 +438,7 @@ def alignment_summary(status, message, languages, entries, versions):
 
 
 def alignment_versions(align):
-    vi = align.current_version_info()
-    return {
-        "python": ".".join(str(p) for p in tuple(vi)[:3]),
-        "whisperx": align.package_version("whisperx"),
-        "torch": align.package_version("torch"),
-        "transformers": align.package_version("transformers"),
-        "nltk": align.package_version("nltk"),
-    }
+    return align.backend_versions()
 
 
 def check_alignment(align, languages):
@@ -482,34 +463,23 @@ def setup_alignment(align, languages, environ):
     entries = []
     try:
         progress("Word alignment: checking the Python environment...", 5)
-        problem = align.python_problem() or align.whisperx_problem(versions["whisperx"])
+        problem = align.python_problem()
         if problem:
             raise SetupError(*problem)
 
-        tables = align.model_tables()
         models = {}
         for lang in languages:
-            model = align.resolve_model(lang, tables)
+            model = align.resolve_model(lang)
             if model is None:
-                raise SetupError("language-unsupported",
-                                 align.unsupported_language_message(lang, tables))
+                raise SetupError("language-unsupported", align.unsupported_language_message(lang))
+            problem = align.dependency_problem(model)
+            if problem:
+                raise SetupError(*problem)
             models[lang] = model
-            if model["name"].startswith("VOXPOPULI_"):
-                # torchaudio documents the VoxPopuli ASR weights as CC BY-NC 4.0.
+            if model["licence"]:
+                # From the registry; for example the VoxPopuli ASR weights.
                 progress("Word alignment: note that the %s model for '%s' is licensed "
-                         "CC BY-NC 4.0 (non-commercial use only)." % (model["name"], lang), 8)
-
-        for punkt in sorted(set(m["punkt"] for m in models.values())):
-            ready, _ = align.punkt_status(punkt)
-            if not ready:
-                progress("Word alignment: downloading NLTK punkt_tab...", 10)
-                try:
-                    download_punkt()
-                except SetupError:
-                    raise
-                except Exception as e:
-                    raise SetupError(*classify_alignment_error(e, token))
-                break
+                         "%s." % (model["name"], lang, model["licence"]), 8)
 
         count = len(languages)
         for n, lang in enumerate(languages):
@@ -519,7 +489,9 @@ def setup_alignment(align, languages, environ):
                      % ("checking" if ready else "downloading", model["name"], lang),
                      15 + int(60 * n / count))
             try:
-                fetch_alignment_model(lang)
+                fetch_alignment_model(align, lang)
+            except align.AlignError as e:
+                raise SetupError(e.code, e.message)
             except Exception as e:
                 raise SetupError(*classify_alignment_error(e, token))
 

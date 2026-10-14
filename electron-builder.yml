@@ -39,6 +39,16 @@ extraResources:
     to: lib/requirements.txt
   - from: lib/align.py
     to: lib/align.py
+  # align.py imports these siblings by path; Python cannot read inside the asar.
+  - from: lib/alignment_models.py
+    to: lib/alignment_models.py
+  - from: lib/alignment_core.py
+    to: lib/alignment_core.py
+  # Licence notices for the code adapted in alignment_core.py.
+  - from: lib/third_party/whisperx-LICENSE.txt
+    to: lib/third_party/whisperx-LICENSE.txt
+  - from: lib/third_party/torchaudio-LICENSE.txt
+    to: lib/third_party/torchaudio-LICENSE.txt
   - from: lib/requirements-alignment.txt
     to: lib/requirements-alignment.txt
   - from: scripts/setup-diarization.py

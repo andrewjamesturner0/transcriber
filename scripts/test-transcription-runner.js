@@ -589,10 +589,10 @@ test('cancellation during diarisation propagates and cleans up', async () => {
 console.log('\nForced alignment pipeline tests\n');
 
 /** Aligner stub: every word measured at a fixed position, optionally overridden. */
-function alignAll(times, quality = 'measured') {
+function alignAll(times, quality = 'measured', provider = { name: 'transcriber-align', version: '1.0' }) {
   return (input) => ({
     format: 'transcriber-alignment', version: 1,
-    provider: { name: 'whisperx', version: '3.8.6', model: 'WAV2VEC2_ASR_BASE_960H', language: input.language },
+    provider: { ...provider, model: 'WAV2VEC2_ASR_BASE_960H', language: input.language },
     device: 'cpu', processingSec: 1,
     segments: input.segments.map((seg) => ({
       index: seg.index, status: 'aligned', reason: null,
@@ -634,9 +634,25 @@ test('forced alignment: one Whisper pass without DTW, aligner before diariser, f
   assert(align.alignInput.language === 'en' && align.alignInput.segments[0].words.join(' ') === 'Ready? Yes. Continue.', JSON.stringify(align.alignInput));
   const sa = result.json.speakerAttribution;
   assert(sa.words.every((x) => x.timingSource === 'forced' && x.timingQuality === 'measured'), JSON.stringify(sa.summary.timing));
-  assert(sa.alignment.status === 'aligned' && sa.alignment.provider.name === 'whisperx', JSON.stringify(sa.alignment));
+  assert(sa.alignment.status === 'aligned' && sa.alignment.provider.name === 'transcriber-align', JSON.stringify(sa.alignment));
+  assert(sa.alignment.provider.version === '1.0' && sa.alignment.provider.language === 'en', JSON.stringify(sa.alignment));
   assert(sa.whisperDtw.requested === false, 'DTW not requested');
   assert(result.text.includes('[Speaker 1] Ready? Yes.'), result.text);
+});
+
+test('forced alignment: an older WhisperX-provider envelope is still accepted', async () => {
+  const legacy = { name: 'whisperx', version: '3.8.6' };
+  const { result } = await runForced({ alignOutput: alignAll([[100, 700], [700, 850], [2100, 2700]], 'measured', legacy) });
+  const sa = result.json.speakerAttribution;
+  assert(sa.alignment.status === 'aligned' && sa.alignment.provider.name === 'whisperx', JSON.stringify(sa.alignment));
+  assert(sa.words.every((x) => x.timingSource === 'forced'), JSON.stringify(sa.summary.timing));
+});
+
+test('forced alignment: interpolated words (no recognised characters) use their times honestly', async () => {
+  const { result } = await runForced({ alignOutput: alignAll([[100, 700], [700, 850], [2100, 2700]], 'interpolated') });
+  const words = result.json.speakerAttribution.words;
+  assert(words.every((x) => x.timingSource === 'forced' && x.timingQuality === 'interpolated'), JSON.stringify(words));
+  assert(words[1].startMs === 700 && words[1].endMs === 850, JSON.stringify(words[1]));
 });
 
 test('forced alignment: unaligned words keep Whisper timing with a reason', async () => {

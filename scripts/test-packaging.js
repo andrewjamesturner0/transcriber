@@ -124,12 +124,37 @@ test('lib/diarize.py IS in extraResources (needed for Python subprocess)', () =>
 test('Python helpers and requirements are packaged individually', () => {
   const patterns = parseExtraResources(path.join(ROOT, 'electron-builder.yml'));
   const want = ['lib/diarize.py', 'lib/requirements.txt', 'lib/align.py',
+    'lib/alignment_models.py', 'lib/alignment_core.py',
     'lib/requirements-alignment.txt', 'scripts/setup-diarization.py'];
   for (const w of want) {
     assert(patterns.includes(w), `${w} must be in extraResources; got ${patterns.join(', ')}`);
     assert(fs.existsSync(path.join(ROOT, w)), `${w} must exist`);
   }
   assert(!patterns.some((p) => p === 'scripts/' || p === 'scripts'), 'scripts/ must not be packaged wholesale');
+});
+
+test('every Python sibling align.py loads, and every notice it cites, is packaged', () => {
+  const patterns = parseExtraResources(path.join(ROOT, 'electron-builder.yml'));
+  const align = fs.readFileSync(path.join(ROOT, 'lib/align.py'), 'utf-8');
+  const siblings = [...align.matchAll(/_sibling\("([a-z_]+)"\)/g)].map((m) => `lib/${m[1]}.py`);
+  assert(siblings.length >= 2, `expected align.py to load its siblings, found ${siblings.join(', ')}`);
+  const cited = [];
+  for (const file of ['lib/alignment_core.py', 'lib/alignment_models.py']) {
+    const src = fs.readFileSync(path.join(ROOT, file), 'utf-8');
+    cited.push(...[...src.matchAll(/(lib\/third_party\/[A-Za-z0-9_.-]+\.txt)/g)].map((m) => m[1]));
+  }
+  assert(cited.length >= 2, 'alignment_core.py must cite its upstream notice files');
+  for (const file of [...new Set([...siblings, ...cited])]) {
+    assert(fs.existsSync(path.join(ROOT, file)), `${file} must exist`);
+    assert(patterns.includes(file), `${file} must be in extraResources; got ${patterns.join(', ')}`);
+  }
+  for (const [file, holder] of [['lib/third_party/whisperx-LICENSE.txt', 'Copyright (c) 2024, Max Bain'],
+    ['lib/third_party/torchaudio-LICENSE.txt', 'Copyright (c) 2017 Facebook Inc. (Soumith Chintala)']]) {
+    const text = fs.readFileSync(path.join(ROOT, file), 'utf-8');
+    assert(text.startsWith('BSD 2-Clause License') && text.includes(holder), `${file} must keep its notice`);
+    assert(text.includes('THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"'),
+      `${file} must keep the disclaimer`);
+  }
 });
 
 test('all lib JS files required by main.js are NOT individually in extraResources', () => {

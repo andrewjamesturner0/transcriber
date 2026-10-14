@@ -806,10 +806,16 @@ test('getStatus reports only cpu when vulkan binary missing', () => {
 
 test('getAlignmentInfo runs align.py --check with the job Python and caches per language', async () => {
   const py = '/opt/venv/bin/python';
-  const mock = makePythonSpawn({ runnable: [py], check: JSON.stringify({ status: 'ready', message: 'ok', versions: { whisperx: '3.8.6' }, model: { name: 'WAV2VEC2_ASR_BASE_960H', type: 'torchaudio' } }) });
+  const mock = makePythonSpawn({ runnable: [py], check: JSON.stringify({
+    status: 'ready', message: 'ok', provider: { name: 'transcriber-align', version: '1.0' },
+    versions: { torch: '2.8.0', whisperx: null, nltk: null }, punktReady: null,
+    model: { name: 'WAV2VEC2_ASR_BASE_960H', type: 'torchaudio' },
+  }) });
   const caps = makeCaps(mock, { env: { TRANSCRIBER_PYTHON: py } });
   const info = await caps.getAlignmentInfo({ language: 'en' });
-  assert(info.alignmentStatus === 'ready' && info.whisperxVersion === '3.8.6', JSON.stringify(info));
+  assert(info.alignmentStatus === 'ready', JSON.stringify(info));
+  assert(info.alignmentProvider.name === 'transcriber-align' && info.alignmentProvider.version === '1.0', JSON.stringify(info));
+  assert(info.whisperxVersion === null, 'deprecated whisperxVersion is null for the local aligner');
   const call = mock.calls.find((c) => c.args.includes('--check'));
   assert(call.cmd === py && call.args[0] === '/fake/res/lib/align.py' && call.args.join(' ').includes('--language en'), JSON.stringify(call));
   const before = mock.calls.length;
@@ -828,6 +834,16 @@ test('getAlignmentInfo reports missing Python, missing script and unreadable out
   assert(garbled.alignmentStatus === 'unknown', garbled.alignmentStatus);
   const missing = await makeCaps(makePythonSpawn({ check: JSON.stringify({ status: 'alignment-missing', message: 'pip install' }) })).getAlignmentInfo();
   assert(missing.alignmentStatus === 'alignment-missing' && missing.alignmentMessage === 'pip install', JSON.stringify(missing));
+  assert(missing.alignmentProvider === null, 'no provider when the helper does not report one');
+});
+
+test('getAlignmentInfo still reads an older WhisperX-based helper', async () => {
+  const legacy = await makeCaps(makePythonSpawn({ check: JSON.stringify({
+    status: 'ready', message: 'ok', versions: { whisperx: '3.8.6' }, punktReady: true,
+    model: { name: 'WAV2VEC2_ASR_BASE_960H', type: 'torchaudio' },
+  }) })).getAlignmentInfo();
+  assert(legacy.alignmentStatus === 'ready' && legacy.whisperxVersion === '3.8.6', JSON.stringify(legacy));
+  assert(legacy.alignmentProvider === null, JSON.stringify(legacy));
 });
 
 runAll();

@@ -291,6 +291,22 @@ const asyncTests = [
     assert(/Download the alignment model in Settings/.test(el('align-option-help').textContent), el('align-option-help').textContent);
     assert(el('alignment-setup-block').hidden === false, 'download button visible');
   }],
+  ['alignment packages missing or too old: plain status, setup guide help, no package name', async () => {
+    for (const [status, text] of [['alignment-missing', 'Word alignment not installed (optional)'],
+      ['alignment-unsupported', 'Word alignment needs newer packages (optional)']]) {
+      const { el, fire } = await loadRenderer({
+        checkPythonSetup: () => Promise.resolve(READY_PY),
+        checkAlignment: () => Promise.resolve({ alignmentStatus: status, whisperxVersion: null }),
+      });
+      assert(el('alignment-status-text').textContent === text, el('alignment-status-text').textContent);
+      assert(!/whisperx|null/i.test(el('alignment-status-text').textContent), 'no stale package name');
+      el('diarize-toggle').checked = true;
+      fire('diarize-toggle', 'change');
+      assert(el('align-toggle').disabled === true, 'disabled');
+      assert(/setup guide in Settings/.test(el('align-option-help').textContent), el('align-option-help').textContent);
+      assert(el('alignment-setup-block').hidden === true, 'no download button: packages come first');
+    }
+  }],
   ['alignment download button calls setup with alignment and re-checks', async () => {
     const calls = [];
     let status = 'model-not-prepared';
