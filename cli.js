@@ -31,6 +31,7 @@ paths.initPaths({ isPackaged: false, resourcesPath: __dirname });
 const models = require('./lib/models');
 const Capabilities = require('./lib/capabilities');
 const { createTranscriptionRunner } = require('./lib/transcription-runner');
+const { isEnglishOnlyModel } = require('./lib/transcript-timing');
 
 // ---------------------------------------------------------------------------
 // Help text
@@ -284,7 +285,7 @@ async function cmdTranscribe(argv) {
       // English-only models are checked fully. For other models the language
       // is only known after Whisper runs, so only the packages are checked
       // here; a missing language model falls back to Whisper timing.
-      const englishOnly = /\.en(?:$|-)/.test(modelId);
+      const englishOnly = isEnglishOnlyModel(modelId);
       const alignInfo = await capabilities.getAlignmentInfo({ language: 'en' });
       const okStatuses = englishOnly ? ['ready'] : ['ready', 'model-not-prepared'];
       if (!okStatuses.includes(alignInfo.alignmentStatus)) {

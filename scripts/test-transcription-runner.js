@@ -134,7 +134,7 @@ function makeCapabilities(overrides = {}) {
     isDtwSupported: () => true,
     disableDtw: () => {},
     disableGpu: () => {},
-    getPythonCommand: async () => null,
+    getPythonSpawn: async () => null,
     ...overrides,
   };
 }
@@ -436,7 +436,7 @@ const READY_YES_SPEAKERS = [
 test('diarised job returns merged text and additive JSON evidence', async () => {
   const runner = makeRunner({
     spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, diarizeOutput: READY_YES_SPEAKERS }),
-    capabilities: { getPythonCommand: async () => 'python3' },
+    capabilities: { getPythonSpawn: async () => ({ command: 'python3', args: [] }) },
   });
   const plain = await runner.runTranscription({
     filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true },
@@ -476,7 +476,7 @@ async function runDiarised(spawnOpts, extra = {}) {
   const diarizeEvents = [];
   const runner = makeRunner({
     spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, calls, ...spawnOpts }),
-    capabilities: { getPythonCommand: async () => 'python3' },
+    capabilities: { getPythonSpawn: async () => ({ command: 'python3', args: [] }) },
   });
   const result = await runner.runTranscription({
     filePath: '/fake/test.wav', modelId: 'tiny.en',
@@ -568,7 +568,7 @@ test('cancellation during diarisation propagates and cleans up', async () => {
   const calls = [];
   const runner = makeRunner({
     spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, diarizeOutput: envelope(READY_YES_SPEAKERS, null), calls, hang: true }),
-    capabilities: { getPythonCommand: async () => 'python3' },
+    capabilities: { getPythonSpawn: async () => ({ command: 'python3', args: [] }) },
   });
   const promise = runner.runTranscription({
     filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, outputJson: true },
@@ -612,7 +612,7 @@ async function runForced(spawnOpts, options = {}) {
   const progress = [];
   const runner = makeRunner({
     spawn: pipelineSpawn({ whisperJson: READY_YES_NO_DTW, calls, diarizeOutput: envelope(READY_YES_SPEAKERS, null), ...spawnOpts }),
-    capabilities: { getPythonCommand: async () => 'python3' },
+    capabilities: { getPythonSpawn: async () => ({ command: 'python3', args: [] }) },
   });
   const result = await runner.runTranscription({
     filePath: '/fake/test.wav', modelId: 'tiny.en',
@@ -671,7 +671,7 @@ test('default and plain jobs never start the aligner', async () => {
     const calls = [];
     const runner = makeRunner({
       spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, calls, diarizeOutput: envelope(READY_YES_SPEAKERS, null) }),
-      capabilities: { getPythonCommand: async () => 'python3' },
+      capabilities: { getPythonSpawn: async () => ({ command: 'python3', args: [] }) },
     });
     await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options, onProgress: () => {}, onDiarizeProgress: () => {} });
     assert(!calls.some((c) => c.cmd === 'python3' && c.args[0].endsWith('align.py')), JSON.stringify(options));
@@ -696,7 +696,7 @@ test('cancellation during alignment propagates, skips diarisation and cleans up'
   const calls = [];
   const runner = makeRunner({
     spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, calls, alignOutput: undefined, hangAlign: true }),
-    capabilities: { getPythonCommand: async () => 'python3' },
+    capabilities: { getPythonSpawn: async () => ({ command: 'python3', args: [] }) },
   });
   const promise = runner.runTranscription({
     filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, alignment: 'forced' },
