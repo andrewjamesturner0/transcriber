@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-10-14
+
+### Changed
+
+- Updated Electron from 44.3.0 to 44.7.0.
+- Updated the bundled Windows FFmpeg build and verified the FFmpeg checksums for all platforms.
+
+### Fixed
+
+- Restored Windows release builds by updating the Vulkan SDK to 1.3.296.0, with matching SPIR-V headers, after the previous SDK download became unavailable.
+
 ## [0.3.2] - 2026-09-15
 
 ### Fixed
