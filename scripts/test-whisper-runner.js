@@ -189,6 +189,16 @@ test('tdrz model uses --tinydiarize', async () => {
   assert(!wcall.args.includes('--output-json-full'), 'tdrz should not use --output-json-full');
 });
 
+test('default diarised job keeps flash attention and ordinary timing even when DTW is supported', async () => {
+  const { spawn, calls } = captureSpawn();
+  const runner = makeRunner({ spawn });
+  const result = await runner.transcribe({ ...BASE, options: { diarization: true } });
+  assert(calls[0].args.includes('--output-json-full'), 'word offsets still requested');
+  assert(!calls[0].args.includes('--dtw'), 'default must not enable DTW');
+  assert(!calls[0].args.includes('--no-flash-attn'), 'default decoder must keep flash attention');
+  assert(result.dtw.requested === false && result.dtw.disabledReason === null, 'DTW is not requested');
+});
+
 test('diarization + DTW supported adds --output-json-full + --dtw', async () => {
   const { spawn, calls } = captureSpawn();
   const runner = makeRunner({ spawn });
@@ -197,7 +207,7 @@ test('diarization + DTW supported adds --output-json-full + --dtw', async () => 
     modelSpec: MODEL_SPEC,
     modelPath: '/fake/models/ggml-tiny.en.bin',
     wavPath: '/fake/test.wav',
-    options: { diarization: true },
+    options: { diarization: true, dtw: true },
     onProgress: () => {},
   });
 
@@ -212,7 +222,7 @@ test('diarised DTW job adds --no-flash-attn exactly once, next to --dtw', async 
   const { spawn, calls } = captureSpawn();
   const runner = makeRunner({ spawn });
 
-  const result = await runner.transcribe({ ...BASE, options: { diarization: true } });
+  const result = await runner.transcribe({ ...BASE, options: { diarization: true, dtw: true } });
 
   const args = calls[0].args;
   assert(count(args, '--no-flash-attn') === 1, `--no-flash-attn should appear once: ${args.join(' ')}`);
@@ -265,7 +275,7 @@ test('outputJson-only job args are unchanged (no DTW flags)', async () => {
 test('tdrz model does not request DTW', async () => {
   const { spawn } = captureSpawn();
   const runner = makeRunner({ spawn });
-  const result = await runner.transcribe({ ...BASE, modelSpec: TDRZ_SPEC, options: { diarization: true } });
+  const result = await runner.transcribe({ ...BASE, modelSpec: TDRZ_SPEC, options: { diarization: true, dtw: true } });
   assert(result.dtw.requested === false, 'tdrz should not request DTW');
 });
 
@@ -280,7 +290,7 @@ test('DTW support is checked for the executable that will run (vulkan)', async (
     },
   });
 
-  const result = await runner.transcribe({ ...BASE, options: { diarization: true } });
+  const result = await runner.transcribe({ ...BASE, options: { diarization: true, dtw: true } });
 
   assert(calls[0].cmd.includes('vulkan'), 'vulkan binary should run');
   assert(asked[0] === 'vulkan', `support should be asked for vulkan, got ${asked.join(',')}`);
@@ -297,7 +307,7 @@ test('helpers: strip removes both DTW flags; warning finder matches the flash_at
   assert(_findDtwDisableWarning('foo\n' + FLASH_WARNING + 'bar\n') === FLASH_WARNING.trim(), 'flash_attn warning');
   assert(_findDtwDisableWarning('aheads: dtw requested but model lacks heads - disabling dtw\n'), 'generic dtw disabling line');
   assert(_findDtwDisableWarning('whisper_init: dtw = 1\nflash attn = 0\n') === null, 'param dump is not a warning');
-  const args = _buildWhisperArgs('m', 'w', 'p', { diarization: true }, MODEL_SPEC, () => true);
+  const args = _buildWhisperArgs('m', 'w', 'p', { diarization: true, dtw: true }, MODEL_SPEC, () => true);
   assert(count(args, '--no-flash-attn') === 1, 'builder adds --no-flash-attn once');
 });
 
@@ -324,7 +334,7 @@ test('stderr flash_attn disable warning sets dtw.disabledReason and does not ret
   };
   const runner = makeRunner({ spawn, log: (m) => logs.push(m) });
 
-  const result = await runner.transcribe({ ...BASE, options: { diarization: true } });
+  const result = await runner.transcribe({ ...BASE, options: { diarization: true, dtw: true } });
 
   assert(spawnCount === 1, `expected no retry, got ${spawnCount} spawns`);
   assert(result.output === 'text', `output should be kept, got '${result.output}'`);
@@ -351,7 +361,7 @@ test('diarization + DTW unsupported skips --dtw', async () => {
     modelSpec: MODEL_SPEC,
     modelPath: '/fake/models/ggml-tiny.en.bin',
     wavPath: '/fake/test.wav',
-    options: { diarization: true },
+    options: { diarization: true, dtw: true },
     onProgress: () => {},
   });
 
@@ -415,7 +425,7 @@ test('DTW error disables DTW and retries without --dtw', async () => {
     modelSpec: MODEL_SPEC,
     modelPath: '/fake/models/ggml-tiny.en.bin',
     wavPath: '/fake/test.wav',
-    options: { diarization: true },
+    options: { diarization: true, dtw: true },
     onProgress: () => {},
   });
 
@@ -447,7 +457,7 @@ test('DTW error on GPU retries on the same GPU binary and disables DTW only for 
     },
   });
 
-  const result = await runner.transcribe({ ...BASE, options: { diarization: true } });
+  const result = await runner.transcribe({ ...BASE, options: { diarization: true, dtw: true } });
 
   assert(calls.length === 2, `expected 2 spawns, got ${calls.length}`);
   assert(calls[1].cmd.includes('vulkan'), 'DTW retry should stay on the vulkan binary');
@@ -478,7 +488,7 @@ test('DTW error + retry also fails throws original error', async () => {
       modelSpec: MODEL_SPEC,
       modelPath: '/fake/models/ggml-tiny.en.bin',
       wavPath: '/fake/test.wav',
-      options: { diarization: true },
+      options: { diarization: true, dtw: true },
       onProgress: () => {},
     });
     assert(false, 'should have thrown');
@@ -503,7 +513,7 @@ test('GPU failure falls back to CPU with DTW args recomputed for CPU (CPU suppor
     capabilities: { getActiveBackend: () => 'vulkan', isDtwSupported: (b) => b === 'cpu' },
   });
 
-  const result = await runner.transcribe({ ...BASE, options: { diarization: true } });
+  const result = await runner.transcribe({ ...BASE, options: { diarization: true, dtw: true } });
 
   assert(!calls[0].args.includes('--dtw'), 'vulkan run should have no DTW flags');
   assert(calls[1].cmd.includes('/cpu/'), 'second run should use CPU binary');
@@ -525,7 +535,7 @@ test('GPU failure falls back to CPU and drops DTW args when CPU lacks DTW', asyn
     capabilities: { getActiveBackend: () => 'vulkan', isDtwSupported: (b) => b === 'vulkan' },
   });
 
-  const result = await runner.transcribe({ ...BASE, options: { diarization: true } });
+  const result = await runner.transcribe({ ...BASE, options: { diarization: true, dtw: true } });
 
   assert(calls[0].args.includes('--dtw') && calls[0].args.includes('--no-flash-attn'), 'vulkan run had DTW');
   assert(!calls[1].args.includes('--dtw') && !calls[1].args.includes('--no-flash-attn'),
@@ -542,7 +552,7 @@ test('GPU failure + CPU fallback failure rethrows the original error', async () 
   };
   const runner = makeRunner({ spawn, capabilities: { getActiveBackend: () => 'vulkan' } });
   try {
-    await runner.transcribe({ ...BASE, options: { diarization: true } });
+    await runner.transcribe({ ...BASE, options: { diarization: true, dtw: true } });
     assert(false, 'should have thrown');
   } catch (err) {
     assert(err.message.includes('ORIGINAL vulkan failure'), `expected original error, got '${err.message}'`);
@@ -724,7 +734,7 @@ test('Cancellation mid-run on a diarised GPU job never retries', async () => {
   const controller = new AbortController();
   const runner = makeRunner({ spawn, capabilities: { getActiveBackend: () => 'vulkan' } });
 
-  const promise = runner.transcribe({ ...BASE, options: { diarization: true }, signal: controller.signal });
+  const promise = runner.transcribe({ ...BASE, options: { diarization: true, dtw: true }, signal: controller.signal });
   await new Promise(resolve => setTimeout(resolve, 10));
   controller.abort();
 
@@ -747,7 +757,7 @@ test('Cancellation during DTW retry throws Cancelled with no further fallback', 
   const controller = new AbortController();
   const runner = makeRunner({ spawn, capabilities: { getActiveBackend: () => 'vulkan' } });
 
-  const promise = runner.transcribe({ ...BASE, options: { diarization: true }, signal: controller.signal });
+  const promise = runner.transcribe({ ...BASE, options: { diarization: true, dtw: true }, signal: controller.signal });
   await new Promise(resolve => setTimeout(resolve, 10));
   controller.abort();
 

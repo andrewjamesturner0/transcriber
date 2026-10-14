@@ -191,9 +191,24 @@ test('transcribe --alignment forced without --diarize is rejected before any wor
   }
 });
 
+test('transcribe --dtw requires diarisation and Whisper timing', () => {
+  const tmpFile = path.join(os.tmpdir(), `transcriber-dtw-${process.pid}.wav`);
+  fs.writeFileSync(tmpFile, 'test');
+  try {
+    for (const flags of [['--dtw'], ['--dtw', '--diarize', '--alignment', 'forced']]) {
+      const r = runCli(['transcribe', tmpFile, ...flags]);
+      assert(r.status !== 0, 'incompatible DTW flags must fail');
+      assert(r.stderr.includes('--dtw needs --diarize and --alignment whisper'), r.stderr);
+    }
+    const r = runCli(['transcribe', tmpFile, '--dtw', '--diarize', '--backend', 'cpu'],
+      { env: { TRANSCRIBER_PYTHON: '/no/such/python' } });
+    assert(!r.stderr.includes('Unknown flag'), r.stderr);
+  } finally { fs.unlinkSync(tmpFile); }
+});
+
 test('transcribe --help documents --alignment', () => {
   const r = runCli(['transcribe', '--help']);
-  assert(r.status === 0 && r.stdout.includes('--alignment whisper|forced'), r.stdout);
+  assert(r.status === 0 && r.stdout.includes('--alignment whisper|forced') && r.stdout.includes('--dtw'), r.stdout);
 });
 
 test('transcribe accepts --anti-corruption flag combo (parses successfully)', () => {

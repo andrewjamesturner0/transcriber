@@ -68,6 +68,8 @@ Options:
                           "forced" re-times words against the audio before
                           speakers are assigned; needs --diarize and the
                           optional alignment setup
+  --dtw                   opt in to experimental DTW timing; needs --diarize
+                          and --alignment whisper; disables flash attention
   --quiet                 suppress progress output on stderr
   -h, --help              show this help and exit
 `;
@@ -162,6 +164,7 @@ const TRANSCRIBE_SPEC = {
   '--hf-token': { takesValue: true },
   '--num-speakers': { takesValue: true },
   '--alignment': { takesValue: true },
+  '--dtw': { takesValue: false },
   '--quiet': { takesValue: false },
   '--help': { takesValue: false },
   '-h': { takesValue: false },
@@ -237,6 +240,10 @@ async function cmdTranscribe(argv) {
   }
   if (alignment === 'forced' && !diarize) {
     die('transcribe: --alignment forced needs --diarize');
+  }
+  const dtw = !!flags['--dtw'];
+  if (dtw && (!diarize || alignment === 'forced')) {
+    die('transcribe: --dtw needs --diarize and --alignment whisper');
   }
   const quiet = !!flags['--quiet'];
   const outputPath = flags['--output'];
@@ -321,6 +328,7 @@ async function cmdTranscribe(argv) {
         antiCorruption: !!flags['--anti-corruption'],
         numSpeakers,
         alignment,
+        dtw,
         outputJson: format === 'json',
       },
       signal: abortController.signal,

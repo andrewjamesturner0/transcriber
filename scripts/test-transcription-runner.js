@@ -245,7 +245,7 @@ test('diarization uses --output-json-full + --dtw', async () => {
   const { spawn, calls } = captureSpawn();
   const runner = makeRunner({ spawn });
 
-  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true }, onProgress: () => {} }); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, dtw: true }, onProgress: () => {} }); } catch (_) {}
 
   const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
   assert(whisperCall, 'whisper should be called');
@@ -264,7 +264,7 @@ test('diarization without DTW support skips --dtw', async () => {
     capabilities: { isDtwSupported: () => false },
   });
 
-  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true }, onProgress: () => {} }); } catch (_) {}
+  try { await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, dtw: true }, onProgress: () => {} }); } catch (_) {}
 
   const whisperCall = calls.find(c => c.cmd.includes('whisper-cli'));
   assert(whisperCall.args.includes('--output-json-full'), 'should still use JSON output');
@@ -439,14 +439,14 @@ test('diarised job returns merged text and additive JSON evidence', async () => 
     capabilities: { getPythonSpawn: async () => ({ command: 'python3', args: [] }) },
   });
   const plain = await runner.runTranscription({
-    filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true },
+    filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, dtw: true },
     onProgress: () => {}, onDiarizeProgress: () => {},
   });
   assert(typeof plain.text === 'string' && !('json' in plain), 'text-only result without outputJson');
   assert(plain.text.includes('[Speaker 2] Yes.'), plain.text);
 
   const result = await runner.runTranscription({
-    filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, outputJson: true },
+    filePath: '/fake/test.wav', modelId: 'tiny.en', options: { diarization: true, dtw: true, outputJson: true },
     onProgress: () => {}, onDiarizeProgress: () => {},
   });
   const j = result.json;
@@ -678,15 +678,15 @@ test('default and plain jobs never start the aligner', async () => {
   }
 });
 
-test('invalid alignment values and forced without diarisation fail before any process starts', async () => {
-  for (const options of [{ diarization: true, alignment: 'wav2vec' }, { alignment: 'forced' }]) {
+test('invalid timing options fail before any process starts', async () => {
+  for (const options of [{ diarization: true, alignment: 'wav2vec' }, { alignment: 'forced' }, { dtw: true }, { diarization: true, alignment: 'forced', dtw: true }]) {
     const calls = [];
     const runner = makeRunner({ spawn: pipelineSpawn({ whisperJson: READY_YES_JSON, calls }) });
     let caught = null;
     try {
       await runner.runTranscription({ filePath: '/fake/test.wav', modelId: 'tiny.en', options, onProgress: () => {} });
     } catch (e) { caught = e; }
-    assert(caught && /alignment|diarisation/i.test(caught.message), caught && caught.message);
+    assert(caught && /alignment|diarisation|DTW/i.test(caught.message), caught && caught.message);
     assert(calls.length === 0, `no subprocess expected, got ${calls.length}`);
   }
 });

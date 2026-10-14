@@ -36,8 +36,9 @@ Invalid values (negative, non-finite, reversed, `-1`) are rejected and the
 next source is used; `timingFallback` records why. Zero is a valid time.
 Recognised text and word order are never changed.
 
-DTW needs flash attention off (`--no-flash-attn`); whisper.cpp otherwise
-disables DTW silently. Turning flash attention off can change the
+Ordinary Whisper token timing is the default. CLI `--dtw` opts in to
+experimental DTW timing, which needs flash attention off (`--no-flash-attn`);
+whisper.cpp otherwise disables DTW silently. Turning flash attention off can change the
 recognised text. Forced-alignment jobs therefore run Whisper without DTW.
 
 ## Speaker assignment (`lib/diarize-merge.js`)
@@ -68,8 +69,9 @@ merging, so short replies and Unknown survive.
   versions, device) and `speakerAttribution` (per-word timing, speaker,
   assignment and evidence, DTW status and alignment status).
 
-If diarisation fails the job returns the plain transcript. If alignment
-fails, words keep Whisper timing and the job says so once.
+If diarisation fails during inference the job returns the plain transcript
+(JSON callers receive only a `text` field). CLI readiness failures exit before
+transcription. If alignment fails, words keep Whisper timing and the job says so once.
 
 ## Debugging
 

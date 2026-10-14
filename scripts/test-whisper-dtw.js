@@ -187,7 +187,7 @@ async function main() {
   // pass()/fail() call process.exit, so clean up from the exit handler.
   if (!keep) process.on('exit', () => fs.rmSync(workDir, { recursive: true, force: true }));
 
-  const args = _buildWhisperArgs(modelPath, audioPath, jsonPrefix, { diarization: true }, modelSpec, () => true);
+  const args = _buildWhisperArgs(modelPath, audioPath, jsonPrefix, { diarization: true, dtw: true }, modelSpec, () => true);
   if (!args.includes('--dtw') || !args.includes('--no-flash-attn')) {
     fail(`production arg builder did not add --dtw and --no-flash-attn: ${args.join(' ')}`);
   }

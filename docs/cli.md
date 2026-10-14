@@ -2,7 +2,7 @@
 
 A command-line interface to the same transcription pipeline used by the GUI: FFmpeg converts the input to 16 kHz mono WAV, whisper.cpp transcribes it, and pyannote (optional) labels speakers. No window subsystem is launched, so the CLI is suitable for headless servers, faster dev loops, and programmatic use.
 
-The CLI is an in-repo entry point. After cloning and running `scripts/setup.sh` (Linux) or `scripts/build.sh --skip-deps` (Windows), invoke it as:
+The CLI is an in-repo entry point. After cloning and preparing the platform binaries and a Whisper model (see [DEVELOPMENT.md](../DEVELOPMENT.md)), invoke it as:
 
 ```
 node cli.js <subcommand> [options]
@@ -42,9 +42,11 @@ Run the full pipeline on one input audio or video file.
 | `--backend auto\|cpu\|vulkan` | `auto` | Whisper backend. `auto` probes Vulkan and falls back to CPU. `cpu` skips the GPU probe entirely. |
 | `--format txt\|json` | `txt` | Output format. `txt` is plain transcript text. `json` is the full whisper JSON (segments with timestamps), augmented with speaker labels when `--diarize` is on. |
 | `--output <path>` | stdout | Write output to a file instead of stdout. |
-| `--diarize` | off | Enable pyannote speaker diarisation. Requires Python 3.9+, `pyannote.audio`, and a Hugging Face token. |
+| `--diarize` | off | Enable Community-1 speaker diarisation. Requires Python 3.10 to 3.13, the pinned packages and a prepared local speaker model. Inference needs no token. |
+| `--alignment whisper\|forced` | `whisper` | Word timing for speaker assignment. `forced` matches the existing words to the audio; requires `--diarize` and optional alignment setup. |
+| `--dtw` | off | Opt in to experimental DTW timing. Needs `--diarize` and `--alignment whisper`; disables flash attention and can change recognised text. |
 | `--anti-corruption` | off | Enable anti-corruption sampling flags (helps with repeating-line hallucinations). |
-| `--hf-token <token>` | `$HF_TOKEN` | Hugging Face token for diarisation. Falls back to the `HF_TOKEN` env var. |
+| `--hf-token <token>` | unused | Accepted for old scripts, but ignored. Use `HF_TOKEN` only with `scripts/setup-diarization.py` to download the speaker model. |
 | `--num-speakers <n>` | auto | Hint the diariser to expect exactly n speakers. |
 | `--quiet` | off | Suppress progress output on stderr. Errors still appear. |
 | `-h`, `--help` | | Print help text and exit 0. |
@@ -53,7 +55,8 @@ Capability detection is lazy:
 
 - `--backend cpu` skips the GPU probe.
 - The Python/pyannote probe runs only when `--diarize` is set.
-- The DTW probe runs only on the diarisation path.
+- Optional alignment readiness is checked for `--alignment forced`; English-only models use English, and multilingual models use Whisper's detected language during inference.
+- The DTW probe runs on the diarisation path and checks each executable for both `--dtw` and `--no-flash-attn`. Ordinary timing keeps flash attention by default. Only explicit `--dtw` enables DTW; it cannot be combined with forced alignment.
 
 Pressing Ctrl+C aborts the in-flight pipeline, cleans up the temp WAV via the existing AbortController, and exits 130. A second Ctrl+C is ignored; force-kill is not implemented in v1.
 
@@ -108,12 +111,41 @@ JSON output with timestamps, no diarisation, written to a file:
 node cli.js transcribe lecture.m4a --model medium.en --format json --output lecture.json
 ```
 
-Diarisation, token from environment:
+Download the speaker model once, then transcribe offline:
 
 ```bash
-export HF_TOKEN=hf_xxx
+HF_TOKEN=hf_xxx python scripts/setup-diarization.py
 node cli.js transcribe panel.wav --diarize --num-speakers 4 --model medium.en > panel.txt
 ```
+
+Optional alignment, after installing `lib/requirements-alignment.txt`:
+
+```bash
+python scripts/setup-diarization.py --alignment
+node cli.js transcribe panel.wav --model small.en --diarize --alignment forced --format json --output panel.json
+```
+
+If diarisation succeeds, JSON keeps `whisper`, `diarize` (regular timeline)
+and `merged`, and adds `diarizeExclusive`, `diarizeInfo` and
+`speakerAttribution`. The latter records word timing sources, speaker
+assignment evidence, DTW status and requested/actual alignment status.
+See [the pipeline guide](diarization.md#output).
+
+If alignment fails during inference, the job reports the failure and keeps
+Whisper timing. If diarisation fails during inference, it returns plain text;
+JSON callers receive `{ "text": "..." }` with no speaker fields. Missing
+prerequisites detected before transcription produce a non-zero exit instead.
+Neither alignment nor diarisation downloads missing models during a job.
+
+To test DTW explicitly (after speaker setup):
+
+```bash
+node cli.js transcribe panel.wav --model small.en --diarize --dtw --format json --output panel-dtw.json
+```
+
+DTW is off by default because disabling flash attention changed the recognised
+text and omitted short clips in the first benchmark. Check coverage as well
+as speaker error when comparing it with ordinary or forced timing.
 
 Quiet batch loop, suppress per-file progress:
 
@@ -142,8 +174,8 @@ The CLI assumes the platform binaries and any required models are already presen
 
 - `bin/<platform>/<backend>/whisper-cli[.exe]`
 - `bin/<platform>/ffmpeg[.exe]`
-- `models/<model-id>.bin` for the chosen model
+- `models/<filename>` for the chosen model (for example `models/ggml-small.en.bin`; see `lib/models.js`)
 
-Run `scripts/setup.sh` on Linux to fetch them, or `scripts/build.sh --skip-deps` on Windows. If a binary is missing, the CLI exits non-zero with an error naming the missing file. It does not fetch binaries itself.
+Run `scripts/setup.sh` on Linux, or follow the Windows-native setup in [DEVELOPMENT.md](../DEVELOPMENT.md#windows-native-build). `scripts/build.sh --skip-deps` only packages existing binaries; it does not fetch them. If a binary is missing, the CLI exits non-zero with an error naming the missing file. It does not fetch binaries itself.
 
-For diarisation prerequisites (Python, pyannote.audio, Hugging Face token), see [diarization-setup.md](diarization-setup.md).
+Set `TRANSCRIBER_PYTHON` to an interpreter path to use a virtual environment. For speaker and alignment packages, cache setup and the setup-only Hugging Face token, see [diarization-setup.md](diarization-setup.md).
