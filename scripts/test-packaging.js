@@ -7,8 +7,8 @@
  * in extraResources (which would move JS modules outside the asar, causing
  * "cannot find module" errors in packaged builds).
  *
- * Catches the class of bug where lib JS files are accidentally excluded
- * from the asar.
+ * Catches JS files accidentally excluded from the asar and private local
+ * files accidentally included in it.
  *
  * Usage:
  *     node scripts/test-packaging.js
@@ -148,6 +148,25 @@ test('all lib JS files required by main.js are NOT individually in extraResource
     assert(!isExcluded,
       `${mod} is required from main.js but also listed in extraResources. ` +
       'Move it inside the asar by removing the extraResources entry.');
+  }
+});
+
+test('credentials and private working data are excluded from app files', () => {
+  const src = fs.readFileSync(path.join(ROOT, 'electron-builder.yml'), 'utf-8');
+  const block = src.match(/^files:\n([\s\S]*?)(?=^\w+:)/m);
+  assert(block, 'files exclusions must be explicit; gitignore does not protect packaged files');
+  const patterns = [...block[1].matchAll(/^\s*-\s*["']([^"']+)["']/gm)].map(m => m[1]);
+  const included = patterns.filter(p => !p.startsWith('!'));
+  const excluded = patterns.filter(p => p.startsWith('!')).map(p => p.slice(1));
+  const selected = file => included.some(pattern => path.matchesGlob(file, pattern)) &&
+    !excluded.some(pattern => path.matchesGlob(file, pattern));
+  for (const file of ['.env', '.env.local', 'nested/.env', '.agents/envs/python',
+    '.agents/docs/private.md', 'Examples/recording.wav', 'Examples/reference.txt', '.build-whisper/samples/audio.wav',
+    '.build-vulkan/libwhisper.so', 'scratch-recording.wav']) {
+    assert(!selected(file), `${file} would enter the app archive`);
+  }
+  for (const file of ['main.js', 'preload.js', 'lib/align.py', 'lib/transcription-runner.js', 'renderer/index.html']) {
+    assert(selected(file), `${file} must remain available to package`);
   }
 });
 

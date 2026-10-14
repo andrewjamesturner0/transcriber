@@ -4,6 +4,30 @@ icon: assets/icon-512.png
 directories:
   output: dist
 
+# Gitignored credentials and local research data must not enter the app archive.
+files:
+  - "main.js"
+  - "preload.js"
+  - "cli.js"
+  - "lib/**"
+  - "renderer/**"
+  - "assets/**"
+  - "docs/**"
+  - "README.md"
+  - "DEVELOPMENT.md"
+  - "CHANGELOG.md"
+  - "CLAUDE.md"
+  - "CONTRIBUTING.md"
+  - "package.json"
+  - "LICENSE"
+  - "NOTICE"
+  - "THIRD-PARTY-LICENSES.json"
+  - "!**/.env"
+  - "!**/.env.*"
+  - "!.agents/**"
+  - "!Examples/**"
+  - "!.build-whisper/**"
+
 extraResources:
   - from: models/
     to: models/

@@ -13,3 +13,7 @@ Examples/
 AGENT_NOTES.md
 __pycache__/
 .agents/
+
+# Local credentials
+.env
+.env.*
