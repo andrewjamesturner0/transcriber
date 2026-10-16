@@ -81,16 +81,16 @@ test('enqueue preserves existing items', () => {
 
 console.log('\nRemove tests\n');
 
-test('remove only removes non-processing items', () => {
+test('remove protects active work and removes pending work', async () => {
   const q = createQueue();
-  q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
-  const items = q.getItems();
-  items[0].status = 'processing';
-
-  q.remove(items[0].id);
-  assert(q.getItems().length === 2, 'processing item should not be removed');
-  q.remove(items[1].id);
-  assert(q.getItems().length === 1, 'pending item should be removed');
+  const [active, pending] = q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
+  await q.processAll(async () => {
+    q.remove(active.id);
+    assert(q.getItems().length === 2, 'active item must remain');
+    q.remove(pending.id);
+    assert(q.getItems().length === 1, 'pending item must be removed');
+    return 'ok';
+  });
 });
 
 test('remove handles unknown id gracefully', () => {
@@ -104,54 +104,37 @@ test('remove handles unknown id gracefully', () => {
 
 console.log('\nClear tests\n');
 
-test('clear removes pending and error items, keeps processing and done', () => {
+test('clearAll removes retained errors and results when idle', async () => {
   const q = createQueue();
-  q.enqueue([makeFile('a.mp3'), makeFile('b.wav'), makeFile('c.mp3'), makeFile('d.wav')]);
-  const items = q.getItems();
-  items[0].status = 'done';
-  items[1].status = 'processing';
-  items[2].status = 'error';
-  items[3].status = 'pending';
-
-  q.clear();
-  assert(q.getItems().length === 2, `expected 2 items after clear, got ${q.getItems().length}`);
-  assert(q.getItems()[0].status === 'done', 'done item should remain');
-  assert(q.getItems()[1].status === 'processing', 'processing item should remain');
+  q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
+  await q.processAll(async (item) => {
+    if (item.fileName === 'b.wav') throw new Error('failed');
+    return 'ok';
+  });
+  q.enqueue([makeFile('c.mp3')]);
+  assert(q.getItems().length === 3, 'retain all statuses');
+  q.clearAll();
+  assert(q.getItems().length === 0, 'clearAll removes everything');
 });
 
-test('clear resets activeId when no items remain', () => {
+test('clearAll leaves no active item', () => {
   const q = createQueue();
   q.enqueue([makeFile('a.mp3')]);
-  const items = q.getItems();
-  items[0].status = 'processing';
-  q.clear(); // keeps processing item
-  assert(q.getActiveItem() == null, 'no active item since processing is still there but activeId was never set');
-
-  // Set active via processAll
-  items[0].status = 'pending';
-  // We need to set activeId manually for this test — processAll does it
-  // Just verify clear with no items clears active
-  const q2 = createQueue();
-  q2.clear();
-  assert(q2.getActiveItem() == null, 'active should be null after clearing empty queue');
+  q.clearAll();
+  assert(q.getActiveItem() === null, 'active marker is empty');
 });
 
 // --- getSummary tests ---
 
 console.log('\ngetSummary tests\n');
 
-test('getSummary returns correct counts', () => {
+test('getSummary returns correct counts', async () => {
   const q = createQueue();
-  q.enqueue([makeFile('a.mp3'), makeFile('b.wav'), makeFile('c.mp3')]);
-  const items = q.getItems();
-  items[0].status = 'done';
-  items[1].status = 'done';
-  items[2].status = 'pending';
-
+  q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
+  await q.processAll(async () => 'ok');
+  q.enqueue([makeFile('c.mp3')]);
   const s = q.getSummary();
-  assert(s.done === 2, `expected 2 done, got ${s.done}`);
-  assert(s.total === 3, `expected 3 total, got ${s.total}`);
-  assert(s.pending === 1, `expected 1 pending, got ${s.pending}`);
+  assert(s.done === 2 && s.total === 3 && s.pending === 1, 'counts follow real transitions');
 });
 
 test('getSummary on empty queue returns zeros', () => {
@@ -271,13 +254,14 @@ test('cancellation via AbortSignal stops processing after current item', async (
 
   const results = await q.processAll(transcribeFn, { signal: controller.signal });
 
-  // The first item completes, abort fires, loop checks signal and breaks
+  // Cancellation during the active call records an error and stops the batch.
   assert(callCount === 1, `expected 1 call before abort, got ${callCount}`);
   assert(results.length === 1, `expected 1 result, got ${results.length}`);
 
   // Remaining items should still be pending
   const items = q.getItems();
-  assert(items[0].status === 'done', 'first should be done');
+  assert(items[0].status === 'error', 'cancelled active item should be an error');
+  assert(items[0].error === 'Cancelled', 'cancelled active item should retain its reason');
   assert(items[1].status === 'pending', 'second should still be pending');
   assert(items[2].status === 'pending', 'third should still be pending');
 });
@@ -299,7 +283,7 @@ test('cancellation mid-processing: signal checked between items', async () => {
 test('processAll on empty pending queue returns empty array', async () => {
   const q = createQueue();
   q.enqueue([makeFile('a.mp3')]);
-  q.getItems()[0].status = 'done';
+  await q.processAll(async () => 'done');
 
   const results = await q.processAll(async (i) => i.fileName);
   assert(results.length === 0, 'no pending items to process');
@@ -307,13 +291,123 @@ test('processAll on empty pending queue returns empty array', async () => {
 
 test('processAll only processes pending items', async () => {
   const q = createQueue();
-  q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
-  q.getItems()[1].status = 'done';
+  q.enqueue([makeFile('b.wav')]);
+  await q.processAll(async () => 'done');
+  q.enqueue([makeFile('a.mp3')]);
 
   const called = [];
   await q.processAll(async (i) => { called.push(i.fileName); return i.fileName; });
   assert(called.length === 1, `expected 1 call, got ${called.length}`);
   assert(called[0] === 'a.mp3', 'only pending item should be processed');
+});
+
+test('removed captured IDs never start and new files wait for the next run', async () => {
+  const q = createQueue();
+  const [first, removed] = q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
+  const called = [];
+  const results = await q.processAll(async (item) => {
+    called.push(item.fileName);
+    q.remove(first.id); // The active item cannot be removed.
+    q.remove(removed.id);
+    q.enqueue([makeFile('next.mp3')]);
+    return item.fileName;
+  });
+  assert(called.join() === 'a.mp3', 'removed and newly added files must not run');
+  assert(results.length === 1 && q.getSnapshot().length === 2, 'retain active result and new pending work');
+  const next = await q.processAll(async (item) => item.fileName);
+  assert(next.length === 1 && next[0].item.fileName === 'next.mp3', 'only next-run results should be returned');
+  assert(q.getSnapshot().filter((i) => i.status === 'done').length === 2, 'retain both batches');
+});
+
+test('clearPending removes captured work and preserves errors and completed results', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('failed.mp3')]);
+  await q.processAll(async () => { throw new Error('failed'); });
+  q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
+  const result = await q.processAll(async () => {
+    q.clearPending();
+    return 'done';
+  });
+  assert(result.length === 1, 'cleared work must not start');
+  assert(q.getSnapshot().map((i) => i.status).join() === 'error,done', 'errors and active work must be retained');
+  q.clearAll();
+  assert(q.getSnapshot().length === 0, 'idle clearAll must remove all statuses');
+});
+
+test('run guard covers callbacks, active work and the final transition', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('a.mp3')]);
+  const attempts = [];
+  const checkGuard = () => {
+    assert(q.isRunning(), 'run flag must cover the whole batch');
+    attempts.push(q.processAll(async () => 'overlap').then(
+      () => { throw new Error('overlapping run was allowed'); },
+      (err) => assert(err.message.includes('already running'), 'overlap should reject clearly'),
+    ));
+    let rejected = false;
+    try { q.clearAll(); } catch (err) { rejected = /running/.test(err.message); }
+    assert(rejected, 'clearAll must reject throughout a run');
+  };
+  await q.processAll(async () => { checkGuard(); return 'ok'; }, { onChange: checkGuard });
+  await Promise.all(attempts);
+  assert(attempts.length === 3, 'check start, active call and completion');
+  assert(!q.isRunning(), 'run flag must reset after completion');
+});
+
+test('snapshot reads cannot change queue entries or nested result values', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('a.mp3')]);
+  const result = { text: 'hello', transcript: { blocks: [{ text: 'hello' }] } };
+  await q.processAll(async () => result);
+  const view = q.getSnapshot();
+  assert(Object.isFrozen(view) && Object.isFrozen(view[0]), 'array and entries must be frozen');
+  assert(Object.isFrozen(view[0].result.transcript.blocks[0]), 'nested result must be frozen');
+  try { view.push({}); } catch {}
+  try { view[0].status = 'pending'; } catch {}
+  try { view[0].result.transcript.blocks[0].text = 'changed'; } catch {}
+  assert(q.getSnapshot().length === 1 && q.getSnapshot()[0].status === 'done', 'entry mutation must not change state');
+  assert(q.getSnapshot()[0].result.transcript.blocks[0].text === 'hello', 'nested mutation must not change result');
+  assert(!Object.isFrozen(result), 'taking a snapshot must not freeze the caller result');
+  q.clearAll();
+  assert(view.length === 1, 'older snapshots must stay stable after queue changes');
+});
+
+test('all public reads and callback inputs are detached and frozen', async () => {
+  const q = createQueue();
+  const added = q.enqueue([makeFile('a.mp3')]);
+  assert(Object.isFrozen(added[0]), 'enqueue cannot expose mutable state');
+  const result = await q.processAll(async (item) => {
+    assert(Object.isFrozen(item) && Object.isFrozen(q.getActiveItem()), 'worker reads are frozen');
+    try { item.status = 'pending'; } catch {}
+    return { text: 'ok' };
+  }, { onChange: (item) => assert(Object.isFrozen(item), 'notifications are frozen') });
+  assert(Object.isFrozen(q.getItems()[0]) && Object.isFrozen(result[0].item), 'legacy reads and results are frozen');
+  assert(q.getItems()[0].status === 'done', 'attempted mutation cannot alter transitions');
+});
+
+test('options can still be read when each item starts', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('a.mp3'), makeFile('b.wav')]);
+  let option = 'first';
+  const options = [];
+  await q.processAll(async () => {
+    options.push(option);
+    option = 'second';
+    return 'ok';
+  });
+  assert(options.join() === 'first,second', 'options must not be captured when a batch starts');
+});
+
+test('a failed lifecycle callback still releases the run guard', async () => {
+  const q = createQueue();
+  q.enqueue([makeFile('a.mp3')]);
+  try {
+    await q.processAll(async () => 'ok', { onChange: () => { throw new Error('callback failed'); } });
+  } catch (err) {
+    assert(err.message === 'callback failed', 'callback failure should reach caller');
+  }
+  assert(!q.isRunning() && q.getActiveItem() === null, 'guard and active marker must always reset');
+  assert(q.getSnapshot()[0].status === 'error', 'callback failure must not strand an item as processing');
 });
 
 // ---------------------------------------------------------------------------

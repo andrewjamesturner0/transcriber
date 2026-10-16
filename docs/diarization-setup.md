@@ -178,4 +178,7 @@ Download again completed it.
 During a job, "Word alignment failed ..., using Whisper word timings" means
 speakers were still labelled, but with less accurate timing. "Speaker
 labelling failed ..., using plain transcript" means the job finished without
-speaker labels. The debug log (Settings > Debug) has the full error.
+speaker labels. These warnings stay visible after the GUI batch finishes. The
+debug log (Settings > Debug in a debug build) includes diagnostics, which may
+be truncated or dropped under heavy output; CLI progress reports the warning
+on stderr unless `--quiet` is set.

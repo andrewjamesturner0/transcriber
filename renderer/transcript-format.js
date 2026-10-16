@@ -39,11 +39,29 @@ function formatDiarizedOutput(text) {
     .join('\n\n--- Speaker Change ---\n\n');
 }
 
+/** Assemble canonical copy/save text for the successful files in one run. */
+function formatBatchText(results) {
+  if (results.length === 0) return '';
+  if (results.length === 1) return results[0].text;
+  return results.map(({ fileName, text }) => `=== ${fileName} ===\n\n${text}`).join('\n\n\n');
+}
+
 // ---------------------------------------------------------------------------
 // Rich transcript parsing
 // ---------------------------------------------------------------------------
 
 const MAX_SPEAKER_CLASS = 8;
+
+function speakerSegment(label, text) {
+  if (label === 'Unknown') return { speakerNum: 0, speakerLabel: 'Unknown', text };
+  const number = /^Speaker (\d+)$/.exec(label);
+  if (!number) return { speakerNum: 0, speakerLabel: 'Unknown', text };
+  return {
+    speakerNum: Math.max(1, Math.min(Number(number[1]), MAX_SPEAKER_CLASS)),
+    speakerLabel: String(Number(number[1])),
+    text,
+  };
+}
 
 /**
  * Parse pyannote-diarized text into structured speaker segments.
@@ -59,22 +77,27 @@ function parseRichTranscript(text) {
   const body = text.replace(/^\[\d+ speakers? detected\]\n\n/, '');
 
   for (const line of body.split('\n\n')) {
-    const match = line.match(/^\[Speaker (\d+)\]\s*(.*)/s);
+    const match = line.match(/^\[(Speaker \d+|Unknown)\]\s*(.*)/s);
     if (!match) continue;
 
-    const originalNum = parseInt(match[1], 10);
-    const speakerNum = Math.min(originalNum, MAX_SPEAKER_CLASS);
     const speakerText = match[2].trim();
     if (!speakerText) continue;
 
-    segments.push({
-      speakerNum,
-      speakerLabel: String(originalNum),
-      text: speakerText,
-    });
+    segments.push(speakerSegment(match[1], speakerText));
   }
 
   return segments;
+}
+
+/** Read actual attribution blocks; canonical text is reserved for copy/save. */
+function getTranscriptSegments(result) {
+  if (!result.transcript || result.transcript.kind !== 'speaker-labelled') {
+    const text = formatDiarizedOutput(result.text);
+    return text ? [{ speakerNum: 0, speakerLabel: null, text }] : [];
+  }
+  return result.transcript.blocks
+    .filter((block) => block.text.trim())
+    .map((block) => speakerSegment(block.speaker, block.text));
 }
 
 // ---------------------------------------------------------------------------
@@ -99,7 +122,9 @@ if (typeof module !== 'undefined' && module.exports) {
   module.exports = {
     isPyannoteDiarized,
     formatDiarizedOutput,
+    formatBatchText,
     parseRichTranscript,
+    getTranscriptSegments,
     countPyannoteSpeakers,
     countWhisperSpeakerTurns,
   };
@@ -107,7 +132,9 @@ if (typeof module !== 'undefined' && module.exports) {
   window.transcriptFormat = {
     isPyannoteDiarized,
     formatDiarizedOutput,
+    formatBatchText,
     parseRichTranscript,
+    getTranscriptSegments,
     countPyannoteSpeakers,
     countWhisperSpeakerTurns,
   };

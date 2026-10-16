@@ -32,6 +32,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -572,12 +573,38 @@ def _():
     res = os.path.join(TMP, "resources")
     os.makedirs(os.path.join(res, "lib"))
     os.makedirs(os.path.join(res, "scripts"))
-    for name in ("align.py", "alignment_models.py", "alignment_core.py", "diarize.py",
+    for name in ("align.py", "alignment_models.py", "alignment_core.py", "pcm_audio.py", "diarize.py",
                  "requirements.txt"):
         shutil.copy(os.path.join(ROOT, "lib", name), os.path.join(res, "lib", name))
     shutil.copy(SETUP_PATH, os.path.join(res, "scripts", "setup-diarization.py"))
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
     env.pop("PYTHONPATH", None)
+    # --check needs no audio, so exercise the installed decoder explicitly too.
+    code = """
+import importlib.util
+import os
+import sys
+spec = importlib.util.spec_from_file_location("installed_setup", sys.argv[1])
+setup = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(setup)
+for kind in ("align", "diarize"):
+    path = getattr(setup, "find_" + kind + "_script")()
+    module = getattr(setup, "load_" + kind + "_module")()
+    assert module.__name__ == "transcriber_" + kind
+    assert module.SCRIPT_PATH == path
+    assert os.path.dirname(path) == os.path.join(sys.argv[2], "lib")
+    audio = module.read_wav(sys.argv[3])
+    assert audio["frames"] == 48000
+    assert module._sibling("pcm_audio").__file__ == os.path.join(sys.argv[2], "lib", "pcm_audio.py")
+    assert "torch" not in sys.modules and "numpy" not in sys.modules
+print("installed decoder and setup imports passed")
+"""
+    proc = subprocess.run([sys.executable, "-I", "-c", code,
+                           os.path.join(res, "scripts", "setup-diarization.py"), res,
+                           write_wav("installed.wav")], cwd=other, env=env,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                          universal_newlines=True, timeout=60)
+    check(proc.returncode == 0, proc.stderr[-800:])
     for script, args in ((ALIGN_PATH, ["--check"]),
                          (os.path.join(res, "lib", "align.py"), ["--check", "--language", "nl"]),
                          (os.path.join(res, "scripts", "setup-diarization.py"),
@@ -1260,11 +1287,68 @@ def _():
           STATE["url_downloads"] == [], "nothing downloaded")
 
 
+@test("setup discovery keeps source-first order, flat fallback and named loading wrappers")
+def _():
+    setup = load_module(SETUP_PATH, "setup_discovery_test")
+    with tempfile.TemporaryDirectory(dir=TMP) as folder:
+        scripts = os.path.join(folder, "scripts")
+        library = os.path.join(folder, "lib")
+        os.makedirs(scripts)
+        os.makedirs(library)
+        setup._HERE = scripts
+        for kind in ("align", "diarize"):
+            find = getattr(setup, "find_" + kind + "_script")
+            load = getattr(setup, "load_" + kind + "_module")
+            source = os.path.join(library, kind + ".py")
+            flat = os.path.join(scripts, kind + ".py")
+            check(find() == source, "missing script reports preferred source path")
+            with open(flat, "w", encoding="utf-8") as output:
+                output.write("LOCATION = 'flat'\n")
+            check(find() == flat, "flat layout fallback")
+            with open(source, "w", encoding="utf-8") as output:
+                output.write("LOCATION = 'source'\n")
+            check(find() == source, "source layout has priority")
+            module = load()
+            check(module.__name__ == "transcriber_" + kind, module.__name__)
+            check(module.SCRIPT_PATH == source and module.LOCATION == "source", "default loading")
+            module = load(flat)
+            check(module.SCRIPT_PATH == flat and module.LOCATION == "flat", "explicit loading")
+
+
 @test("setup without --alignment keeps the original summary shape")
 def _():
     summary, code, _, _ = run_setup({}, "--check")
     check(set(summary) == {"status", "message", "model", "cachePath", "versions", "cudaAvailable"},
           sorted(summary))
+
+
+
+@test("result JSON is private for new and existing outputs under a broad umask")
+def _():
+    module = load_align()
+    with tempfile.TemporaryDirectory(dir=TMP) as folder:
+        path = os.path.join(folder, "result.json")
+        mask = os.umask(0)
+        try:
+            for existing in (False, True):
+                if existing:
+                    os.chmod(path, 0o666)
+                module.write_envelope(path, {"value": "private result"})
+                with open(path, encoding="utf-8") as result:
+                    check(json.load(result) == {"value": "private result"}, "valid envelope")
+                if os.name != "nt":
+                    check(stat.S_IMODE(os.stat(path).st_mode) == 0o600, "private mode")
+                check(os.listdir(folder) == ["result.json"], "temporary output removed")
+            try:
+                module.write_envelope(path, {"invalid": object()})
+                raise AssertionError("invalid JSON accepted")
+            except TypeError:
+                pass
+            with open(path, encoding="utf-8") as result:
+                check(json.load(result) == {"value": "private result"}, "old envelope preserved")
+            check(os.listdir(folder) == ["result.json"], "failed temporary output removed")
+        finally:
+            os.umask(mask)
 
 
 # ---------------------------------------------------------------------------

@@ -25,6 +25,15 @@ function createQueue() {
   let _items = [];
   let _nextId = 0;
   let _activeId = null;
+  let _running = false;
+
+  // Copy before freezing so reads cannot freeze or change stored job results.
+  function snapshot(value) {
+    if (value === null || typeof value !== 'object') return value;
+    const copy = Array.isArray(value) ? value.map(snapshot)
+      : Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, snapshot(entry)]));
+    return Object.freeze(copy);
+  }
 
   // ------------------------------------------------------------------
   // Public API
@@ -45,7 +54,7 @@ function createQueue() {
       _items.push(item);
       added.push(item);
     }
-    return added;
+    return snapshot(added);
   }
 
   /**
@@ -56,18 +65,30 @@ function createQueue() {
     _items = _items.filter((item) => item.id !== id || item.status === 'processing');
   }
 
-  /**
-   * Clear pending and error items. Items that are processing or already
-   * done are preserved (they represent completed work during a run).
-   */
-  function clear() {
-    _items = _items.filter((item) => item.status === 'processing' || item.status === 'done');
-    if (_items.length === 0) _activeId = null;
+  /** Remove waiting work, keeping completed results and errors. */
+  function clearPending() {
+    _items = _items.filter((item) => item.status !== 'pending');
+  }
+
+  /** Remove retained work only when no batch is running. */
+  function clearAll() {
+    if (_running) throw new Error('Cannot clear all while the queue is running');
+    _items = [];
+    _activeId = null;
+  }
+
+  function isRunning() {
+    return _running;
+  }
+
+  /** Return detached, read-only items, including nested result data. */
+  function getSnapshot() {
+    return snapshot(_items);
   }
 
   /** Return all items in queue order. */
   function getItems() {
-    return _items;
+    return getSnapshot();
   }
 
   /** Return summary counts. */
@@ -81,51 +102,65 @@ function createQueue() {
   /** Return the item currently being processed, or null. */
   function getActiveItem() {
     if (_activeId == null) return null;
-    return _items.find((i) => i.id === _activeId) || null;
+    return snapshot(_items.find((i) => i.id === _activeId) || null);
   }
 
   /**
    * Process all pending items serially.
    *
-   * @param {Function} transcribeFn  - async (item) => result string
+   * @param {Function} transcribeFn  - async (item) => result value
    * @param {object}   opts
    * @param {AbortSignal} [opts.signal]    - abort processing
    * @param {Function}    [opts.onChange]  - called after each status change
    * @returns {Promise<Array>} results in queue order
    */
   async function processAll(transcribeFn, opts = {}) {
+    if (_running) throw new Error('The queue is already running');
+    _running = true;
     const { signal, onChange } = opts;
     const results = [];
-    const pending = _items.filter((i) => i.status === 'pending');
+    const pendingIds = _items.filter((i) => i.status === 'pending').map((i) => i.id);
 
-    for (const item of pending) {
-      if (signal && signal.aborted) break;
+    try {
+      for (const id of pendingIds) {
+        if (signal && signal.aborted) break;
+        const item = _items.find((i) => i.id === id && i.status === 'pending');
+        if (!item) continue;
 
-      _activeId = item.id;
-      item.status = 'processing';
-      item.error = null;
-      if (onChange) onChange(item);
+        _activeId = item.id;
+        item.status = 'processing';
+        item.error = null;
 
-      try {
-        item.result = await transcribeFn(item);
-        item.status = 'done';
-      } catch (err) {
-        item.status = 'error';
-        item.error = err.message || String(err);
+        try {
+          if (onChange) onChange(snapshot(item));
+          if (signal && signal.aborted) throw new Error('Cancelled');
+          const result = await transcribeFn(snapshot(item));
+          if (signal && signal.aborted) throw new Error('Cancelled');
+          item.result = snapshot(result);
+          item.status = 'done';
+        } catch (err) {
+          item.status = 'error';
+          item.error = signal && signal.aborted ? 'Cancelled' : (err && err.message) || String(err);
+        }
+
+        _activeId = null;
+        if (onChange) onChange(snapshot(item));
+        results.push(snapshot({ item, status: item.status }));
       }
-
+      return results;
+    } finally {
       _activeId = null;
-      if (onChange) onChange(item);
-      results.push({ item, status: item.status });
+      _running = false;
     }
-
-    return results;
   }
 
   return {
     enqueue,
     remove,
-    clear,
+    clearPending,
+    clearAll,
+    isRunning,
+    getSnapshot,
     getItems,
     getSummary,
     getActiveItem,

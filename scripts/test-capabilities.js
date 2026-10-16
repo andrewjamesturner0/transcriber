@@ -846,4 +846,50 @@ test('getAlignmentInfo still reads an older WhisperX-based helper', async () => 
   assert(legacy.alignmentProvider === null, JSON.stringify(legacy));
 });
 
+test('dispose closes every eager probe and prevents subsequent interpreter or alignment spawns', async () => {
+  const { EventEmitter } = require('events');
+  const children = [];
+  const caps = new Capabilities({
+    paths: makePaths(), fsExists: () => true,
+    spawn: (command, args, options) => {
+      assert(options.detached === (process.platform !== 'win32'), 'probes must own a process group');
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter(); child.stderr = new EventEmitter();
+      child.kill = () => { process.nextTick(() => child.emit('close', null)); return true; };
+      children.push(child);
+      return child;
+    },
+  });
+  const eager = caps.detect();
+  const shared = caps.getPythonInfo();
+  const refresh = caps.getPythonInfo({ refresh: true });
+  const alignment = caps.getAlignmentInfo({ refresh: true });
+  assert(children.length >= 4, 'eager GPU, both DTW backends and interpreter probes must start');
+  const count = children.length;
+  const close = caps.dispose();
+  assert(close === caps.dispose(), 'dispose must be idempotent');
+  await close;
+  await Promise.allSettled([eager, shared, refresh, alignment]);
+  await caps.getPythonInfo({ refresh: true });
+  await caps.getAlignmentInfo({ refresh: true });
+  await caps.getPythonSpawn();
+  await caps.detectDtw();
+  assert(children.length === count, 'shutdown must prevent every later probe from spawning');
+  assert(caps._children.size === 0, 'all tracked probes settle');
+});
+
+test('dispose before detection and spawn errors are harmless', async () => {
+  let calls = 0;
+  const caps = new Capabilities({ paths: makePaths(), fsExists: () => true,
+    spawn: () => { calls++; throw new Error('spawn failed'); } });
+  await caps.dispose();
+  await caps.detect();
+  assert(calls === 0, 'disposed capabilities never start work');
+  const failed = new Capabilities({ paths: makePaths(), fsExists: () => true,
+    spawn: makeSpawn({ default: new Error('missing executable') }) });
+  await failed.detect();
+  await failed.dispose();
+  assert(failed._children.size === 0, 'spawn errors must release tracking');
+});
+
 runAll();

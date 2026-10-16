@@ -17,6 +17,12 @@ ffmpeg -i input.mp3 -ar 16000 -ac 1 -c:a pcm_s16le -y output.wav
 | Windows | [gyan.dev](https://www.gyan.dev/ffmpeg/builds/) | `ffmpeg-release-essentials.zip` |
 | Linux | [johnvansickle.com](https://johnvansickle.com/ffmpeg/) | Static build (`ffmpeg-release-amd64-static.tar.xz`) |
 
+Local setup/build and native Windows/Linux release steps verify each archive
+against its existing SHA-256 in `deps.json` before extraction. Installed build
+caches also carry a receipt tying the archive identity to the extracted binary.
+A changed upstream archive is rejected; a successful hash check does not
+complete the source/notice release checks below.
+
 ## Licence of the bundled binary
 
 FFmpeg's base licence is LGPL 2.1 or later, but enabling GPL components changes

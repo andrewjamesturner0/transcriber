@@ -52,7 +52,7 @@ function runCli(args, opts = {}) {
   const env = { ...process.env };
   // Wipe HF_TOKEN unless caller overrides
   if (!('HF_TOKEN' in (opts.env || {}))) delete env.HF_TOKEN;
-  return spawnSync('node', [CLI, ...args], {
+  return spawnSync(process.execPath, [CLI, ...args], {
     encoding: 'utf-8',
     env: { ...env, ...(opts.env || {}) },
     timeout: 15000,
@@ -179,13 +179,15 @@ test('transcribe --alignment rejects unknown values before any work', () => {
   }
 });
 
-test('transcribe --alignment forced without --diarize is rejected before any work', () => {
+test('transcribe explicit alignment without --diarize is rejected before any work', () => {
   const tmpFile = fs.mkdtempSync(path.join(os.tmpdir(), 'cli-test-')) + '/a.wav';
   fs.writeFileSync(tmpFile, '');
   try {
-    const r = runCli(['transcribe', '--alignment', 'forced', tmpFile]);
-    assert(r.status !== 0, 'should fail');
-    assert(r.stderr.includes('--alignment forced needs --diarize'), `got: ${r.stderr}`);
+    for (const alignment of ['forced', 'whisper']) {
+      const r = runCli(['transcribe', '--alignment', alignment, tmpFile]);
+      assert(r.status !== 0, 'should fail');
+      assert(r.stderr.includes(`--alignment ${alignment} needs --diarize`), `got: ${r.stderr}`);
+    }
   } finally {
     try { fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true }); } catch (_) {}
   }
@@ -333,5 +335,17 @@ test('error messages go to stderr, not stdout', () => {
 });
 
 // ---------------------------------------------------------------------------
+
+for (const command of ['transcribe', 'download-model', 'list-models', 'gpu-status']) {
+  test(command + ' validates unknown flags before help', () => {
+    const result = runCli([command, '--help', '--not-a-flag']);
+    assert(result.status === 1 && result.stderr.includes('Unknown flag'), 'help must not hide invalid flags');
+    assert(result.stdout === '', 'parse errors remain on stderr');
+  });
+}
+test('commands retain positional arity checks', () => {
+  assert(runCli(['transcribe', 'one', 'two']).stderr.includes('only one input file'), 'transcribe must reject two files before checking existence');
+  assert(runCli(['download-model', 'base', 'small']).stderr.includes('exactly one'), 'download must reject two IDs');
+});
 
 runAll();

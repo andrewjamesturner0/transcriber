@@ -134,6 +134,58 @@ test('handles multiline speaker text', () => {
   assert(result[0].text === 'Line one\nLine two\nLine three');
 });
 
+test('retains mixed and all-Unknown legacy speaker blocks', () => {
+  const text = '[1 speaker detected]\n\n[Unknown] Before\n\n[Speaker 1] Hello\n\n[Unknown] After';
+  const result = tf.parseRichTranscript(text);
+  assert(result.length === 3 && result.map((seg) => seg.text).join(' ') === 'Before Hello After');
+  assert(result[0].speakerNum === 0 && result[0].speakerLabel === 'Unknown', 'Unknown must be neutral');
+  const unknown = tf.parseRichTranscript('[0 speakers detected]\n\n[Unknown] Still recognised');
+  assert(unknown.length === 1 && unknown[0].text === 'Still recognised');
+});
+
+test('batch formatter preserves exact zero, one and multiple result text', () => {
+  assert(tf.formatBatchText([]) === '');
+  assert(tf.formatBatchText([{ fileName: 'a.wav', text: 'hello\n' }]) === 'hello\n');
+  assert(tf.formatBatchText([
+    { fileName: 'a.wav', text: 'hello\n' },
+    { fileName: 'b.wav', text: 'world' },
+  ]) === '=== a.wav ===\n\nhello\n\n\n\n=== b.wav ===\n\nworld');
+});
+
+test('structured segments use block text directly and clamp only CSS numbers', () => {
+  const result = {
+    text: 'canonical text is deliberately different',
+    transcript: { kind: 'speaker-labelled', blocks: [
+      { speaker: 'Speaker 12', text: '<not markup>\nactual block' },
+      { speaker: 'Unknown', text: 'unknown words' },
+      { speaker: 'Speaker 1', text: '   ' },
+    ] },
+  };
+  const before = JSON.stringify(result);
+  const segments = tf.getTranscriptSegments(result);
+  assert(segments.length === 2, 'only empty blocks should be omitted');
+  assert(segments[0].speakerNum === 8 && segments[0].speakerLabel === '12');
+  assert(segments[0].text === '<not markup>\nactual block', 'view text must remain literal');
+  assert(segments[1].speakerNum === 0 && segments[1].speakerLabel === 'Unknown');
+  assert(JSON.stringify(result) === before, 'formatter must not mutate its input');
+});
+
+test('plain structured results keep text without inventing speaker labels', () => {
+  const segments = tf.getTranscriptSegments({ text: '[Speaker 1] literal text', transcript: { kind: 'plain', blocks: [] } });
+  assert(segments.length === 1 && segments[0].speakerLabel === null && segments[0].speakerNum === 0);
+  assert(segments[0].text === '[Speaker 1] literal text');
+  assert(tf.getTranscriptSegments({ text: '', transcript: { kind: 'plain', blocks: [] } }).length === 0);
+});
+
+test('browser helper exports the same pure formatting API', () => {
+  const fs = require('fs');
+  const vm = require('vm');
+  const context = { window: {} };
+  vm.runInNewContext(fs.readFileSync(require.resolve('../renderer/transcript-format'), 'utf8'), context);
+  assert(typeof context.window.transcriptFormat.getTranscriptSegments === 'function');
+  assert(context.window.transcriptFormat.formatBatchText([{ fileName: 'a', text: 'hello' }]) === 'hello');
+});
+
 // --- countPyannoteSpeakers ---
 
 console.log('\ncountPyannoteSpeakers\n');

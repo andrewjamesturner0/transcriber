@@ -913,6 +913,8 @@ h1 {
 /* === Status === */
 .status {
   text-align: center;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
   padding: 0.625rem 0.75rem;
   font-size: 0.8rem;
   color: var(--accent-text);
@@ -1350,7 +1352,15 @@ textarea::placeholder {
 .queue-item-status.pending { color: var(--text-tertiary); }
 .queue-item-status.processing { color: var(--accent-text); }
 .queue-item-status.done { color: #15803d; }
-.queue-item-status.error { color: #b91c1c; }
+.queue-item-status.error {
+  color: #b91c1c;
+  flex-shrink: 1;
+  min-width: 0;
+  max-width: 60%;
+  overflow-wrap: anywhere;
+  text-transform: none;
+  letter-spacing: normal;
+}
 
 .queue-item-remove {
   display: flex;

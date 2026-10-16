@@ -23,6 +23,7 @@ import io
 import json
 import os
 import shutil
+import stat
 import struct
 import subprocess
 import sys
@@ -863,6 +864,35 @@ def _():
     fill_cache()
     summary, code, _, _ = run_setup({}, "--check")
     check(code == 0 and summary["status"] == "ready" and summary["cachePath"], summary)
+
+
+
+@test("result JSON is private for new and existing outputs under a broad umask")
+def _():
+    module = load_diarize()
+    with tempfile.TemporaryDirectory(dir=TMP) as folder:
+        path = os.path.join(folder, "result.json")
+        mask = os.umask(0)
+        try:
+            for existing in (False, True):
+                if existing:
+                    os.chmod(path, 0o666)
+                module.write_envelope(path, {"value": "private result"})
+                with open(path, encoding="utf-8") as result:
+                    check(json.load(result) == {"value": "private result"}, "valid envelope")
+                if os.name != "nt":
+                    check(stat.S_IMODE(os.stat(path).st_mode) == 0o600, "private mode")
+                check(os.listdir(folder) == ["result.json"], "temporary output removed")
+            try:
+                module.write_envelope(path, {"invalid": object()})
+                raise AssertionError("invalid JSON accepted")
+            except TypeError:
+                pass
+            with open(path, encoding="utf-8") as result:
+                check(json.load(result) == {"value": "private result"}, "old envelope preserved")
+            check(os.listdir(folder) == ["result.json"], "failed temporary output removed")
+        finally:
+            os.umask(mask)
 
 
 # ---------------------------------------------------------------------------

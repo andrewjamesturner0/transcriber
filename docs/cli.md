@@ -19,7 +19,7 @@ node cli.js list-models [--json]
 node cli.js gpu-status [--json]
 ```
 
-Every subcommand accepts `--help` / `-h`.
+Every subcommand accepts `--help` / `-h`. Help succeeds without probing models or binaries, but unknown flags still produce an error even when help is present.
 
 ## Output and exit-code contract
 
@@ -51,6 +51,8 @@ Run the full pipeline on one input audio or video file.
 | `--quiet` | off | Suppress progress output on stderr. Errors still appear. |
 | `-h`, `--help` | | Print help text and exit 0. |
 
+English-only models select English explicitly; multilingual models pass `-l auto` and detect the source language. There is no CLI source-language flag. This applies to plain text, JSON and speaker-labelled jobs.
+
 Capability detection is lazy:
 
 - `--backend cpu` skips the GPU probe.
@@ -58,7 +60,7 @@ Capability detection is lazy:
 - Alignment readiness is checked whenever alignment is on (the `--diarize` default). For English-only Whisper models a missing English alignment model stops the run. For multilingual models only the packages are checked first, because the language is known only after Whisper runs; if that language's alignment model is missing, the job reports it and uses Whisper timing.
 - The DTW probe runs on the diarisation path and checks each executable for both `--dtw` and `--no-flash-attn`. Ordinary timing keeps flash attention by default. Only explicit `--dtw` enables DTW; it cannot be combined with forced alignment.
 
-Pressing Ctrl+C aborts the in-flight pipeline, cleans up the temp WAV via the existing AbortController, and exits 130. A second Ctrl+C is ignored; force-kill is not implemented in v1.
+Pressing Ctrl+C cancels capability checks or the in-flight pipeline, waits for child-process cleanup, removes the job's temporary WAV/JSON directory and exits 130. On POSIX systems cancellation targets the process group, with a five-second grace period and two seconds for forced termination; Windows uses `taskkill /T /F`. A second Ctrl+C is ignored. Native Windows process-tree checks still need to pass in Windows CI.
 
 The CLI is single-file in v1. Multi-file input is not supported; use a shell loop:
 
@@ -70,7 +72,7 @@ done
 
 ### download-model
 
-Fetch a model from Hugging Face into `models/`. No-op if the file is already on disk.
+Fetch a model from Hugging Face into the repository's `models/` folder. A nonempty existing model is a no-op; a zero-length file is unavailable and can be replaced. Downloads follow HTTPS redirects, reject failed/empty/truncated responses, and install through a unique temporary file only after the transfer finishes. A failed or cancelled transfer does not become a model. This runtime check does not establish a model's cryptographic identity. Ctrl+C cleans the partial transfer and exits 130.
 
 | Flag | Default | Description |
 |---|---|---|
@@ -144,7 +146,7 @@ Neither alignment nor diarisation downloads missing models during a job.
 To test DTW explicitly (after speaker setup):
 
 ```bash
-node cli.js transcribe panel.wav --model small.en --diarize --dtw --format json --output panel-dtw.json
+node cli.js transcribe panel.wav --model small.en --diarize --alignment whisper --dtw --format json --output panel-dtw.json
 ```
 
 DTW is off by default because disabling flash attention changed the recognised
@@ -178,8 +180,8 @@ The CLI assumes the platform binaries and any required models are already presen
 
 - `bin/<platform>/<backend>/whisper-cli[.exe]`
 - `bin/<platform>/ffmpeg[.exe]`
-- `models/<filename>` for the chosen model (for example `models/ggml-small.en.bin`; see `lib/models.js`)
+- Repository `models/<filename>` for the chosen model (for example `models/ggml-small.en.bin`; see `lib/models.js`). This is separate from the GUI's writable `app.getPath('userData')/models` folder; the GUI also falls back to its bundled `models/` files.
 
-Run `scripts/setup.sh` on Linux, or follow the Windows-native setup in [DEVELOPMENT.md](../DEVELOPMENT.md#windows-native-build). `scripts/build.sh --skip-deps` only packages existing binaries; it does not fetch them. If a binary is missing, the CLI exits non-zero with an error naming the missing file. It does not fetch binaries itself.
+Run `scripts/setup.sh` on Linux, or follow the Windows-native setup in [DEVELOPMENT.md](../DEVELOPMENT.md#windows-native-build). `scripts/build.sh --skip-deps` verifies the existing bundled model and binary provenance before packaging; it does not fetch dependencies and refuses old caches with unknown identity. If a binary is missing, the CLI exits non-zero with an error naming the missing file. It does not fetch binaries itself.
 
 Set `TRANSCRIBER_PYTHON` to an interpreter path to use a virtual environment. For speaker and alignment packages, cache setup and the setup-only Hugging Face token, see [diarization-setup.md](diarization-setup.md).

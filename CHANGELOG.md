@@ -8,11 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added
 
+- GUI Whisper downloads use a writable model folder with bundled fallback. Downloads can be cancelled and install only after completion; CLI models remain in repository `models/`.
+- Structured GUI transcript results preserve Unknown labels, timing evidence and fallback warnings. CLI text/JSON output and the string IPC response remain compatible.
+- Deterministic, tensor maths and real Electron test categories, isolated CLI pipeline fixtures, and reproducible speaker-assignment parity benchmarks.
+
 - Local word alignment of the existing Whisper transcript as part of speaker labelling. Settings has one **Label speakers** switch, available once both the speaker model and the word alignment model are downloaded; one **Download speaker models** button fetches whichever is missing. CLI `--diarize` matches the app; `--alignment whisper` remains for evaluation.
 - Explicit speaker and alignment model downloads in Settings or `scripts/setup-diarization.py`; `TRANSCRIBER_PYTHON` selects the interpreter.
 - JSON speaker attribution evidence, word timing sources, alignment status and regular/exclusive speaker timelines, while retaining `whisper`, `diarize` and `merged`.
 
 ### Changed
+
+- Queue results and errors remain until removed or cleared; cancellation keeps unstarted files pending, and files added during a batch wait for the next run.
+- Multilingual Whisper models detect the spoken language; English-only models select English explicitly in all output modes.
+- Logs have memory and file limits. Closing the app or installing an update cancels active work and waits for child processes, temporary files and logs to finish.
+- Build/setup/release dependency handling pins Whisper source and archive identity, verifies FFmpeg before extraction, installs the hash-checked default model atomically and refuses unknown build caches.
+- Speaker assignment uses interval searches that preserve the existing results, including overlap, gap and tie rules when word times go backwards.
 
 - Speaker labelling needs one requirements file: transformers 4.57.6 moved into `lib/requirements.txt` and `lib/requirements-alignment.txt` was removed.
 - Diarised jobs keep flash attention and no longer use DTW by default; word timing comes from forced alignment. DTW is now an explicit, evaluation-only CLI `--dtw` option after the tuning episode lost two interview clips with DTW and took 35% longer.

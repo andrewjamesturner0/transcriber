@@ -50,6 +50,14 @@ const backendLabel = document.getElementById('backend-label');
 let models = [];
 let pythonSetup = null;
 
+function appendTextElement(parent, tag, className, text) {
+  const element = document.createElement(tag);
+  element.className = className;
+  element.textContent = text;
+  parent.appendChild(element);
+  return element;
+}
+
 // --- Queue state ---
 
 const queue = createQueue();
@@ -65,7 +73,7 @@ let timerStartTime = null;
 async function loadModels() {
   models = await window.api.getModels();
   const currentValue = modelSelect.value;
-  modelSelect.innerHTML = '';
+  modelSelect.replaceChildren();
   for (const m of models) {
     const opt = document.createElement('option');
     opt.value = m.id;
@@ -86,7 +94,7 @@ function onModelChange() {
   if (!m) return;
   btnDownload.hidden = m.downloaded;
   const s = queue.getSummary();
-  const items = queue.getItems();
+  const items = queue.getSnapshot();
   btnTranscribe.disabled = !m.downloaded || items.length === 0 || s.pending === 0;
   updateEstimateBanner();
 }
@@ -126,19 +134,25 @@ function updateEstimateBanner() {
   const est = currentKey ? window.timeEstimates.TIME_ESTIMATES[currentKey] : null;
 
   if (est) {
-    estimateCurrentText.innerHTML = `<span class="estimate-model-name">${estimateLabel(currentKey)}</span> model: ${est.example} for 45 min of audio &mdash; ${est.ratio} <span class="estimate-gpu-note">(CPU, faster with GPU)</span>`;
+    estimateCurrentText.replaceChildren();
+    appendTextElement(estimateCurrentText, 'span', 'estimate-model-name', estimateLabel(currentKey));
+    estimateCurrentText.append(` model: ${est.example} for 45 min of audio \u2014 ${est.ratio} `);
+    appendTextElement(estimateCurrentText, 'span', 'estimate-gpu-note', '(CPU, faster with GPU)');
   } else {
     estimateCurrentText.textContent = 'Select a model to see time estimates';
   }
 
   // Update expanded list
-  let html = '';
+  estimateAllBody.replaceChildren();
   for (const [key, e] of Object.entries(window.timeEstimates.TIME_ESTIMATES)) {
     const active = key === currentKey ? ' estimate-active' : '';
-    html += `<div class="estimate-row${active}"><span>${estimateLabel(key)} <span class="estimate-quality">${e.quality}</span></span><span class="estimate-time">${e.example} <span class="estimate-ratio">${e.ratio}</span></span></div>`;
+    const row = appendTextElement(estimateAllBody, 'div', `estimate-row${active}`, '');
+    const name = appendTextElement(row, 'span', '', `${estimateLabel(key)} `);
+    appendTextElement(name, 'span', 'estimate-quality', e.quality);
+    const time = appendTextElement(row, 'span', 'estimate-time', `${e.example} `);
+    appendTextElement(time, 'span', 'estimate-ratio', e.ratio);
   }
-  html += '<div class="estimate-gpu-footer">CPU estimates &mdash; faster with GPU acceleration</div>';
-  estimateAllBody.innerHTML = html;
+  appendTextElement(estimateAllBody, 'div', 'estimate-gpu-footer', 'CPU estimates \u2014 faster with GPU acceleration');
 }
 
 estimateExpandBtn.addEventListener('click', () => {
@@ -177,37 +191,37 @@ function hideTimer() {
 // --- Queue management ---
 
 function syncQueueUI() {
-  const items = queue.getItems();
+  const items = queue.getSnapshot();
   const s = queue.getSummary();
 
   if (items.length === 0) {
-    queueListEl.innerHTML = '';
+    queueListEl.replaceChildren();
     queueListEl.hidden = true;
-    queueSummaryEl.innerHTML = '';
+    queueSummaryEl.replaceChildren();
     queueSummaryEl.hidden = true;
     return;
   }
 
   queueListEl.hidden = false;
-  queueListEl.innerHTML = '';
+  queueListEl.replaceChildren();
 
   for (const item of items) {
     const li = document.createElement('li');
     li.className = `queue-item ${item.status}`;
-    li.innerHTML = `
-      <span class="queue-item-name" title="${item.filePath}">${item.fileName}</span>
-      <span class="queue-item-status ${item.status}">${item.status}</span>
-      <button class="queue-item-remove" data-id="${item.id}" title="Remove">&times;</button>
-    `;
+    const name = appendTextElement(li, 'span', 'queue-item-name', item.fileName);
+    name.title = item.filePath;
+    appendTextElement(li, 'span', `queue-item-status ${item.status}`, item.error || item.status);
+    const remove = appendTextElement(li, 'button', 'queue-item-remove', '\u00d7');
+    remove.dataset.id = item.id;
+    remove.title = 'Remove';
     queueListEl.appendChild(li);
   }
 
-  const isProcessing = queue.getActiveItem() !== null;
+  const isProcessing = queue.isRunning();
   queueSummaryEl.hidden = false;
-  queueSummaryEl.innerHTML = `
-    <span>${s.done} of ${s.total} completed${s.pending > 0 ? ` \u00b7 ${s.pending} remaining` : ''}</span>
-    <button class="btn-clear-queue">${isProcessing ? 'Clear pending' : 'Clear all'}</button>
-  `;
+  queueSummaryEl.replaceChildren();
+  appendTextElement(queueSummaryEl, 'span', '', `${s.done} of ${s.total} completed${s.pending > 0 ? ` \u00b7 ${s.pending} remaining` : ''}`);
+  appendTextElement(queueSummaryEl, 'button', 'btn-clear-queue', isProcessing ? 'Clear pending' : 'Clear all');
 }
 
 function addToQueue(filePaths) {
@@ -219,22 +233,27 @@ function addToQueue(filePaths) {
 
 function removeFromQueue(id) {
   queue.remove(id);
-  if (queue.getItems().length === 0) hideTimer();
+  if (queue.getSnapshot().length === 0) hideTimer();
   syncQueueUI();
   onModelChange();
 }
 
+function resetOutput() {
+  hideTimer();
+  outputSection.hidden = true;
+  transcriptEl.value = '';
+  transcriptEl.hidden = false;
+  const richEl = document.getElementById('transcript-rich');
+  if (richEl) richEl.remove();
+  diarizeInfoEl.hidden = true;
+  btnSave.disabled = true;
+}
+
 function clearQueue() {
-  const isProcessing = queue.getActiveItem() !== null;
-  queue.clear();
-  if (!isProcessing) {
-    hideTimer();
-    outputSection.hidden = true;
-    transcriptEl.value = '';
-    transcriptEl.hidden = false;
-    const richEl = document.getElementById('transcript-rich');
-    if (richEl) richEl.remove();
-    btnSave.disabled = true;
+  if (queue.isRunning()) queue.clearPending();
+  else {
+    queue.clearAll();
+    resetOutput();
   }
   syncQueueUI();
   onModelChange();
@@ -306,89 +325,69 @@ document.addEventListener('drop', (e) => e.preventDefault());
 // --- Transcription (serial queue processing) ---
 
 btnTranscribe.addEventListener('click', async () => {
-  if (queue.getSummary().pending === 0) return;
-
+  if (queue.isRunning() || queue.getSummary().pending === 0) return;
+  resetOutput();
   btnTranscribe.disabled = true;
   btnCancel.hidden = false;
   btnSelect.disabled = true;
-  btnSave.disabled = true;
-  transcriptEl.value = '';
-  transcriptEl.hidden = false;
-  const existingRich = document.getElementById('transcript-rich');
-  if (existingRich) existingRich.remove();
-  outputSection.hidden = true;
   startTimer();
 
   const controller = new AbortController();
   cancelController = controller;
+  try {
+    const run = await queue.processAll(async (item) => {
+      setStatus('Transcribing ' + item.fileName + '...', 'progress');
+      const options = window.jobOptions.buildJobOptions({
+        antiCorruption: antiCorruptionToggle.checked,
+        diarizationOn: diarizeToggle.checked,
+        numSpeakers: numSpeakersSelect.value,
+      });
+      return window.api.transcribeResult(item.filePath, modelSelect.value, options);
+    }, { signal: controller.signal, onChange: () => syncQueueUI() });
 
-  await queue.processAll(async (item) => {
-    setStatus(`Transcribing ${item.fileName}...`, 'progress');
-    const options = window.jobOptions.buildJobOptions({
-      antiCorruption: antiCorruptionToggle.checked,
-      diarizationOn: diarizeToggle.checked,
-      numSpeakers: numSpeakersSelect.value,
-    });
-    const text = await window.api.transcribe(item.filePath, modelSelect.value, options);
-    item.hasSpeakers = window.transcriptFormat.isPyannoteDiarized(text);
-    return text;
-  }, {
-    signal: controller.signal,
-    onChange: () => syncQueueUI(),
-  });
-
-  stopTimer();
-  cancelController = null;
-  btnCancel.hidden = true;
-
-  // Build display results from queue items
-  const items = queue.getItems();
-  const doneItems = items.filter((i) => i.status === 'done' && i.result);
-  const allResults = doneItems.map((i) => ({
-    fileName: i.fileName,
-    text: window.transcriptFormat.formatDiarizedOutput(i.result),
-    hasSpeakers: i.hasSpeakers || false,
-  }));
-  const allRawText = doneItems.map((i) => i.result).join('');
-
-  // Clear completed queue
-  queue.clear();
-  syncQueueUI();
-
-  // Check if any result has pyannote speaker labels
-  const hasPyannoteSpeakers = allResults.some((r) => r.hasSpeakers);
-
-  if (hasPyannoteSpeakers) {
-    displayRichTranscript(allResults);
-    const { count, labels } = window.transcriptFormat.countPyannoteSpeakers(allRawText);
-    const dots = labels.map((s, i) => {
-      const num = Math.min(i + 1, 8);
-      return `<span class="diarize-info-dot speaker-${num}-bg"></span>`;
-    }).join('');
-    diarizeInfoEl.innerHTML = `${dots} ${count} speaker${count !== 1 ? 's' : ''} detected`;
-    diarizeInfoEl.className = 'diarize-info diarize-info-speakers';
-    diarizeInfoEl.hidden = false;
-  } else {
-    transcriptEl.value = allResults.length === 1
-      ? allResults[0].text
-      : allResults.map((r) => `=== ${r.fileName} ===\n\n${r.text}`).join('\n\n\n');
-
-    const turnCount = window.transcriptFormat.countWhisperSpeakerTurns(allRawText);
-    if (turnCount > 0) {
-      diarizeInfoEl.textContent = `${turnCount} speaker change${turnCount !== 1 ? 's' : ''} detected \u2014 speaker detection is experimental and may be inaccurate`;
-      diarizeInfoEl.className = 'diarize-info';
+    const results = run.filter(({ status }) => status === 'done')
+      .map(({ item }) => ({ fileName: item.fileName, ...item.result }));
+    transcriptEl.value = window.transcriptFormat.formatBatchText(results);
+    const segments = results.flatMap((result) => window.transcriptFormat.getTranscriptSegments(result));
+    const labelled = results.some((result) => result.transcript.kind === 'speaker-labelled');
+    if (labelled || results.some((result) => result.transcript.kind === 'tinydiarize')) {
+      displayRichTranscript(results);
+    }
+    if (labelled) {
+      const known = [...new Map(segments.filter((segment) => segment.speakerNum > 0)
+        .map((segment) => [segment.speakerLabel, segment])).values()];
+      const unknown = segments.some((segment) => segment.speakerLabel === 'Unknown');
+      diarizeInfoEl.replaceChildren();
+      for (const segment of known) {
+        appendTextElement(diarizeInfoEl, 'span', 'diarize-info-dot speaker-' + segment.speakerNum + '-bg', '');
+      }
+      diarizeInfoEl.append(' ' + known.length + ' speaker' + (known.length !== 1 ? 's' : '') + ' detected' + (unknown ? '; some words have no assigned speaker' : ''));
+      diarizeInfoEl.className = 'diarize-info diarize-info-speakers';
       diarizeInfoEl.hidden = false;
     } else {
-      diarizeInfoEl.hidden = true;
+      const turns = results.reduce((count, result) => count + window.transcriptFormat.countWhisperSpeakerTurns(result.text), 0);
+      if (turns > 0) {
+        diarizeInfoEl.textContent = turns + ' speaker change' + (turns !== 1 ? 's' : '') + ' detected - speaker detection is experimental and may be inaccurate';
+        diarizeInfoEl.className = 'diarize-info';
+        diarizeInfoEl.hidden = false;
+      }
     }
+    outputSection.hidden = results.length === 0;
+    btnSave.disabled = !transcriptEl.value;
+    const errors = run.filter(({ status }) => status === 'error').map(({ item }) => item.fileName + ': ' + item.error);
+    const warnings = results.flatMap((result) => result.transcript.warnings.map((warning) => result.fileName + ': ' + warning));
+    const messages = [...errors, ...warnings];
+    setStatus(messages.join('\n'), messages.length ? 'error' : undefined);
+  } catch (error) {
+    setStatus(error.message, 'error');
+  } finally {
+    stopTimer();
+    cancelController = null;
+    btnCancel.hidden = true;
+    btnSelect.disabled = false;
+    syncQueueUI();
+    onModelChange();
   }
-
-  outputSection.hidden = false;
-  btnSave.disabled = false;
-  setStatus('');
-  btnTranscribe.disabled = false;
-  btnSelect.disabled = false;
-  onModelChange();
 });
 
 // --- Cancel ---
@@ -396,10 +395,10 @@ btnTranscribe.addEventListener('click', async () => {
 btnCancel.addEventListener('click', async () => {
   btnCancel.disabled = true;
   setStatus('Cancelling...', 'progress');
+  if (cancelController) cancelController.abort();
   try {
     await window.api.cancelTranscription();
   } catch (_) {}
-  if (cancelController) cancelController.abort();
   btnCancel.disabled = false;
 });
 
@@ -422,9 +421,9 @@ btnCopy.addEventListener('click', async () => {
   if (!text) return;
   try {
     await navigator.clipboard.writeText(text);
-    const orig = btnCopy.innerHTML;
+    const orig = Array.from(btnCopy.childNodes);
     btnCopy.innerHTML = `<svg viewBox="0 0 16 16" fill="none" width="14" height="14"><path d="M3 8.5l3 3 7-7" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg> Copied`;
-    setTimeout(() => { btnCopy.innerHTML = orig; }, 2000);
+    setTimeout(() => { btnCopy.replaceChildren(...orig); }, 2000);
   } catch (_) {}
 });
 
@@ -439,8 +438,9 @@ function setStatus(msg, type) {
     if (type === 'error') statusEl.classList.add('status-error');
     else if (type === 'success') statusEl.classList.add('status-success');
 
-    const isProgress = type === 'progress';
-    statusEl.innerHTML = isProgress ? `<span class="spinner"></span>${msg}` : msg;
+    statusEl.replaceChildren();
+    if (type === 'progress') appendTextElement(statusEl, 'span', 'spinner', '');
+    statusEl.append(msg);
   } else {
     statusEl.hidden = true;
     statusEl.textContent = '';
@@ -460,24 +460,19 @@ function displayRichTranscript(results) {
     if (results.length > 1) {
       const fileHeader = document.createElement('div');
       fileHeader.className = 'transcript-segment';
-      fileHeader.innerHTML = `<strong>=== ${escapeHtml(result.fileName)} ===</strong>`;
+      appendTextElement(fileHeader, 'strong', '', `=== ${result.fileName} ===`);
       container.appendChild(fileHeader);
     }
 
-    if (!result.hasSpeakers) {
-      const seg = document.createElement('div');
-      seg.className = 'transcript-segment';
-      seg.innerHTML = `<span class="segment-text">${escapeHtml(result.text)}</span>`;
-      container.appendChild(seg);
-      continue;
-    }
-
-    // Parse pyannote-formatted text using the pure function from transcript-format.js
-    const segments = window.transcriptFormat.parseRichTranscript(result.text);
+    const segments = window.transcriptFormat.getTranscriptSegments(result);
     for (const seg of segments) {
       const div = document.createElement('div');
       div.className = 'transcript-segment';
-      div.innerHTML = `<span class="speaker-label speaker-${seg.speakerNum}">Speaker ${escapeHtml(seg.speakerLabel)}</span><span class="segment-text">${escapeHtml(seg.text)}</span>`;
+      if (seg.speakerLabel !== null) {
+        const label = seg.speakerLabel === 'Unknown' ? 'Unknown' : 'Speaker ' + seg.speakerLabel;
+        appendTextElement(div, 'span', seg.speakerNum ? 'speaker-label speaker-' + seg.speakerNum : 'speaker-label', label);
+      }
+      appendTextElement(div, 'span', 'segment-text', seg.text);
       container.appendChild(div);
     }
   }
@@ -491,17 +486,7 @@ function displayRichTranscript(results) {
     transcriptEl.parentNode.insertBefore(container, transcriptEl);
   }
 
-  // Keep textarea in sync for copy/save (plain text version)
-  transcriptEl.value = results.map((r) => {
-    if (results.length > 1) return `=== ${r.fileName} ===\n\n${r.text}`;
-    return r.text;
-  }).join('\n\n\n');
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
+  transcriptEl.value = window.transcriptFormat.formatBatchText(results);
 }
 
 // --- License modal ---
@@ -517,24 +502,25 @@ function getBadgeClass(license) {
   return /gpl|noncommercial|cc-by-nc|unclarified/i.test(license) ? 'license-badge-lgpl' : 'license-badge-mit';
 }
 
-function buildLicenseHTML(licenses) {
-  return licenses.map((lic, i) => `
-    <div class="license-section">
-      <div class="license-section-header">
-        <span class="license-name">${escapeHtml(lic.name)}</span>
-        <span class="license-badge ${getBadgeClass(lic.license)}">${escapeHtml(lic.license)}</span>
-      </div>
-      <div class="license-description">${escapeHtml(lic.description)}</div>
-      <div class="license-url">${escapeHtml(lic.url.replace('https://', ''))}</div>
-      <button class="license-toggle" data-index="${i}" type="button">
-        <svg viewBox="0 0 16 16" fill="none" width="10" height="10">
-          <path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        View licence details
-      </button>
-      <div class="license-full-text" id="license-text-${i}" hidden>${escapeHtml(lic.text)}</div>
-    </div>
-  `).join('');
+function renderLicenses(licenses) {
+  licenseModalBody.replaceChildren();
+  licenses.forEach((lic, i) => {
+    const section = appendTextElement(licenseModalBody, 'div', 'license-section', '');
+    const header = appendTextElement(section, 'div', 'license-section-header', '');
+    appendTextElement(header, 'span', 'license-name', lic.name);
+    appendTextElement(header, 'span', `license-badge ${getBadgeClass(lic.license)}`, lic.license);
+    appendTextElement(section, 'div', 'license-description', lic.description);
+    appendTextElement(section, 'div', 'license-url', lic.url.replace('https://', ''));
+    const toggle = appendTextElement(section, 'button', 'license-toggle', '');
+    toggle.dataset.index = i;
+    toggle.type = 'button';
+    // This icon is fixed application markup; licence data is always text.
+    toggle.innerHTML = '<svg viewBox="0 0 16 16" fill="none" width="10" height="10"><path d="M6 4l4 4-4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    toggle.append(' View licence details');
+    const text = appendTextElement(section, 'div', 'license-full-text', lic.text);
+    text.id = `license-text-${i}`;
+    text.hidden = true;
+  });
 }
 
 btnLicenses.addEventListener('click', async (e) => {
@@ -546,7 +532,7 @@ btnLicenses.addEventListener('click', async (e) => {
       return;
     }
   }
-  licenseModalBody.innerHTML = buildLicenseHTML(cachedLicenses);
+  renderLicenses(cachedLicenses);
   licenseOverlay.hidden = false;
 });
 

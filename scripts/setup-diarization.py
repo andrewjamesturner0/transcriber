@@ -74,10 +74,10 @@ class SetupError(Exception):
 # environment set-up. Import it by path rather than copying anything.
 # ---------------------------------------------------------------------------
 
-def find_diarize_script():
+def _find_script(filename):
     candidates = [
-        os.path.join(_HERE, "..", "lib", "diarize.py"),
-        os.path.join(_HERE, "diarize.py"),
+        os.path.join(_HERE, "..", "lib", filename),
+        os.path.join(_HERE, filename),
     ]
     for candidate in candidates:
         if os.path.isfile(candidate):
@@ -85,35 +85,30 @@ def find_diarize_script():
     return os.path.abspath(candidates[0])
 
 
-def load_diarize_module(path=None):
-    path = path or find_diarize_script()
-    spec = importlib.util.spec_from_file_location("transcriber_diarize", path)
+def _load_module(path, name):
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.SCRIPT_PATH = path
     return module
+
+
+def find_diarize_script():
+    return _find_script("diarize.py")
+
+
+def load_diarize_module(path=None):
+    return _load_module(path or find_diarize_script(), "transcriber_diarize")
 
 
 # lib/align.py plays the same role for word alignment.
 
 def find_align_script():
-    candidates = [
-        os.path.join(_HERE, "..", "lib", "align.py"),
-        os.path.join(_HERE, "align.py"),
-    ]
-    for candidate in candidates:
-        if os.path.isfile(candidate):
-            return os.path.abspath(candidate)
-    return os.path.abspath(candidates[0])
+    return _find_script("align.py")
 
 
 def load_align_module(path=None):
-    path = path or find_align_script()
-    spec = importlib.util.spec_from_file_location("transcriber_align", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    module.SCRIPT_PATH = path
-    return module
+    return _load_module(path or find_align_script(), "transcriber_align")
 
 
 # ---------------------------------------------------------------------------

@@ -32,6 +32,7 @@ that the version gate can report a clear error.
 
 import argparse
 import contextlib
+import importlib.util
 import io
 import json
 import os
@@ -39,7 +40,7 @@ import platform
 import re
 import sys
 import time
-import wave
+import tempfile
 
 DEFAULT_MODEL = "pyannote/speaker-diarization-community-1"
 DEFAULT_REVISION = "3533c8cf8e369892e6b79ff1bf80f7b0286a54ee"
@@ -58,9 +59,6 @@ DEFAULT_MODEL_FILES = (
 
 MIN_PYTHON = (3, 10)
 SUPPORTED_PYANNOTE_MAJOR = 4
-EXPECTED_SAMPLE_RATE = 16000
-EXPECTED_CHANNELS = 1
-EXPECTED_SAMPLE_WIDTH = 2  # bytes, i.e. 16-bit PCM
 
 ENVELOPE_FORMAT = "transcriber-diarization"
 ENVELOPE_VERSION = 1
@@ -85,6 +83,26 @@ class DiarizeError(Exception):
         Exception.__init__(self, message)
         self.code = code
         self.message = message
+
+
+def _sibling(name):
+    """Load a Python sibling by path, including in installed resources/lib."""
+    key = "transcriber_" + name
+    module = sys.modules.get(key)
+    if module is None:
+        path = os.path.join(_HERE, name + ".py")
+        spec = importlib.util.spec_from_file_location(key, path)
+        if spec is None or not os.path.isfile(path):
+            raise DiarizeError("diarization-failed",
+                               "Speaker labelling is incomplete: %s is missing." % path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[key] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            del sys.modules[key]
+            raise
+    return module
 
 
 # ---------------------------------------------------------------------------
@@ -394,55 +412,19 @@ def check_environment(model=DEFAULT_MODEL, revision=DEFAULT_REVISION, load=False
 # ---------------------------------------------------------------------------
 
 def read_wav(path):
-    """Read and validate a 16 kHz, mono, 16-bit PCM WAV (what FFmpeg writes).
-
-    Uses the built-in wave module rather than torchaudio/torchcodec, which
-    do not decode reliably on Windows. Returns the raw PCM bytes.
-    """
-    if not os.path.isfile(path):
-        raise DiarizeError("audio-invalid", "Audio file not found: %s" % path)
+    """Validate shared PCM input and retain this stage's duration metadata."""
+    pcm = _sibling("pcm_audio")
     try:
-        with wave.open(path, "rb") as wf:
-            channels = wf.getnchannels()
-            width = wf.getsampwidth()
-            rate = wf.getframerate()
-            comptype = wf.getcomptype()
-            frames = wf.getnframes()
-            data = wf.readframes(frames)
-    except (wave.Error, EOFError, OSError) as e:
-        raise DiarizeError(
-            "audio-invalid",
-            "Could not read the WAV file (%s). Expected 16 kHz, mono, 16-bit PCM." % e,
-        )
-
-    problems = []
-    if rate != EXPECTED_SAMPLE_RATE:
-        problems.append("sample rate is %d Hz, need %d" % (rate, EXPECTED_SAMPLE_RATE))
-    if channels != EXPECTED_CHANNELS:
-        problems.append("%d channels, need mono" % channels)
-    if width != EXPECTED_SAMPLE_WIDTH or comptype != "NONE":
-        problems.append("%d-bit samples, need 16-bit PCM" % (width * 8))
-    if problems:
-        raise DiarizeError("audio-invalid", "Unsupported WAV format: %s." % "; ".join(problems))
-    if frames == 0:
-        raise DiarizeError("audio-invalid", "The WAV file contains no audio.")
-
-    return {
-        "sampleRate": rate,
-        "channels": channels,
-        "frames": frames,
-        "durationSec": round(frames / float(rate), 3),
-        "data": data,
-    }
+        audio = pcm.read_wav(path)
+    except pcm.PcmAudioError as e:
+        raise DiarizeError("audio-invalid", str(e))
+    audio["durationSec"] = round(audio["frames"] / float(audio["sampleRate"]), 3)
+    return audio
 
 
 def to_waveform(data):
-    """Convert little-endian 16-bit PCM bytes to a (1, n) float32 tensor."""
-    import numpy as np
-    import torch
-
-    samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
-    return torch.from_numpy(samples).unsqueeze(0)
+    """Convert PCM bytes lazily, after offline environment setup."""
+    return _sibling("pcm_audio").to_waveform(data)
 
 
 # ---------------------------------------------------------------------------
@@ -576,8 +558,16 @@ def run(args):
 
 
 def write_envelope(path, envelope):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(envelope, f, indent=2)
+    """Publish JSON from a private file, including when replacing an old file."""
+    parent = os.path.dirname(os.path.abspath(path))
+    fd, temporary = tempfile.mkstemp(prefix=".transcriber-result-", dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(envelope, f, indent=2)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 # ---------------------------------------------------------------------------

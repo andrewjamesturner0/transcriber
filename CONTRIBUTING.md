@@ -18,7 +18,7 @@ The setup script builds whisper.cpp from source (Linux), downloads the default T
 
 - Node.js >= 22.12
 - Git
-- `curl` and `unzip`
+- `unzip` and `tar` with xz support for platform archives
 - **Linux:** C/C++ compiler (`gcc`/`g++`), `cmake` >= 3.10, `make`
 
 ## Code style
@@ -35,7 +35,7 @@ There is no automated linter or formatter configured. Follow the conventions in 
 1. Fork the repository
 2. Create a feature branch from `master`
 3. Make your changes
-4. Test manually: run `npm start` and verify the app works as expected
+4. Run `npm test`, the relevant checks in [DEVELOPMENT.md](DEVELOPMENT.md#tests-and-evaluation), and verify the affected flow in `npm start`
 5. Submit a PR with a clear description of the change and why it's needed
 
 Keep PRs focused on a single change. If you're fixing a bug and want to refactor nearby code, submit them as separate PRs.

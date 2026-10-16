@@ -17,7 +17,7 @@ Transcriber is a desktop application that transcribes audio and video files usin
 - 13 Whisper models, from Tiny (fastest) to Large-v3 (most accurate), including turbo and quantized variants. English-optimised models available.
 - GPU acceleration via Vulkan, with automatic detection and CPU fallback
 - Audio and video input: 9 audio formats (MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM, DSS) and 7 video formats (MP4, MOV, AVI, MKV, WMV, FLV, 3GP). DSS is the Olympus/Philips dictation format (Standard Play only; DSS Pro/DSS2 not supported).
-- Batch processing. Queue multiple files and transcribe them sequentially.
+- Batch processing. Queue multiple files and transcribe them sequentially. Completed results and errors stay in the queue until removed; cancelling leaves unstarted files pending.
 - Windows and Linux
 
 ## Install
@@ -45,7 +45,7 @@ Your audio/video file
     -> Your transcript, ready to use
 ```
 
-Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes; no native bindings or compilation required. Models are downloaded once and stored locally; after that, Transcriber works offline. For details on FFmpeg bundling and licensing, see [docs/ffmpeg.md](docs/ffmpeg.md).
+Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes; no native bindings or compilation required. The GUI stores downloaded Whisper models in its writable user data folder and can also use bundled models. The CLI uses the repository's `models/` folder. After setup, transcription works offline. For details on FFmpeg bundling and licensing, see [docs/ffmpeg.md](docs/ffmpeg.md).
 
 ## Speaker labels (advanced)
 
@@ -118,7 +118,7 @@ For a description suitable for ethics applications and data management plans, se
 | Large-v3 Turbo | ~1.6 GB | Moderate | Close to Large-v3 accuracy, faster |
 | Large-v3 | ~3.1 GB | Slowest | Maximum accuracy |
 
-`.en` models are English-optimised and faster when multilingual support is not needed. Q5 models use 5-bit quantization to reduce file size, with some quality trade-off.
+`.en` models are English-optimised and run with English selected. Multilingual models detect the spoken language automatically. Q5 models use 5-bit quantization to reduce file size, with some quality trade-off.
 
 ## CLI
 

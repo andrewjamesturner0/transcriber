@@ -62,12 +62,9 @@ import os
 import re
 import sys
 import time
-import wave
+import tempfile
 
 MIN_PYTHON = (3, 10)
-EXPECTED_SAMPLE_RATE = 16000
-EXPECTED_CHANNELS = 1
-EXPECTED_SAMPLE_WIDTH = 2  # bytes, i.e. 16-bit PCM
 
 ENVELOPE_FORMAT = "transcriber-alignment"
 ENVELOPE_VERSION = 1
@@ -106,7 +103,7 @@ class AlignError(Exception):
 # ---------------------------------------------------------------------------
 
 def _sibling(name):
-    """Import alignment_models or alignment_core from this file's folder.
+    """Import a Python sibling from this file's folder.
 
     By path, so it works whatever the working directory or sys.path, when
     this file is itself loaded with spec_from_file_location (the setup
@@ -387,54 +384,23 @@ def read_input(path):
 
 
 def read_wav(path):
-    """Read and validate a 16 kHz, mono, 16-bit PCM WAV (what FFmpeg writes).
-
-    Uses the built-in wave module, as lib/diarize.py does. Returns the raw
-    PCM bytes and the duration.
-    """
-    if not os.path.isfile(path):
-        raise AlignError("audio-invalid", "Audio file not found: %s" % path)
+    """Validate shared PCM input and retain this stage's duration metadata."""
+    pcm = _sibling("pcm_audio")
     try:
-        with wave.open(path, "rb") as wf:
-            channels = wf.getnchannels()
-            width = wf.getsampwidth()
-            rate = wf.getframerate()
-            comptype = wf.getcomptype()
-            frames = wf.getnframes()
-            data = wf.readframes(frames)
-    except (wave.Error, EOFError, OSError) as e:
-        raise AlignError(
-            "audio-invalid",
-            "Could not read the WAV file (%s). Expected 16 kHz, mono, 16-bit PCM." % e,
-        )
-
-    problems = []
-    if rate != EXPECTED_SAMPLE_RATE:
-        problems.append("sample rate is %d Hz, need %d" % (rate, EXPECTED_SAMPLE_RATE))
-    if channels != EXPECTED_CHANNELS:
-        problems.append("%d channels, need mono" % channels)
-    if width != EXPECTED_SAMPLE_WIDTH or comptype != "NONE":
-        problems.append("%d-bit samples, need 16-bit PCM" % (width * 8))
-    if problems:
-        raise AlignError("audio-invalid", "Unsupported WAV format: %s." % "; ".join(problems))
-    if frames == 0:
-        raise AlignError("audio-invalid", "The WAV file contains no audio.")
-
+        audio = pcm.read_wav(path)
+    except pcm.PcmAudioError as e:
+        raise AlignError("audio-invalid", str(e))
     return {
-        "sampleRate": rate,
-        "frames": frames,
-        "durationMs": frames * 1000.0 / rate,
-        "data": data,
+        "sampleRate": audio["sampleRate"],
+        "frames": audio["frames"],
+        "durationMs": audio["frames"] * 1000.0 / audio["sampleRate"],
+        "data": audio["data"],
     }
 
 
 def to_waveform(data):
-    """Convert little-endian 16-bit PCM bytes to a (1, n) float32 tensor."""
-    import numpy as np
-    import torch
-
-    samples = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768.0
-    return torch.from_numpy(samples).unsqueeze(0)
+    """Convert PCM bytes lazily, after offline environment setup."""
+    return _sibling("pcm_audio").to_waveform(data)
 
 
 def segment_window(segment, pad_ms, duration_ms):
@@ -650,8 +616,16 @@ def fetch_model(language):
 
 
 def write_envelope(path, envelope):
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(envelope, f, indent=2)
+    """Publish JSON from a private file, including when replacing an old file."""
+    parent = os.path.dirname(os.path.abspath(path))
+    fd, temporary = tempfile.mkstemp(prefix=".transcriber-result-", dir=parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(envelope, f, indent=2)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def summarise(envelope):

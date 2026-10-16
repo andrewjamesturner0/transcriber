@@ -4,7 +4,7 @@
 
 - [Node.js](https://nodejs.org/) >= 22.12
 - [Git](https://git-scm.com/)
-- `curl` and `unzip` (available by default on most systems)
+- `unzip` for local Windows archives, and `tar` with xz support for Linux archives. Build downloads use Node's HTTP client.
 
 **Linux only** (for building whisper.cpp from source):
 - A C/C++ compiler (`gcc` / `g++`)
@@ -56,19 +56,33 @@ scripts/build.sh [--target win|linux|all] [--skip-deps] [--no-gpu] [--debug]
 | `--target win` | **(default)** Download Windows binaries, package as NSIS installer |
 | `--target linux` | Build whisper.cpp from source, package as AppImage |
 | `--target all` | Build both Windows and Linux |
-| `--skip-deps` | Skip downloading/building binaries (reuse existing `bin/` and `models/`) |
+| `--skip-deps` | Verify existing binary provenance and default model, then package without fetching/building |
 | `--no-gpu` | Skip building Vulkan GPU binaries (CPU only) |
 | `--debug` | Include debug panel in settings (log file viewer) |
 
 The script runs these steps:
 
 1. `npm install`
-2. Downloads the bundled model (`ggml-tiny.en.bin`, 75 MB) from Hugging Face
+2. Verifies or downloads the bundled model (`ggml-tiny.en.bin`, 75 MB) from its pinned Hugging Face revision, checking SHA-256 and size before installation
 3. Fetches or builds platform-specific binaries into `bin/{win,linux}/{cpu,vulkan}/`
    - **Windows**: pre-built CPU `whisper-cli.exe` + DLLs from [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases), `ffmpeg.exe` from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)
    - **Linux**: clones whisper.cpp, builds CPU and Vulkan variants with cmake, downloads static ffmpeg from [johnvansickle.com](https://johnvansickle.com/ffmpeg/)
    - Vulkan binaries: for Linux, built from source (requires Vulkan SDK); for Windows, Vulkan binaries are built in CI only (local Windows builds download pre-built CPU binaries). Skipped with `--no-gpu`
 4. Runs `electron-builder` to produce the distributable in `dist/`
+
+`scripts/build-deps.js` shares the fetch/identity policy with both local scripts
+and the native Windows/Linux release workflow. Whisper source must match the
+manifest's tag and commit with no tracked edits; old CMake outputs need matching
+source provenance. Binary receipts bind the version, revision, architecture,
+CPU/Vulkan variant and every copied file hash. FFmpeg archives must match their
+existing SHA-256 before extraction. Downloads use unique temporary paths and
+HTTP failure handling, and only become final assets after validation.
+
+An existing checkout or binary cache with unknown provenance stops the build,
+including `--skip-deps`. Move that cache aside explicitly and rerun to create a
+verified replacement. Do not stamp old files or change a trust hash simply to
+silence a mismatch. A mutable FFmpeg URL may legitimately change upstream; its
+new identity needs review before updating `deps.json`.
 
 ## Windows Native Build
 
@@ -93,24 +107,26 @@ git clone <repo-url>
 cd transcriber
 npm install
 
-mkdir -p bin\win\cpu
-mkdir -p models
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+New-Item -ItemType Directory -Force bin\win\cpu, models | Out-Null
 
-# Download whisper.cpp release
-$WHISPER_VERSION = "v1.9.2"
-Invoke-WebRequest -Uri "https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION/whisper-bin-x64.zip" -OutFile whisper.zip
+# Fetch the pinned release archive and verify before extraction
+node scripts/build-deps.js fetch whisper-win whisper.zip
 Expand-Archive -Path whisper.zip -DestinationPath whisper-temp -Force
-Copy-Item whisper-temp\* bin\win\cpu\ -Recurse -Force
+Copy-Item whisper-temp\Release\* bin\win\cpu\ -Force
+node scripts/build-deps.js record whisper-win-cpu bin/win/cpu
 Remove-Item whisper.zip, whisper-temp -Recurse -Force
 
 # Download ffmpeg
-Invoke-WebRequest -Uri "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip" -OutFile ffmpeg.zip
+node scripts/build-deps.js fetch ffmpeg-win ffmpeg.zip
 Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg-temp -Force
 Copy-Item ffmpeg-temp\ffmpeg-*\bin\ffmpeg.exe bin\win\
+node scripts/build-deps.js record-file ffmpeg-win bin/win/ffmpeg.exe
 Remove-Item ffmpeg.zip, ffmpeg-temp -Recurse -Force
 
 # Download the default model
-Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin" -OutFile models\ggml-tiny.en.bin
+node scripts/build-deps.js fetch model models/ggml-tiny.en.bin
 ```
 
 ### Option B: Build whisper.cpp from source
@@ -118,23 +134,28 @@ Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/mai
 For custom builds or GPU support:
 
 ```powershell
-git clone https://github.com/ggml-org/whisper.cpp.git .build-whisper
-cd .build-whisper
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $true
+node scripts/build-deps.js source .build-whisper
 
-# CPU only
-cmake -B build -DBUILD_SHARED_LIBS=ON
+# CPU only, from the pinned source
+cmake -S .build-whisper -B .build-whisper/build-cpu -DBUILD_SHARED_LIBS=ON
 
 # Or with CUDA support (requires CUDA Toolkit)
-# cmake -B build -DBUILD_SHARED_LIBS=ON -DGGML_CUDA=ON
+# cmake -S .build-whisper -B .build-whisper/build-cpu -DBUILD_SHARED_LIBS=ON -DGGML_CUDA=ON
 
-cmake --build build --config Release
-
-cd ..
-Copy-Item .build-whisper\build\bin\Release\whisper-cli.exe bin\win\cpu\
-Copy-Item .build-whisper\build\bin\Release\*.dll bin\win\cpu\
+cmake --build .build-whisper/build-cpu --config Release
+Copy-Item .build-whisper\build-cpu\bin\Release\whisper-cli.exe bin\win\cpu\
+Copy-Item .build-whisper\build-cpu\bin\Release\*.dll bin\win\cpu\
 
 # Still need ffmpeg and model; see Option A for download commands
 ```
+
+Custom source builds above are for development. They do not acquire an archive
+receipt automatically. The verified local packaging script refuses unrecorded
+outputs; for native Vulkan release builds, follow `.github/workflows/release.yml`.
+Native Windows CI is configured to run the release commands; execution and
+installer evidence remain pending. Linux shell fixtures do not prove them.
 
 ### Run and package
 
@@ -178,6 +199,10 @@ lib/
   paths.js                Shared binary-path resolution (dev vs. packaged, platform dir)
   capabilities.js         GPU/DTW/Python capability detection (consolidated from main.js)
   models.js               Canonical model metadata (filenames, DTW presets, download URLs)
+  model-store.js          Caller-owned availability, paths and download ownership
+  model-download.js       Atomic cancellable HTTPS model transfers
+  logging.js              Bounded asynchronous diagnostics
+  operation-manager.js    Work admission, cancellation and shutdown
   transcription-runner.js FFmpeg -> whisper -> optional align -> diarize pipeline factory
   whisper-runner.js       Whisper-cli arg construction, backend resolution, GPU/DTW fallback retry
   _subprocess.js          Shared subprocess spawn helper (used by ffmpeg, whisper, diarization)
@@ -186,6 +211,7 @@ lib/
   diarization-setup.js    Explicit Python model setup runner
   diarize.py              Offline Community-1 speaker inference and readiness check
   align.py                Offline word alignment (part of speaker labelling) and readiness check
+  pcm_audio.py            Shared strict 16-bit mono PCM WAV loading
   alignment_models.py     Alignment language/model registry and cache-only loaders
   alignment_core.py       Alignment path search (adapted from WhisperX 3.8.6 / TorchAudio)
   third_party/            Upstream licence notices for the adapted alignment code
@@ -194,6 +220,10 @@ assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
 scripts/
   build.sh                 Full build script (download deps + package distributable)
   setup.sh                 Dev-only setup (build whisper.cpp from source for local testing)
+  build-deps.js            Pinned source, archive and binary-cache verification
+  test-build-deps.js       Local HTTP/git/build policy fixtures
+  run-tests.js             Deterministic, tensor maths and Electron test categories
+  benchmark-merge.js       Synthetic exact-parity speaker assignment benchmark
   setup-diarization.py     Download speaker/alignment models; check readiness
   test-merge.js                 Unit tests for the diarization merge logic (no model needed)
   test-capabilities.js          Unit tests for lib/capabilities.js (GPU, DTW, Python)
@@ -203,6 +233,16 @@ scripts/
   test-cli.js                   Subprocess tests for cli.js (arg parsing, exit codes, output streams)
   test-queue.js                 Unit tests for the queue state model (enqueue, processAll, cancel)
   test-renderer-smoke.js        Smoke test: loads renderer scripts in a browser-like vm context
+  test-renderer-dom.js          Real Electron renderer behaviour
+  test-electron-lifecycle.js    Real Electron shutdown with harmless child trees
+  test-gui-transcript-contract.js Structured result and rendering contracts
+  test-cli-pipeline.js          CLI subprocess pipeline through harmless executables
+  test-model-store.js           Writable/bundled model lookup and availability
+  test-model-download.js        Atomic transport failure/cancellation fixtures
+  test-subprocess.js            Bounded diagnostics and child-tree cancellation
+  test-logging.js               Rotation, queue pressure and logger closure
+  test-operation-manager.js     Admission and shutdown ownership
+  test-main-lifecycle.js        Main-process integration boundaries
   test-packaging.js             Static check: require() consistency vs electron-builder.yml
   test-diarize-pipeline.py End-to-end diarization test (requires prepared model + Python)
   test-diarize-contract.py Offline diarization/setup contract tests
@@ -211,6 +251,7 @@ scripts/
   test-alignment-core.py   Alignment maths tests with real torch tensors (no model)
   test-alignment-isolation.py Real offline check with removed packages blocked (needs the English model)
   test-alignment-runtime.py Real comparison against a saved alignment (needs a model)
+  test-pcm-audio.py        Shared PCM decoder contracts and opt-in tensor maths
   test-audio-load.py       Checks ffmpeg can load a given audio file
 electron-builder.yml Packaging config (extraResources, targets per platform)
 ```
@@ -224,13 +265,15 @@ bin/win/             ffmpeg.exe (shared)
 bin/linux/cpu/       whisper-cli, shared libs (CPU backend)
 bin/linux/vulkan/    whisper-cli, shared libs (Vulkan GPU backend)
 bin/linux/           ffmpeg (shared)
-models/              ggml-*.bin model files
-.build-whisper/      whisper.cpp source and build tree (Linux only)
+models/              Bundled models and CLI downloads (development GUI fallback)
+.build-whisper/      Pinned whisper.cpp source and build tree
 node_modules/
 dist/                Built distributables
 ```
 
 ## Architecture Notes
+
+See [the walkthrough](docs/walkthrough.md) for the module and data-flow overview.
 
 - `lib/paths.js` owns all binary-path resolution: `getPlatformDir()` resolves `win`/`linux`/`mac`, `getResourcePath()` handles dev vs. packaged, `getWhisperBinary(backend)` and `getFfmpegBinary()` return binary paths
 - `lib/capabilities.js` consolidates GPU backend detection, DTW support probing, and Python/pyannote availability into a single module (formerly scattered global state in main.js)
@@ -238,7 +281,11 @@ dist/                Built distributables
 - Transcription flow: FFmpeg converts input to 16 kHz mono WAV, then whisper-cli transcribes. Pyannote jobs request full JSON, keep flash attention and re-time words with forced alignment by default (Whisper token timing is the fallback). Explicit CLI `--dtw` adds `--dtw <preset> --no-flash-attn` where supported. Forced jobs skip DTW and align the same text before speaker inference.
 - Whisper thread count: `options.threads || 4` in `lib/whisper-runner.js`; GUI and CLI use the default four threads.
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
-- `lib/models.js` defines the canonical model list (13 entries) with filenames, DTW presets, and per-model flags; the `download-model` IPC streams from Hugging Face with progress events
+- `lib/models.js` defines canonical metadata (13 entries). `lib/model-store.js` owns availability, paths and installation; `lib/model-download.js` handles atomic HTTPS transfers. GUI downloads go to `app.getPath('userData')/models`, prefer writable files and fall back to bundled `resources/models` (repository `models/` in development). CLI downloads stay in repository `models/`; listing, inference and downloading use the same store in each caller.
+- English-only models pass `-l en`; multilingual models pass `-l auto` across plain, JSON and speaker-labelled paths.
+- GUI IPC returns canonical `text` plus a versioned `transcript` structure with blocks, speakers, attribution, alignment and warnings. The legacy string IPC adapter remains available. The renderer reads blocks directly and uses canonical text for copy/save.
+- Queue results/errors are retained in memory until removed or cleared. Each batch captures only its initial pending IDs; new items wait for the next batch. Cancellation marks the active item cancelled and preserves unstarted work. The renderer reads model/options for each file, keeps batch errors/fallback warnings visible and restores controls in `finally`.
+- `lib/logging.js` serialises asynchronous diagnostic writes with a 1 MiB queue and 5 MiB current/rotated file limits. It can truncate/drop diagnostics with an overflow summary; transcript result data is kept separately.
 - GPU acceleration: ships both CPU and Vulkan whisper-cli binaries; at startup, tests the Vulkan binary with `--help` (5s timeout) and caches the result. If Vulkan fails mid-transcription, transparently retries with CPU
 - Backend preference stored in `settings.json` in `app.getPath('userData')`
 - macOS builds require building on macOS with `bin/mac/` populated manually
@@ -305,17 +352,23 @@ python lib/diarize.py --audio test.wav --output out.json
 Deterministic checks need no model downloads:
 
 ```bash
-for test_file in scripts/test-*.js; do
-  case "$test_file" in *test-whisper-dtw.js) continue ;; esac
-  node "$test_file" || exit 1
-done
-python3 scripts/test-diarize-contract.py
-python3 scripts/test-align-contract.py
-python3 scripts/test-alignment-models.py
-"$ALIGN_PY" scripts/test-alignment-core.py   # needs torch; fails rather than skips
+npm test                         # deterministic Node + stdlib Python contracts
+npm run test:maths                # NumPy/PyTorch tensor maths, no weights
+npm run test:electron             # real Electron DOM + lifecycle fixtures
+# Linux without a desktop session:
+xvfb-run -a npm run test:electron
+node scripts/benchmark-merge.js --runs 7 --compare-reference
 ```
 
-`ALIGN_PY` is a Python with the alignment requirements installed.
+Set `TRANSCRIBER_TEST_PYTHON` to the interpreter for deterministic or maths
+checks; otherwise the runner uses `python3` (Windows: `py -3`). The maths
+category needs NumPy/PyTorch and fails if they are missing. Electron fixtures
+need the installed Electron runtime and a display or Xvfb. They exercise real
+DOM behaviour and harmless child-process cleanup without recordings/models.
+CI is configured to run deterministic/Electron categories on Windows and
+Linux, with maths in a separate Linux job. A dry package build does not prove installed-app or
+real-model acceptance.
+
 `scripts/test-whisper-dtw.js`, `scripts/test-diarize-pipeline.py`,
 `scripts/test-alignment-isolation.py` and `scripts/test-alignment-runtime.py`
 use real local assets and are separate smoke checks. Run the last two under
@@ -328,9 +381,20 @@ remain incomplete.
 ### Cancellation
 
 FFmpeg, Whisper, alignment and diarisation share one `AbortSignal`. Cancelling
-kills the active subprocess and cleans up temporary WAV/JSON files. Alignment
-failures retain Whisper timing; diarisation failures retain plain text.
-Cancellation propagates rather than starting a fallback job.
+targets the active process tree and waits for termination before removing the
+job's private temporary directory. POSIX groups get five seconds graceful and
+two seconds forced termination; Windows uses `taskkill /T /F`. Direct Whisper
+JSON callers receive an explicit cleanup function for the private output
+directory when they do not supply a JSON prefix. Alignment failures retain
+Whisper timing; diarisation failures retain plain text. Cancellation propagates
+rather than starting a fallback job.
+
+`lib/operation-manager.js` reserves jobs before awaits and owns transcription,
+setup and model downloads. App quit/update closes admission, aborts owned work,
+disposes capability probes and flushes/closes the logger. The shutdown deadline
+is ten seconds; a timeout can leave processes or temporary files behind.
+Native Windows child-tree and installed-package acceptance still need separate
+evidence.
 
 ## Dependency Updates
 
@@ -355,7 +419,13 @@ To bump whisper.cpp manually, edit `deps.json`:
 { "whisper": { "version": "v1.9.2", ... } }
 ```
 
-Then push and run a CI build. The build scripts and CI workflow will pick up the new version automatically.
+Update the matching `whisper.revision`, Windows asset SHA-256 and size from
+reviewed upstream tag/release evidence too. Builds refuse a tag/commit mismatch
+and do not treat an old receipt as the new version. The default model also has
+an immutable revision URL, size and SHA-256. Review any FFmpeg archive change
+against its existing hash before updating trust data. The weekly workflow
+proposes version/checksum changes; it does not resolve all Whisper trust fields,
+so a generated PR needs this review before the release can build.
 
 ## FFmpeg
 

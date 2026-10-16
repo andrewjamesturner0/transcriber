@@ -14,9 +14,14 @@ DEPS_JSON="$PROJECT_DIR/deps.json"
 dep() { node -p "require('$DEPS_JSON')$1"; }
 
 WHISPER_VERSION="$(dep '.whisper.version')"
-WHISPER_RELEASE_URL="https://github.com/ggml-org/whisper.cpp/releases/download/$WHISPER_VERSION"
-MODEL_URL="$(dep '.model.url')"
-FFMPEG_WIN_URL="$(dep '.ffmpeg.win.url')"
+build_dep() { node "$SCRIPT_DIR/build-deps.js" "$@"; }
+linux_ffmpeg_key() {
+  case "$(uname -m)" in
+    x86_64) echo ffmpeg-linux-amd64 ;;
+    aarch64) echo ffmpeg-linux-arm64 ;;
+    *) echo "Unsupported architecture" >&2; return 1 ;;
+  esac
+}
 
 usage() {
   echo "Usage: $0 [--target win|linux|all] [--skip-deps] [--no-gpu] [--debug]"
@@ -46,13 +51,8 @@ done
 
 # --- Download model ---
 download_model() {
-  if [ -f "$MODELS_DIR/ggml-tiny.en.bin" ]; then
-    echo "==> Model already exists, skipping."
-  else
-    mkdir -p "$MODELS_DIR"
-    echo "==> Downloading tiny.en model..."
-    curl -L -o "$MODELS_DIR/ggml-tiny.en.bin" "$MODEL_URL"
-  fi
+  echo "==> Checking/downloading pinned tiny.en model..."
+  build_dep fetch model "$MODELS_DIR/$(dep '.model.default')"
 }
 
 # --- Windows dependencies ---
@@ -63,12 +63,19 @@ setup_win() {
   local CPU_DIR="$DIR/cpu"
   mkdir -p "$CPU_DIR"
 
-  if [ -f "$CPU_DIR/whisper-cli.exe" ]; then
+  # Optional GPU outputs are packaged too, so verify them even in a CPU build.
+  if [ -d "$DIR/vulkan" ]; then
+    build_dep cache whisper-win-vulkan "$DIR/vulkan"
+  fi
+  local CACHE
+  CACHE=$(build_dep cache whisper-win-cpu "$CPU_DIR")
+  if [ "$CACHE" = valid ]; then
     echo "==> Windows whisper-cli (CPU) already exists, skipping."
   else
     echo "==> Downloading Windows whisper.cpp CPU binaries ($WHISPER_VERSION)..."
-    local TMP=$(mktemp -d)
-    curl -L -o "$TMP/whisper.zip" "$WHISPER_RELEASE_URL/whisper-bin-x64.zip"
+    local TMP
+    TMP=$(mktemp -d)
+    build_dep fetch whisper-win "$TMP/whisper.zip"
     unzip -o -j "$TMP/whisper.zip" \
       "Release/whisper-cli.exe" \
       "Release/whisper.dll" \
@@ -76,16 +83,20 @@ setup_win() {
       "Release/ggml-cpu.dll" \
       "Release/ggml.dll" \
       -d "$CPU_DIR"
+    build_dep record whisper-win-cpu "$CPU_DIR"
     rm -rf "$TMP"
   fi
 
-  if [ -f "$DIR/ffmpeg.exe" ]; then
+  CACHE=$(build_dep cache-file ffmpeg-win "$DIR/ffmpeg.exe")
+  if [ "$CACHE" = valid ]; then
     echo "==> Windows ffmpeg already exists, skipping."
   else
     echo "==> Downloading Windows ffmpeg..."
-    local TMP=$(mktemp -d)
-    curl -L -o "$TMP/ffmpeg.zip" "$FFMPEG_WIN_URL"
+    local TMP
+    TMP=$(mktemp -d)
+    build_dep fetch ffmpeg-win "$TMP/ffmpeg.zip"
     unzip -o -j "$TMP/ffmpeg.zip" "*/bin/ffmpeg.exe" -d "$DIR"
+    build_dep record-file ffmpeg-win "$DIR/ffmpeg.exe"
     rm -rf "$TMP"
   fi
 }
@@ -99,14 +110,14 @@ setup_linux() {
 
   local BUILD_DIR="$PROJECT_DIR/.build-whisper"
 
-  # Clone whisper.cpp source (shared between CPU and Vulkan builds)
-  if [ ! -d "$BUILD_DIR" ]; then
-    echo "==> Cloning whisper.cpp..."
-    git clone --depth 1 https://github.com/ggml-org/whisper.cpp.git "$BUILD_DIR"
-  fi
+  # Verify the exact revision before inspecting or reusing build outputs.
+  build_dep source "$BUILD_DIR"
 
   # CPU build
-  if [ -f "$CPU_DIR/whisper-cli" ]; then
+  local CPU_CACHE VULKAN_CACHE
+  CPU_CACHE=$(build_dep cache whisper-linux-cpu "$CPU_DIR")
+  VULKAN_CACHE=$(build_dep cache whisper-linux-vulkan "$VULKAN_DIR")
+  if [ "$CPU_CACHE" = valid ]; then
     echo "==> Linux whisper-cli (CPU) already exists, skipping."
   else
     echo "==> Building whisper.cpp (CPU) from source..."
@@ -118,6 +129,7 @@ setup_linux() {
     chmod +x "$CPU_DIR/whisper-cli"
     find "$BUILD_DIR/build-cpu" -name "libwhisper.so*" -exec cp {} "$CPU_DIR/" \;
     find "$BUILD_DIR/build-cpu" -name "libggml*.so*" -exec cp {} "$CPU_DIR/" \;
+    build_dep record whisper-linux-cpu "$CPU_DIR"
   fi
 
   # Vulkan (GPU) build - requires libvulkan-dev, glslc, and spirv-headers
@@ -129,7 +141,7 @@ setup_linux() {
     echo "==> Skipping Vulkan build (Vulkan headers not installed - run: sudo apt install libvulkan-dev glslc spirv-headers)"
   elif ! cmake --find-package -DNAME=SPIRV-Headers -DCOMPILER_ID=GNU -DLANGUAGE=CXX -DMODE=EXIST &>/dev/null; then
     echo "==> Skipping Vulkan build (SPIR-V headers not installed - run: sudo apt install libvulkan-dev glslc spirv-headers)"
-  elif [ -f "$VULKAN_DIR/whisper-cli" ]; then
+  elif [ "$VULKAN_CACHE" = valid ]; then
     echo "==> Linux whisper-cli (Vulkan) already exists, skipping."
   else
     echo "==> Building whisper.cpp (Vulkan) from source..."
@@ -142,23 +154,24 @@ setup_linux() {
     chmod +x "$VULKAN_DIR/whisper-cli"
     find "$BUILD_DIR/build-vulkan" -name "libwhisper.so*" -exec cp {} "$VULKAN_DIR/" \;
     find "$BUILD_DIR/build-vulkan" -name "libggml*.so*" -exec cp {} "$VULKAN_DIR/" \;
+    build_dep record whisper-linux-vulkan "$VULKAN_DIR"
   fi
 
-  if [ -f "$DIR/ffmpeg" ]; then
-    echo "==> Linux ffmpeg already exists, skipping."
+  local FFMPEG_KEY
+  FFMPEG_KEY="$(linux_ffmpeg_key)"
+  local FFMPEG_CACHE
+  FFMPEG_CACHE=$(build_dep cache-file "$FFMPEG_KEY" "$DIR/ffmpeg")
+  if [ "$FFMPEG_CACHE" = valid ]; then
+    echo "==> Linux ffmpeg already verified, skipping."
   else
     echo "==> Downloading Linux ffmpeg..."
-    local ARCH="$(uname -m)"
-    case "$ARCH" in
-      x86_64)  FFMPEG_URL="$(dep '.ffmpeg["linux-amd64"].url')" ;;
-      aarch64) FFMPEG_URL="$(dep '.ffmpeg["linux-arm64"].url')" ;;
-      *)       echo "Unsupported arch: $ARCH"; exit 1 ;;
-    esac
-    local TMP=$(mktemp -d)
-    curl -L -o "$TMP/ffmpeg.tar.xz" "$FFMPEG_URL"
+    local TMP
+    TMP=$(mktemp -d)
+    build_dep fetch "$FFMPEG_KEY" "$TMP/ffmpeg.tar.xz"
     tar -xf "$TMP/ffmpeg.tar.xz" -C "$TMP"
     find "$TMP" -name "ffmpeg" -type f -exec cp {} "$DIR/ffmpeg" \;
     chmod +x "$DIR/ffmpeg"
+    build_dep record-file "$FFMPEG_KEY" "$DIR/ffmpeg"
     rm -rf "$TMP"
   fi
 }
@@ -178,6 +191,22 @@ if [ "$SKIP_DEPS" = false ]; then
     all)   setup_win; setup_linux ;;
     *)     echo "Unknown target: $TARGET"; usage ;;
   esac
+else
+  build_dep verify model "$MODELS_DIR/$(dep '.model.default')"
+  if [ "$TARGET" = win ] || [ "$TARGET" = all ]; then
+    test "$(build_dep cache whisper-win-cpu "$BIN_DIR/win/cpu")" = valid
+    test "$(build_dep cache-file ffmpeg-win "$BIN_DIR/win/ffmpeg.exe")" = valid
+    if [ -d "$BIN_DIR/win/vulkan" ]; then
+      test "$(build_dep cache whisper-win-vulkan "$BIN_DIR/win/vulkan")" = valid
+    fi
+  fi
+  if [ "$TARGET" = linux ] || [ "$TARGET" = all ]; then
+    test "$(build_dep cache whisper-linux-cpu "$BIN_DIR/linux/cpu")" = valid
+    test "$(build_dep cache-file "$(linux_ffmpeg_key)" "$BIN_DIR/linux/ffmpeg")" = valid
+    if [ -d "$BIN_DIR/linux/vulkan" ]; then
+      test "$(build_dep cache whisper-linux-vulkan "$BIN_DIR/linux/vulkan")" = valid
+    fi
+  fi
 fi
 
 # --- Debug build marker ---

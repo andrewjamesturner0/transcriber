@@ -3,7 +3,10 @@
     "version": "v1.9.2",
     "repo": "ggml-org/whisper.cpp",
     "releaseUrl": "https://github.com/ggml-org/whisper.cpp/releases/download/${version}",
-    "winCpuAsset": "whisper-bin-x64.zip"
+    "winCpuAsset": "whisper-bin-x64.zip",
+    "revision": "306c88f4d1286aec1bf96e544632897886af5501",
+    "winCpuSha256": "49dcc16de826f20bd53d44f947a1ae49dfa81f86cad67a64d80820cb192d674a",
+    "winCpuSize": 8194445
   },
   "ffmpeg": {
     "win": {
@@ -21,7 +24,10 @@
   },
   "model": {
     "default": "ggml-tiny.en.bin",
-    "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
+    "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-tiny.en.bin",
+    "revision": "5359861c739e955e79d9a303bcbc70fb988958b1",
+    "sha256": "921e4cf8686fdd993dcd081a5da5b6c365bfde1162e72b08d75ac75289920b1f",
+    "size": 77704715
   },
   "electron": {
     "version": "44.7.0"

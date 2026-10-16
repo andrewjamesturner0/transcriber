@@ -500,6 +500,71 @@ test('assignmentPoint "start" uses word onset (evaluation variant)', () => {
   assert(assignSpeakers(json, diarize, { assignmentPoint: 'start' }).words[0].speakerId === 'A', 'start 800 -> A');
 });
 
+// --- D5 exact parity against the frozen pre-index implementation ---
+
+const nodeAssert = require('assert/strict');
+const reference = require('./fixtures/diarize-merge-reference');
+
+function timedWords(times) {
+  return { words: times.map(([startMs, endMs, anchorMs], index) => ({
+    index, segmentIndex: 0, text: `word${index}`, startMs, endMs,
+    anchorMs: anchorMs === undefined ? null : anchorMs,
+    timingSource: anchorMs === undefined ? (startMs === null ? 'none' : 'forced') : 'dtw',
+    timingQuality: anchorMs === undefined ? (startMs === null ? 'missing' : 'measured') : 'anchor',
+    timingFallback: null,
+  })) };
+}
+function exactParity(input, diarization) {
+  for (const config of [undefined, { assignmentPoint: 'start' }, { gapFillMaxMs: 0 }, { gapFillMaxMs: 500 }]) {
+    nodeAssert.deepStrictEqual(assignSpeakers(input, diarization, config), reference.assignSpeakers(input, diarization, config));
+  }
+}
+
+test('indexed assignment exactly matches boundaries, ties, repeats, gaps, missing times and both timelines', () => {
+  const regular = [
+    { start: 5, end: 6, speaker: 'B' }, // Deliberately unsorted input.
+    { start: 0, end: 2, speaker: 'A' },
+    { start: 0, end: 2, speaker: 'C' }, // Stable equal-start/end order.
+    { start: 0.5, end: 1.5, speaker: 'A' }, // Same speaker overlap adds twice.
+    { start: 1, end: 2, speaker: 'B' },
+    { start: 3, end: 4, speaker: 'C' },
+    { start: 3.5, end: 4, speaker: 'A' }, // Equal nearest end: earliest interval wins.
+    { start: 6, end: 7, speaker: 'A' },
+  ];
+  const input = timedWords([
+    [6000, 6000], [0, 0, 0], [1000, 1000], [2000, 2000],
+    [2500, 2500], [1800, 3200], [4500, 4500], [null, null],
+    [12000, 12000], [11999, 11999], [500, 6500], [1000, null],
+    [3500, 4000], [2000, 2000, 6000],
+  ]);
+  const exclusive = [
+    { start: 0, end: 1.5, speaker: 'A' }, { start: 1.5, end: 2, speaker: 'B' },
+    { start: 3, end: 4, speaker: 'C' }, { start: 5, end: 7, speaker: 'B' },
+  ];
+  for (const timelines of [regular, { regular, exclusive }, { regular, exclusive: [] }, []]) exactParity(input, timelines);
+});
+
+test('indexed assignment matches complete reference results on 300 seeded nonmonotonic overlap cases', () => {
+  let state = 0x2468ace0;
+  const random = max => { state = (Math.imul(state, 1664525) + 1013904223) >>> 0; return state % max; };
+  for (let trial = 0; trial < 300; trial++) {
+    const regular = Array.from({ length: random(35) }, () => {
+      const start = random(80) / 10;
+      return { start, end: start + (random(40) + 1) / 10, speaker: `S${random(5)}` };
+    });
+    if (trial % 5 === 0) regular.push(null, { start: -1, end: 0, speaker: 'bad' }, { start: 2, end: 2, speaker: 'bad' });
+    const exclusive = Array.from({ length: random(25) }, (_, index) => ({
+      start: index * 0.5, end: index * 0.5 + 0.4, speaker: `S${random(5)}`,
+    }));
+    const input = timedWords(Array.from({ length: 40 }, (_, index) => {
+      if (index % 13 === 0) return [null, null];
+      const start = random(16000);
+      return [start, index % 11 === 0 ? null : start + random(3000), ...(index % 7 === 0 ? [random(16000)] : [])];
+    }));
+    exactParity(input, trial % 2 ? regular : { regular, exclusive });
+  }
+});
+
 // --- Summary ---
 
 console.log(`\n${passed} passed, ${failed} failed`);

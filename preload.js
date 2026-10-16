@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('api', {
   selectFiles: () => ipcRenderer.invoke('select-files'),
   getPathForFile: (file) => webUtils.getPathForFile(file),
   transcribe: (filePath, modelId, options) => ipcRenderer.invoke('transcribe', filePath, modelId, options),
+  transcribeResult: (filePath, modelId, options) => ipcRenderer.invoke('transcribe', filePath, modelId, options, 'structured-v1'),
   saveTranscript: (text) => ipcRenderer.invoke('save-transcript', text),
   getModels: () => ipcRenderer.invoke('get-models'),
   downloadModel: (modelId) => ipcRenderer.invoke('download-model', modelId),

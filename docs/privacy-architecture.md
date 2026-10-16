@@ -24,9 +24,24 @@ network; a local transcription job does not need a network connection.
 
 The pipeline deletes temporary WAV and JSON files after success, failure or
 cancellation. Exported transcripts remain where the user saves them. This is
-ordinary file deletion, not secure erasure. The GUI also writes local logs
-containing file paths and subprocess output, which may include transcript
-text. Logs rotate at 5 MB; users should treat logs and exports as sensitive.
+ordinary file deletion, not secure erasure. Each job has its own private
+temporary directory. Completed queue results and errors stay in memory until
+removed, cleared or the app closes; the queue is not saved across restarts.
+The GUI also writes local logs containing file paths and subprocess output,
+which may include transcript text. Logs keep a current file and one rotated
+file, each bounded to 5 MiB; queued diagnostics are bounded to 1 MiB and may
+be truncated or dropped with a summary. Users should treat logs and exports
+as sensitive. Closing the app or installing an update stops new work, cancels
+owned jobs/setup/downloads and waits for cleanup and log flushing, up to a
+ten-second shutdown deadline. A timeout can leave processes or temporary
+files behind.
+
+Whisper model downloads from the GUI go to its writable
+`app.getPath('userData')/models` folder; bundled `resources/models` files are
+a fallback. Development GUI bundles use repository `models/` as that
+fallback. The CLI reads and writes repository `models/` independently.
+Optional Python models remain in the Hugging Face/torch caches used by the
+selected interpreter.
 
 ## Network activity
 
@@ -83,9 +98,13 @@ the update handler in `main.js`.
 Verify a prepared installation by running a transcription job with networking
 disabled, or monitoring its processes' network activity. Distinguish inference
 from setup downloads and the GUI updater. Deterministic privacy contracts are
-checked in `scripts/test-diarize-contract.py` and `scripts/test-align-contract.py`;
-real model/platform smoke checks are still incomplete and do not yet prove
-this behaviour on every supported installation.
+checked in `scripts/test-diarize-contract.py` and `scripts/test-align-contract.py`.
+`npm test` also exercises isolated stores/downloads, cleanup and structured
+results without real models. `npm run test:electron` exercises the renderer
+and lifecycle with harmless local children; Linux checks have passed locally.
+Native Windows lifecycle/installer checks and real model/platform smoke
+checks remain separate acceptance work; these fixtures do not prove the
+behaviour on every supported installation.
 
 ## Use in ethics applications
 

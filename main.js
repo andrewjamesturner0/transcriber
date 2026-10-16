@@ -10,7 +10,10 @@ const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 const paths = require('./lib/paths');
 const Capabilities = require('./lib/capabilities');
-const models = require('./lib/models');
+const { createModelStore } = require('./lib/model-store');
+const { createModelDownloader } = require('./lib/model-download');
+const { createLogger } = require('./lib/logging');
+const { createOperationManager } = require('./lib/operation-manager');
 const { createTranscriptionRunner } = require('./lib/transcription-runner');
 const { createDiarizationSetup } = require('./lib/diarization-setup');
 
@@ -26,7 +29,7 @@ const MEDIA_EXTENSIONS = [
   'mp3', 'wav', 'flac', 'm4a', 'ogg', 'webm', 'wma', 'aac', 'dss',
   'mp4', 'mov', 'avi', 'mkv', 'wmv', 'flv', '3gp',
 ];
-const MAX_LOG_SIZE = 5 * 1024 * 1024; // 5 MB
+
 
 const settingsFile = path.join(app.getPath('userData'), 'settings.json');
 
@@ -45,7 +48,7 @@ function writeSettings(data) {
 }
 
 let mainWindow;
-let transcriptionAbort = null;
+
 let capabilities;
 let transcriptionRunner;
 let diarizationSetup = null;
@@ -54,27 +57,55 @@ let diarizationSetup = null;
 const logDir = path.join(app.getPath('userData'), 'logs');
 const logFile = path.join(logDir, 'transcriber.log');
 
-function logWrite(message) {
-  try {
-    if (!fs.existsSync(logDir)) fs.mkdirSync(logDir, { recursive: true });
-    const timestamp = new Date().toISOString();
-    fs.appendFileSync(logFile, `[${timestamp}] ${message}\n`);
-  } catch (_) { /* ignore logging errors */ }
+const logger = createLogger({ logFile });
+const logWrite = logger.write;
+const operations = createOperationManager();
+const modelStore = createModelStore({
+  bundledDir: paths.getResourcePath('models'),
+  writableDir: path.join(app.getPath('userData'), 'models'),
+  install: createModelDownloader(),
+});
+let shutdownPromise;
+let shutdownComplete = false;
+let installOnClose = false;
+
+function send(sender, channel, data) {
+  if (sender && !sender.isDestroyed()) sender.send(channel, data);
 }
 
-function logRotate() {
-  try {
-    if (!fs.existsSync(logFile)) return;
-    const stats = fs.statSync(logFile);
-    if (stats.size > MAX_LOG_SIZE) {
-      const old = logFile + '.old';
-      if (fs.existsSync(old)) fs.unlinkSync(old);
-      fs.renameSync(logFile, old);
-    }
-  } catch (_) { /* ignore */ }
+function sendToWindow(channel, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) send(mainWindow.webContents, channel, data);
 }
 
-logRotate();
+// Stop admission synchronously, then let owned work remove temporary files.
+function shutdown(install = false) {
+  installOnClose = installOnClose || install;
+  if (!shutdownPromise) {
+    const probes = capabilities ? capabilities.dispose() : Promise.resolve();
+    shutdownPromise = operations.close({
+      flush: async () => {
+        await probes;
+        await logger.close();
+      },
+    }).then((result) => {
+      if (result.timedOut) logWrite('Shutdown timed out: ' + result.pending.join(', '));
+    }).catch((error) => {
+      logWrite('Shutdown failed: ' + error.message);
+    }).finally(() => {
+      shutdownComplete = true;
+      if (installOnClose) autoUpdater.quitAndInstall();
+      else app.quit();
+    });
+  }
+  return shutdownPromise;
+}
+
+app.on('before-quit', (event) => {
+  if (shutdownComplete) return;
+  event.preventDefault();
+  shutdown();
+});
+
 logWrite('=== Application started ===');
 
 function createWindow() {
@@ -95,6 +126,7 @@ function createWindow() {
 }
 
 app.whenReady().then(async () => {
+  if (operations.isClosing()) return;
   // Create capabilities module with injected settings callbacks
   capabilities = new Capabilities({
     getPreference: (key) => readSettings()[key],
@@ -108,6 +140,7 @@ app.whenReady().then(async () => {
   // Create the transcription runner singleton (long-lived deps bound once)
   transcriptionRunner = createTranscriptionRunner({
     capabilities,
+    modelStore,
     paths,
     spawn,
     log: logWrite,
@@ -131,7 +164,7 @@ app.whenReady().then(async () => {
       const c = app.getVersion().split('.').map(Number);
       const isNewer = r[0] > c[0] || (r[0] === c[0] && r[1] > c[1]) || (r[0] === c[0] && r[1] === c[1] && r[2] > c[2]);
       if (isNewer) {
-        mainWindow.webContents.send('update-available', { version: info.version });
+        sendToWindow('update-available', { version: info.version });
       } else {
         autoUpdater.autoDownload = false;
       }
@@ -143,14 +176,14 @@ app.whenReady().then(async () => {
 
     autoUpdater.on('update-downloaded', (info) => {
       logWrite(`[UPDATE] Update downloaded: v${info.version}`);
-      mainWindow.webContents.send('update-downloaded');
+      sendToWindow('update-downloaded');
     });
 
     autoUpdater.on('error', (err) => {
       logWrite(`[UPDATE] Error: ${err.message}`);
     });
 
-    autoUpdater.checkForUpdates();
+    Promise.resolve(autoUpdater.checkForUpdates()).catch((error) => logWrite('[UPDATE] ' + error.message));
   } catch (err) {
     logWrite(`[UPDATE] Failed to initialize: ${err.message}`);
   }
@@ -172,46 +205,32 @@ ipcMain.handle('select-files', async () => {
 });
 
 ipcMain.handle('get-models', async () => {
-  return models.listModels();
+  return modelStore.listModels();
 });
 
-ipcMain.handle('download-model', async (event, modelId) => {
-  models.getModel(modelId); // validates id; throws on unknown
-  return models.downloadModel(modelId, models.getModelPath(modelId), (data) => {
-    event.sender.send('download-progress', data);
-  });
+ipcMain.handle('download-model', (event, modelId) => {
+  modelStore.getModel(modelId);
+  return operations.run('download:' + modelId, (signal) => modelStore.downloadModel(modelId, {
+    signal,
+    onProgress: (data) => send(event.sender, 'download-progress', data),
+  }), { exclusive: true });
 });
 
-ipcMain.handle('transcribe', async (event, filePath, modelId, options) => {
-  await capabilities.detectGpu();
-  const backend = capabilities.getActiveBackend();
-  logWrite(`=== Transcription started: model=${modelId}, backend=${backend}, diarization=${!!(options && options.diarization)}, file=${filePath} ===`);
-
-  const abort = new AbortController();
-  transcriptionAbort = abort;
-
-  try {
-    const { text } = await transcriptionRunner.runTranscription({
-      filePath,
-      modelId,
-      options,
-      signal: abort.signal,
-      onProgress: (msg) => event.sender.send('transcribe-status', msg),
-      onDiarizeProgress: (data) => event.sender.send('diarize-status', data),
+ipcMain.handle('transcribe', (event, filePath, modelId, options, resultFormat) =>
+  operations.run('transcription', async (signal) => {
+    await capabilities.detectGpu();
+    if (signal.aborted) throw new Error('Cancelled');
+    logWrite('=== Transcription started: model=' + modelId + ', backend=' + capabilities.getActiveBackend() + ' ===');
+    const result = await transcriptionRunner.runTranscription({
+      filePath, modelId, options, signal,
+      onProgress: (msg) => send(event.sender, 'transcribe-status', msg),
+      onDiarizeProgress: (data) => send(event.sender, 'diarize-status', data),
     });
-    return text;
-  } finally {
-    transcriptionAbort = null;
-  }
-});
+    return resultFormat === 'structured-v1' ? result : result.text;
+  })
+);
 
-ipcMain.handle('cancel-transcription', () => {
-  if (transcriptionAbort) {
-    transcriptionAbort.abort();
-    return true;
-  }
-  return false;
-});
+ipcMain.handle('cancel-transcription', () => operations.cancel());
 
 // Re-probe every time: the Re-check button and a finished setup must see the
 // current Python packages and model cache.
@@ -220,13 +239,13 @@ ipcMain.handle('check-python', async () => capabilities.getPythonInfo({ refresh:
 // User-directed download of the speaker model (D2). Jobs never download.
 ipcMain.handle('check-alignment', async () => capabilities.getAlignmentInfo({ language: 'en', refresh: true }));
 
-ipcMain.handle('prepare-diarization', async (event, token, opts) => {
-  return diarizationSetup.prepare({
-    token,
+ipcMain.handle('prepare-diarization', (event, token, opts) =>
+  operations.run('setup', (signal) => diarizationSetup.prepare({
+    token, signal,
     alignment: !!(opts && opts.alignment),
-    onProgress: (data) => event.sender.send('diarize-status', data),
-  });
-});
+    onProgress: (data) => send(event.sender, 'diarize-status', data),
+  }))
+);
 
 ipcMain.handle('get-gpu-status', async () => {
   await capabilities.detectGpu();
@@ -254,6 +273,7 @@ ipcMain.handle('is-debug-build', () => {
 ipcMain.handle('get-log-path', () => logFile);
 
 ipcMain.handle('open-log-file', async () => {
+  await logger.flush();
   if (fs.existsSync(logFile)) {
     await shell.openPath(logFile);
   } else {
@@ -266,7 +286,7 @@ ipcMain.handle('open-log-folder', async () => {
   await shell.openPath(logDir);
 });
 
-ipcMain.handle('install-update', () => autoUpdater.quitAndInstall());
+ipcMain.handle('install-update', () => shutdown(true));
 
 ipcMain.handle('get-licenses', async () => {
   const licensePath = paths.getResourcePath('THIRD-PARTY-LICENSES.json');

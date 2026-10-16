@@ -39,7 +39,9 @@ extraResources:
     to: lib/requirements.txt
   - from: lib/align.py
     to: lib/align.py
-  # align.py imports these siblings by path; Python cannot read inside the asar.
+  # Python helpers import these siblings by path, outside the asar.
+  - from: lib/pcm_audio.py
+    to: lib/pcm_audio.py
   - from: lib/alignment_models.py
     to: lib/alignment_models.py
   - from: lib/alignment_core.py

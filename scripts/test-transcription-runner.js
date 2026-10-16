@@ -15,36 +15,13 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 
-// Set up a temp directory as the fake app root so that lib/models
-// (called by transcription-runner) can resolve model paths that pass fs.existsSync.
+// Use a real temporary resource tree with one canonical model catalogue.
 const FAKE_APP = fs.mkdtempSync(path.join(os.tmpdir(), 'transcriber-test-'));
 const FAKE_MODELS = path.join(FAKE_APP, 'models');
 fs.mkdirSync(FAKE_MODELS);
-// Create fake model files (symlink to this test script) for every model id.
-// The runner only checks fs.existsSync, not file contents.
-const MODEL_IDS = [
-  'tiny.en', 'tiny', 'base.en', 'base',
-  'small.en', 'small', 'small.en-tdrz',
-  'medium.en', 'medium',
-  'large-v3', 'large-v3-turbo', 'large-v3-turbo-q5_0', 'large-v3-q5_0',
-];
-const MODEL_FILENAMES = {
-  'tiny.en': 'ggml-tiny.en.bin',
-  'tiny': 'ggml-tiny.bin',
-  'base.en': 'ggml-base.en.bin',
-  'base': 'ggml-base.bin',
-  'small.en': 'ggml-small.en.bin',
-  'small': 'ggml-small.bin',
-  'small.en-tdrz': 'ggml-small.en-tdrz.bin',
-  'medium.en': 'ggml-medium.en.bin',
-  'medium': 'ggml-medium.bin',
-  'large-v3': 'ggml-large-v3.bin',
-  'large-v3-turbo': 'ggml-large-v3-turbo.bin',
-  'large-v3-turbo-q5_0': 'ggml-large-v3-turbo-q5_0.bin',
-  'large-v3-q5_0': 'ggml-large-v3-q5_0.bin',
-};
-for (const [id, fn] of Object.entries(MODEL_FILENAMES)) {
-  fs.writeFileSync(path.join(FAKE_MODELS, fn), '');
+const { getCatalogue } = require('../lib/models');
+for (const model of getCatalogue()) {
+  fs.writeFileSync(path.join(FAKE_MODELS, model.fileName), 'fixture model');
 }
 
 // Also create fake binary dirs
@@ -53,10 +30,6 @@ fs.mkdirSync(path.join(FAKE_APP, 'bin', 'linux', 'vulkan'), { recursive: true })
 fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'cpu', 'whisper-cli'), '');
 fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'vulkan', 'whisper-cli'), '');
 fs.writeFileSync(path.join(FAKE_APP, 'bin', 'linux', 'ffmpeg'), '');
-
-// Initialize lib/paths so that lib/models (required by transcription-runner) can resolve paths
-const libPaths = require('../lib/paths');
-libPaths.initPaths({ isPackaged: false, resourcesPath: FAKE_APP });
 
 const { createTranscriptionRunner } = require('../lib/transcription-runner');
 
@@ -150,10 +123,6 @@ function makePaths(overrides = {}) {
   };
 }
 
-// Require models here for path init - must be after our mocks set up
-// We override paths.getResourcePath in makePaths, so models isn't needed directly
-// The runner requires models internally which uses lib/paths - let it run with defaults
-
 function makeRunner(overrides = {}) {
   const { spawn } = captureSpawn();
   return createTranscriptionRunner({
@@ -161,7 +130,8 @@ function makeRunner(overrides = {}) {
     paths: makePaths(overrides.paths),
     spawn: overrides.spawn || spawn,
     log: overrides.log || (() => {}),
-    tmpDir: '/tmp',
+    tmpDir: overrides.tmpDir || os.tmpdir(),
+    modelStore: overrides.modelStore,
   });
 }
 
@@ -325,6 +295,8 @@ test('runner returns { text } shape by default', async () => {
   assert(result && typeof result === 'object', 'result should be an object');
   assert(typeof result.text === 'string', 'result.text should be a string');
   assert(!('json' in result), 'result should not include json without outputJson');
+  assert(result.transcript.kind === 'plain' && result.transcript.version === 1);
+  assert(result.transcript.blocks.length === 0 && result.transcript.warnings.length === 0);
 });
 
 test('runner reads whisper JSON when outputJson is true', async () => {
@@ -633,6 +605,9 @@ test('forced alignment: one Whisper pass without DTW, aligner before diariser, f
   const align = calls.find((c) => c.alignInput);
   assert(align.alignInput.language === 'en' && align.alignInput.segments[0].words.join(' ') === 'Ready? Yes. Continue.', JSON.stringify(align.alignInput));
   const sa = result.json.speakerAttribution;
+  assert(result.transcript.kind === 'speaker-labelled');
+  assert(result.transcript.alignment.status === 'aligned');
+  assert(result.transcript.attribution.words.length === sa.words.length);
   assert(sa.words.every((x) => x.timingSource === 'forced' && x.timingQuality === 'measured'), JSON.stringify(sa.summary.timing));
   assert(sa.alignment.status === 'aligned' && sa.alignment.provider.name === 'transcriber-align', JSON.stringify(sa.alignment));
   assert(sa.alignment.provider.version === '1.0' && sa.alignment.provider.language === 'en', JSON.stringify(sa.alignment));
@@ -787,5 +762,114 @@ test('cancellation during whisper phase kills process', async () => {
 });
 
 // ---------------------------------------------------------------------------
+
+test('structured GUI results retain Unknown without requesting full JSON', async () => {
+  const whisperJson = JSON.parse(JSON.stringify(READY_YES_NO_DTW));
+  whisperJson.transcription[0].offsets.to = 28000;
+  whisperJson.transcription[0].tokens[1].offsets = { from: 20000, to: 20500 };
+  whisperJson.transcription[0].tokens[2].offsets = { from: 27000, to: 27500 };
+  const { result } = await runDiarised({
+    whisperJson,
+    diarizeOutput: [{ start: 0, end: 1, speaker: 'A' }, { start: 27, end: 28, speaker: 'B' }],
+  }, { options: { outputJson: false } });
+  assert(!('json' in result), 'GUI need not carry full Whisper JSON');
+  assert(result.transcript.kind === 'speaker-labelled');
+  assert(result.transcript.blocks.some((block) => block.speaker === 'Unknown' && block.text === 'Yes.'));
+  assert(result.transcript.attribution.words.map((word) => word.text).join('|') === 'Ready?|Yes.|Continue.');
+});
+
+test('structured results retain completed alignment and a speaker fallback warning', async () => {
+  const { result } = await runForced({
+    alignOutput: alignAll([[100, 700], [700, 850], [2100, 2700]]),
+    diarizeCode: 1,
+  });
+  assert(result.transcript.kind === 'plain');
+  assert(result.transcript.alignment.status === 'aligned');
+  assert(result.transcript.warnings.some((warning) => warning.startsWith('Speaker labelling failed')));
+  assert(result.transcript.attribution === null);
+});
+
+test('injected stores control model paths independently of singleton paths', async () => {
+  const { createModelStore } = require('../lib/model-store');
+  const stores = ['store-one', 'store-two'].map((name) => {
+    const directory = path.join(FAKE_APP, name);
+    fs.mkdirSync(directory);
+    fs.writeFileSync(path.join(directory, 'ggml-tiny.en.bin'), 'fixture weights');
+    return createModelStore({ bundledDir: directory });
+  });
+  const modelPaths = [];
+  for (const modelStore of stores) {
+    const { spawn, calls } = captureSpawn();
+    await makeRunner({ modelStore, spawn }).runTranscription({ filePath: '/fake/test.wav', onProgress: () => {} });
+    const whisper = calls.find((call) => call.cmd.includes('whisper-cli'));
+    modelPaths.push(whisper.args[whisper.args.indexOf('-m') + 1]);
+  }
+  assert(modelPaths[0] === stores[0].getModelPath('tiny.en'));
+  assert(modelPaths[1] === stores[1].getModelPath('tiny.en'));
+  assert(modelPaths[0] !== modelPaths[1]);
+});
+
+test('an empty installed model is rejected before any subprocess starts', async () => {
+  const { createModelStore } = require('../lib/model-store');
+  const directory = path.join(FAKE_APP, 'empty-store');
+  fs.mkdirSync(directory);
+  fs.writeFileSync(path.join(directory, 'ggml-tiny.en.bin'), '');
+  const modelStore = createModelStore({ bundledDir: directory });
+  let called = false;
+  const runner = makeRunner({ modelStore, spawn: () => { called = true; throw new Error('unexpected spawn'); } });
+  try {
+    await runner.runTranscription({ filePath: '/fake/test.wav', onProgress: () => {} });
+    assert(false, 'empty weights must fail');
+  } catch (error) { assert(error.message.includes('model not found'), error.message); }
+  assert(!called, 'model availability must be checked before conversion');
+});
+
+test('same-clock jobs use private isolated workspaces and clean every file', async () => {
+  const tmpDir = path.join(FAKE_APP, 'concurrent-work');
+  fs.mkdirSync(tmpDir);
+  const directories = new Set();
+  const spawn = (cmd, args, opts) => {
+    if (cmd.includes('ffmpeg')) {
+      const wavPath = args[args.length - 1];
+      const directory = path.dirname(wavPath);
+      directories.add(directory);
+      if (process.platform !== 'win32') {
+        assert((fs.statSync(directory).mode & 0o777) === 0o700, 'job directory must be private');
+      }
+      fs.writeFileSync(wavPath, 'fixture wav');
+      fs.writeFileSync(path.join(directory, 'unexpected-sidecar'), 'must be removed');
+    }
+    return makeSpawn({ stdout: 'fixture transcript', code: 0 })(cmd, args, opts);
+  };
+  const runner = makeRunner({ spawn, tmpDir });
+  const originalNow = Date.now;
+  Date.now = () => 1234;
+  try {
+    const job = () => runner.runTranscription({
+      filePath: '/fake/test.wav', modelId: 'tiny.en', onProgress: () => {},
+    });
+    const results = await Promise.all([job(), job()]);
+    assert(results.every((result) => result.text === 'fixture transcript'));
+    assert(directories.size === 2, 'same millisecond must not share a directory');
+    assert(fs.readdirSync(tmpDir).length === 0, 'all job files and directories must be removed');
+  } finally {
+    Date.now = originalNow;
+  }
+});
+
+test('failed conversion cleans its complete private workspace', async () => {
+  const tmpDir = path.join(FAKE_APP, 'failed-work');
+  fs.mkdirSync(tmpDir);
+  const runner = makeRunner({ tmpDir, spawn: (cmd, args, opts) => {
+    fs.writeFileSync(args[args.length - 1], 'partial wav');
+    return makeSpawn({ code: 1, stderr: 'fixture conversion failed' })(cmd, args, opts);
+  } });
+  let failure;
+  try {
+    await runner.runTranscription({ filePath: '/fake/test.wav', onProgress: () => {} });
+  } catch (error) { failure = error; }
+  assert(failure && failure.message.includes('fixture conversion failed'));
+  assert(fs.readdirSync(tmpDir).length === 0, 'failed job must leave no workspace');
+});
 
 runAll();

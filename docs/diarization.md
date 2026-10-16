@@ -52,20 +52,29 @@ one point: the DTW anchor for DTW words, otherwise the span midpoint.
 - `ambiguous`: the point lies in two or more speakers' intervals (overlap in
   the regular timeline). The previous word's speaker is kept if it is a
   candidate; all candidates are recorded.
-- `gap-filled`: in a gap, within `gapFillMaxMs` (5 s) of a speaker.
-- `unknown`: no timing, or further than 5 s from any speaker.
+- `gap-filled`: in a gap, strictly less than `gapFillMaxMs` (5 s) from a speaker.
+- `unknown`: no timing, or at least 5 s from any speaker.
 
 When pyannote returns an exclusive timeline it decides the speaker; the
 regular timeline only adds `overlapSpeakers` evidence. Consecutive words
 with the same label form a block. Nothing rewrites a word afterwards: there
 is no segment absorption, boundary snapping, smoothing or short-block
-merging, so short replies and Unknown survive.
+merging, so short replies and Unknown survive. Interval searches preserve the
+normalised timeline order and tie rules, even when word times go backwards;
+`scripts/test-merge.js` compares complete results against a frozen scan-based
+reference. `scripts/benchmark-merge.js --runs 7 --compare-reference` measures
+synthetic workloads without recordings or models.
 
 ## Output
 
 - Text: `[N speakers detected]` then `[Speaker N] text` blocks (unchanged
   format; `mergeTranscriptWithDiarization` returns it).
-- JSON (`--format json`): `whisper`, `diarize` (regular timeline) and
+- GUI results keep canonical `text` plus a versioned `transcript` object with
+  kind, blocks, speakers, attribution, alignment status and warnings. The GUI
+  draws speaker blocks from this structure, preserves Unknown, and keeps the
+  canonical text for copy/save. A plain transcript that happens to contain
+  speaker-like text does not become a labelled result.
+- CLI JSON (`--format json`): `whisper`, `diarize` (regular timeline) and
   `merged` as before, plus `diarizeExclusive`, `diarizeInfo` (model,
   versions, device) and `speakerAttribution` (per-word timing, speaker,
   assignment and evidence, DTW status and alignment status).
@@ -73,6 +82,8 @@ merging, so short replies and Unknown survive.
 If diarisation fails during inference the job returns the plain transcript
 (JSON callers receive only a `text` field). CLI readiness failures exit before
 transcription. If alignment fails, words keep Whisper timing and the job says so once.
+GUI results retain both alignment and speaker-labelling fallback warnings after
+the batch, along with any per-file errors.
 
 ## Debugging
 

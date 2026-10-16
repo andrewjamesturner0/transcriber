@@ -28,7 +28,13 @@ const { spawn } = require('child_process');
 const paths = require('./lib/paths');
 paths.initPaths({ isPackaged: false, resourcesPath: __dirname });
 
-const models = require('./lib/models');
+const { createModelStore } = require('./lib/model-store');
+const { createModelDownloader } = require('./lib/model-download');
+const modelStore = createModelStore({
+  bundledDir: paths.getResourcePath('models'),
+  writableDir: paths.getResourcePath('models'),
+  install: createModelDownloader(),
+});
 const Capabilities = require('./lib/capabilities');
 const { createTranscriptionRunner } = require('./lib/transcription-runner');
 const { isEnglishOnlyModel } = require('./lib/transcript-timing');
@@ -153,6 +159,19 @@ function die(msg, code) {
   process.exit(code != null ? code : 1);
 }
 
+// Parse all flags before honouring help, preserving unknown-flag errors.
+const HELP_FLAGS = { '--help': { takesValue: false }, '-h': { takesValue: false } };
+function parseCommand(argv, spec, help) {
+  let parsed;
+  try { parsed = parseArgs(argv, spec); }
+  catch (error) { die(error.message + '\n\n' + help); }
+  if (parsed.flags['--help'] || parsed.flags['-h']) {
+    process.stdout.write(help);
+    process.exit(0);
+  }
+  return parsed;
+}
+
 // ---------------------------------------------------------------------------
 // Subcommand: transcribe
 // ---------------------------------------------------------------------------
@@ -169,8 +188,7 @@ const TRANSCRIBE_SPEC = {
   '--alignment': { takesValue: true },
   '--dtw': { takesValue: false },
   '--quiet': { takesValue: false },
-  '--help': { takesValue: false },
-  '-h': { takesValue: false },
+  ...HELP_FLAGS,
 };
 
 /** Plain-language fix for a diarisation setup status (design decision D2). */
@@ -204,23 +222,9 @@ function _alignmentFix(info) {
 }
 
 async function cmdTranscribe(argv) {
-  let parsed;
-  try {
-    parsed = parseArgs(argv, TRANSCRIBE_SPEC);
-  } catch (err) {
-    die(`${err.message}\n\n${TRANSCRIBE_HELP}`);
-  }
-  const { positional, flags } = parsed;
-  if (flags['--help'] || flags['-h']) {
-    process.stdout.write(TRANSCRIBE_HELP);
-    process.exit(0);
-  }
-  if (positional.length === 0) {
-    die(`transcribe: missing <file> argument\n\n${TRANSCRIBE_HELP}`);
-  }
-  if (positional.length > 1) {
-    die(`transcribe: only one input file is supported per invocation; got ${positional.length}\n${TRANSCRIBE_HELP}`);
-  }
+  const { positional, flags } = parseCommand(argv, TRANSCRIBE_SPEC, TRANSCRIBE_HELP);
+  if (positional.length === 0) die('transcribe: missing <file> argument\n\n' + TRANSCRIBE_HELP);
+  if (positional.length > 1) die('transcribe: only one input file is supported per invocation; got ' + positional.length + '\n' + TRANSCRIBE_HELP);
 
   const filePath = positional[0];
   if (!fs.existsSync(filePath)) {
@@ -246,7 +250,7 @@ async function cmdTranscribe(argv) {
   if (alignmentFlag && !diarize) {
     die(`transcribe: --alignment ${alignmentFlag} needs --diarize`);
   }
-  const alignment = alignmentFlag || 'forced';
+  const alignment = alignmentFlag || (diarize ? 'forced' : 'whisper');
   const dtw = !!flags['--dtw'];
   if (dtw && (!diarize || alignment === 'forced')) {
     die('transcribe: --dtw needs --diarize and --alignment whisper');
@@ -264,7 +268,7 @@ async function cmdTranscribe(argv) {
 
   // Validate model id early so unknown ids fail before any subprocess
   try {
-    models.getModel(modelId);
+    modelStore.getModel(modelId);
   } catch (err) {
     die(`transcribe: ${err.message}`);
   }
@@ -275,57 +279,63 @@ async function cmdTranscribe(argv) {
     setPreference: () => {},
     logWrite: () => {},
   });
-  capabilities.setBackendPreference(backendArg);
-
-  const probes = [];
-  if (backendArg !== 'cpu') {
-    probes.push(capabilities.detectGpu());
-  }
-  if (diarize) {
-    // Probes the CPU binary and, if present, the Vulkan binary.
-    probes.push(capabilities.detectDtw());
-    probes.push(capabilities.getPythonInfo());
-  }
-  // Without diarization DTW is never consulted, so no probe is needed.
-  await Promise.allSettled(probes);
-
-  if (diarize) {
-    const pyInfo = await capabilities.getPythonInfo();
-    if (pyInfo.diarizationStatus !== 'ready') {
-      die(`transcribe: --diarize is not ready (${pyInfo.diarizationStatus}). ${_diarizeFix(pyInfo)}`);
-    }
-    if (alignment === 'forced') {
-      // English-only models are checked fully. For other models the language
-      // is only known after Whisper runs, so only the packages are checked
-      // here; a missing language model falls back to Whisper timing.
-      const englishOnly = isEnglishOnlyModel(modelId);
-      const alignInfo = await capabilities.getAlignmentInfo({ language: 'en' });
-      const okStatuses = englishOnly ? ['ready'] : ['ready', 'model-not-prepared'];
-      if (!okStatuses.includes(alignInfo.alignmentStatus)) {
-        die(`transcribe: --diarize needs word alignment, which is not ready (${alignInfo.alignmentStatus}). ${_alignmentFix(alignInfo)}`);
-      }
-    }
-  }
-
-  const runner = createTranscriptionRunner({
-    capabilities,
-    paths,
-    spawn,
-    log: () => {},
-  });
-
   const abortController = new AbortController();
   let sigintReceived = false;
-  process.on('SIGINT', () => {
+  const onInterrupt = () => {
     if (sigintReceived) return;
     sigintReceived = true;
     if (!quiet) process.stderr.write('\nReceived SIGINT, cancelling...\n');
     abortController.abort();
-  });
-
-  const stderrLine = (s) => { if (!quiet) process.stderr.write(s + '\n'); };
+    capabilities.dispose();
+  };
+  process.on('SIGINT', onInterrupt);
 
   try {
+    capabilities.setBackendPreference(backendArg);
+
+    const probes = [];
+    if (backendArg !== 'cpu') {
+      probes.push(capabilities.detectGpu());
+    }
+    if (diarize) {
+      // Probes the CPU binary and, if present, the Vulkan binary.
+      probes.push(capabilities.detectDtw());
+      probes.push(capabilities.getPythonInfo());
+    }
+    // Without diarization DTW is never consulted, so no probe is needed.
+    await Promise.allSettled(probes);
+    if (abortController.signal.aborted) throw new Error('Cancelled');
+
+    if (diarize) {
+      const pyInfo = await capabilities.getPythonInfo();
+      if (abortController.signal.aborted) throw new Error('Cancelled');
+      if (pyInfo.diarizationStatus !== 'ready') {
+        throw new Error(`transcribe: --diarize is not ready (${pyInfo.diarizationStatus}). ${_diarizeFix(pyInfo)}`);
+      }
+      if (alignment === 'forced') {
+        // English-only models are checked fully. For other models the language
+        // is only known after Whisper runs, so only the packages are checked
+        // here; a missing language model falls back to Whisper timing.
+        const englishOnly = isEnglishOnlyModel(modelId);
+        const alignInfo = await capabilities.getAlignmentInfo({ language: 'en' });
+        if (abortController.signal.aborted) throw new Error('Cancelled');
+        const okStatuses = englishOnly ? ['ready'] : ['ready', 'model-not-prepared'];
+        if (!okStatuses.includes(alignInfo.alignmentStatus)) {
+          throw new Error(`transcribe: --diarize needs word alignment, which is not ready (${alignInfo.alignmentStatus}). ${_alignmentFix(alignInfo)}`);
+        }
+      }
+    }
+
+    const runner = createTranscriptionRunner({
+      capabilities,
+      modelStore,
+      paths,
+      spawn,
+      log: () => {},
+    });
+
+    const stderrLine = (s) => { if (!quiet) process.stderr.write(s + '\n'); };
+
     const result = await runner.runTranscription({
       filePath,
       modelId,
@@ -365,9 +375,14 @@ async function cmdTranscribe(argv) {
     }
   } catch (err) {
     if (sigintReceived || err.message === 'Cancelled') {
-      process.exit(130);
+      process.exitCode = 130;
+      return;
     }
-    die(`transcribe failed: ${err.message}`);
+    process.stderr.write((err.message.startsWith('transcribe:') ? err.message : 'transcribe failed: ' + err.message) + '\n');
+    process.exitCode = 1;
+  } finally {
+    try { await capabilities.dispose(); }
+    finally { process.removeListener('SIGINT', onInterrupt); }
   }
 }
 
@@ -377,57 +392,43 @@ async function cmdTranscribe(argv) {
 
 const DOWNLOAD_SPEC = {
   '--quiet': { takesValue: false },
-  '--help': { takesValue: false },
-  '-h': { takesValue: false },
+  ...HELP_FLAGS,
 };
 
 async function cmdDownloadModel(argv) {
-  let parsed;
-  try {
-    parsed = parseArgs(argv, DOWNLOAD_SPEC);
-  } catch (err) {
-    die(`${err.message}\n\n${DOWNLOAD_HELP}`);
-  }
-  const { positional, flags } = parsed;
-  if (flags['--help'] || flags['-h']) {
-    process.stdout.write(DOWNLOAD_HELP);
-    process.exit(0);
-  }
-  if (positional.length === 0) {
-    die(`download-model: missing <id> argument\n\n${DOWNLOAD_HELP}`);
-  }
-  if (positional.length > 1) {
-    die(`download-model: expected exactly one <id>; got ${positional.length}\n${DOWNLOAD_HELP}`);
-  }
+  const { positional, flags } = parseCommand(argv, DOWNLOAD_SPEC, DOWNLOAD_HELP);
+  if (positional.length === 0) die('download-model: missing <id> argument\n\n' + DOWNLOAD_HELP);
+  if (positional.length > 1) die('download-model: expected exactly one <id>; got ' + positional.length + '\n' + DOWNLOAD_HELP);
 
   const id = positional[0];
   const quiet = !!flags['--quiet'];
 
-  let destPath;
-  try {
-    destPath = models.getModelPath(id);
-  } catch (err) {
-    die(`download-model: ${err.message}`);
+  try { modelStore.getModel(id); }
+  catch (error) { die('download-model: ' + error.message); }
+  if (modelStore.listModels().find((model) => model.id === id).downloaded) {
+    if (!quiet) process.stderr.write('model ' + id + ' already downloaded\n');
+    return;
   }
-
-  if (fs.existsSync(destPath)) {
-    if (!quiet) process.stderr.write(`model ${id} already downloaded\n`);
-    process.exit(0);
-  }
+  const abort = new AbortController();
+  const onInterrupt = () => abort.abort();
+  process.on('SIGINT', onInterrupt);
 
   let lastPercent = -1;
   try {
-    await models.downloadModel(id, destPath, (data) => {
+    await modelStore.downloadModel(id, { signal: abort.signal, onProgress: (data) => {
       if (quiet) return;
       if (data.percent !== lastPercent) {
         lastPercent = data.percent;
         process.stderr.write(`\rdownloading ${id}: ${data.percent}%`);
       }
-    });
+    } });
     if (!quiet) process.stderr.write('\n');
   } catch (err) {
     if (!quiet) process.stderr.write('\n');
+    if (abort.signal.aborted) process.exit(130);
     die(`download-model: ${err.message}`);
+  } finally {
+    process.removeListener('SIGINT', onInterrupt);
   }
 }
 
@@ -437,24 +438,13 @@ async function cmdDownloadModel(argv) {
 
 const LIST_SPEC = {
   '--json': { takesValue: false },
-  '--help': { takesValue: false },
-  '-h': { takesValue: false },
+  ...HELP_FLAGS,
 };
 
 function cmdListModels(argv) {
-  let parsed;
-  try {
-    parsed = parseArgs(argv, LIST_SPEC);
-  } catch (err) {
-    die(`${err.message}\n\n${LIST_HELP}`);
-  }
-  const { flags } = parsed;
-  if (flags['--help'] || flags['-h']) {
-    process.stdout.write(LIST_HELP);
-    process.exit(0);
-  }
+  const { flags } = parseCommand(argv, LIST_SPEC, LIST_HELP);
 
-  const all = models.listModels();
+  const all = modelStore.listModels();
   if (flags['--json']) {
     process.stdout.write(JSON.stringify(all, null, 2) + '\n');
     return;
@@ -475,45 +465,47 @@ function cmdListModels(argv) {
 
 const GPU_SPEC = {
   '--json': { takesValue: false },
-  '--help': { takesValue: false },
-  '-h': { takesValue: false },
+  ...HELP_FLAGS,
 };
 
 async function cmdGpuStatus(argv) {
-  let parsed;
-  try {
-    parsed = parseArgs(argv, GPU_SPEC);
-  } catch (err) {
-    die(`${err.message}\n\n${GPU_HELP}`);
-  }
-  const { flags } = parsed;
-  if (flags['--help'] || flags['-h']) {
-    process.stdout.write(GPU_HELP);
-    process.exit(0);
-  }
+  const { flags } = parseCommand(argv, GPU_SPEC, GPU_HELP);
 
   const capabilities = new Capabilities({ logWrite: () => {} });
-  await capabilities.detectGpu();
-  await capabilities.detectDtw();
-  // dtwSupported is for the active backend; dtwSupport is per backend.
-  const status = capabilities.getStatus();
-  const dtwSupported = status.dtwSupported;
+  let interrupted = false;
+  const onInterrupt = () => { interrupted = true; capabilities.dispose(); };
+  process.on('SIGINT', onInterrupt);
+  try {
+    await capabilities.detectGpu();
+    if (interrupted) throw new Error('Cancelled');
+    await capabilities.detectDtw();
+    if (interrupted) throw new Error('Cancelled');
+    // dtwSupported is for the active backend; dtwSupport is per backend.
+    const status = capabilities.getStatus();
+    const dtwSupported = status.dtwSupported;
 
-  if (flags['--json']) {
-    process.stdout.write(JSON.stringify(status, null, 2) + '\n');
-    return;
+    if (flags['--json']) {
+      process.stdout.write(JSON.stringify(status, null, 2) + '\n');
+      return;
+    }
+
+    process.stdout.write(`Backend (active):    ${status.backend}\n`);
+    process.stdout.write(`Backend (setting):   ${status.setting}\n`);
+    process.stdout.write(`Detected:            ${status.detected || 'none'}\n`);
+    process.stdout.write(`Device:              ${status.deviceName || 'n/a'}\n`);
+    process.stdout.write(`Available backends:  ${status.available.join(', ')}\n`);
+    process.stdout.write(`DTW supported:       ${dtwSupported ? 'yes' : 'no'}\n`);
+    const perBackend = status.available
+      .map((b) => `${b}=${status.dtwSupport[b] == null ? 'unknown' : (status.dtwSupport[b] ? 'yes' : 'no')}`)
+      .join(', ');
+    process.stdout.write(`DTW per backend:     ${perBackend}\n`);
+  } catch (error) {
+    if (interrupted) process.exitCode = 130;
+    else throw error;
+  } finally {
+    try { await capabilities.dispose(); }
+    finally { process.removeListener('SIGINT', onInterrupt); }
   }
-
-  process.stdout.write(`Backend (active):    ${status.backend}\n`);
-  process.stdout.write(`Backend (setting):   ${status.setting}\n`);
-  process.stdout.write(`Detected:            ${status.detected || 'none'}\n`);
-  process.stdout.write(`Device:              ${status.deviceName || 'n/a'}\n`);
-  process.stdout.write(`Available backends:  ${status.available.join(', ')}\n`);
-  process.stdout.write(`DTW supported:       ${dtwSupported ? 'yes' : 'no'}\n`);
-  const perBackend = status.available
-    .map((b) => `${b}=${status.dtwSupport[b] == null ? 'unknown' : (status.dtwSupport[b] ? 'yes' : 'no')}`)
-    .join(', ');
-  process.stdout.write(`DTW per backend:     ${perBackend}\n`);
 }
 
 // ---------------------------------------------------------------------------

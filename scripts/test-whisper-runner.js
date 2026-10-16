@@ -18,6 +18,7 @@ const { createWhisperRunner, _buildWhisperArgs, _stripDtwArgs, _findDtwDisableWa
 
 // --- Helpers ---
 
+const testTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'test-whisper-'));
 let passed = 0;
 let failed = 0;
 const _queue = [];
@@ -38,6 +39,7 @@ async function runAll() {
     }
   }
   console.log(`\n${passed} passed, ${failed} failed`);
+  fs.rmSync(testTmp, { recursive: true, force: true });
   process.exit(failed > 0 ? 1 : 0);
 }
 
@@ -108,6 +110,7 @@ fs.existsSync = (p) => {
 
 function makeRunner(overrides = {}) {
   return createWhisperRunner({
+    tmpDir: testTmp,
     capabilities: makeCapabilities(overrides.capabilities),
     paths: makePaths(overrides.paths),
     spawn: overrides.spawn || makeSpawn({ stdout: 'result\n', stderr: '', code: 0 }),
@@ -154,6 +157,33 @@ const TDRZ_SPEC = { id: 'small.en-tdrz', fileName: 'ggml-small.en-tdrz.bin', tdr
 // --- Arg construction tests ---
 
 console.log('Arg construction tests\n');
+
+test('catalogue IDs choose language for every output and alignment mode', () => {
+  const { getModel } = require('../lib/models');
+  const models = ['tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small', 'small.en-tdrz', 'medium.en', 'medium', 'large-v3', 'large-v3-turbo', 'large-v3-turbo-q5_0', 'large-v3-q5_0'].map(getModel);
+  for (const model of models) {
+    for (const options of [{}, { outputJson: true }, { diarization: true, dtw: true }, { diarization: true, alignment: 'forced' }]) {
+      const args = _buildWhisperArgs('/model', '/audio', '/json', options, model, () => true);
+      const expected = /\.en(?:$|-)/.test(model.id) ? 'en' : 'auto';
+      assert(args[args.indexOf('-l') + 1] === expected, `wrong language for ${model.id}`);
+      assert(count(args, '-l') === 1, 'language must appear once');
+    }
+  }
+});
+
+test('multilingual DTW and CPU retries retain automatic detection', async () => {
+  for (const failure of ['unknown DTW preset: tiny', 'GPU device lost']) {
+    const calls = [];
+    const spawn = (cmd, args, opts) => {
+      calls.push([...args]);
+      return calls.length === 1 ? failingProc(failure) : makeSpawn()(cmd, args, opts);
+    };
+    const runner = makeRunner({ spawn, capabilities: { getActiveBackend: () => 'vulkan' } });
+    await runner.transcribe({ ...BASE, modelSpec: { id: 'tiny', dtwPreset: 'tiny' }, options: { diarization: true, dtw: true } });
+    assert(calls.length === 2, 'expected a retry');
+    assert(calls.every(args => args[args.indexOf('-l') + 1] === 'auto'), 'every attempt must detect language');
+  }
+});
 
 test('plain transcription uses --no-timestamps', async () => {
   const { spawn, calls } = captureSpawn();
@@ -241,7 +271,7 @@ test('plain job args are unchanged and DTW is not requested', async () => {
 
   const result = await runner.transcribe({ ...BASE });
 
-  const expected = ['-m', BASE.modelPath, '-f', BASE.wavPath, '-t', '4', '--no-timestamps'];
+  const expected = ['-m', BASE.modelPath, '-f', BASE.wavPath, '-t', '4', '-l', 'en', '--no-timestamps'];
   assert(JSON.stringify(calls[0].args) === JSON.stringify(expected),
     `plain args changed: ${calls[0].args.join(' ')}`);
   assert(result.dtw.requested === false && result.dtw.preset === null && result.dtw.disabledReason === null,
@@ -254,7 +284,7 @@ test('plain job with anti-corruption keeps its exact flags', async () => {
 
   await runner.transcribe({ ...BASE, options: { antiCorruption: true, threads: 8 } });
 
-  const expected = ['-m', BASE.modelPath, '-f', BASE.wavPath, '-t', '8', '--no-timestamps',
+  const expected = ['-m', BASE.modelPath, '-f', BASE.wavPath, '-t', '8', '-l', 'en', '--no-timestamps',
     '-mc', '0', '--temperature', '0.4', '--entropy-thold', '1.8'];
   assert(JSON.stringify(calls[0].args) === JSON.stringify(expected),
     `anti-corruption args changed: ${calls[0].args.join(' ')}`);
@@ -266,7 +296,7 @@ test('outputJson-only job args are unchanged (no DTW flags)', async () => {
 
   const result = await runner.transcribe({ ...BASE, options: { outputJson: true } });
 
-  const expected = ['-m', BASE.modelPath, '-f', BASE.wavPath, '-t', '4', '--output-json-full', '-of', BASE.jsonPrefix];
+  const expected = ['-m', BASE.modelPath, '-f', BASE.wavPath, '-t', '4', '-l', 'en', '--output-json-full', '-of', BASE.jsonPrefix];
   assert(JSON.stringify(calls[0].args) === JSON.stringify(expected),
     `outputJson args changed: ${calls[0].args.join(' ')}`);
   assert(result.dtw.requested === false, 'outputJson-only job should not request DTW');
@@ -768,6 +798,85 @@ test('Cancellation during DTW retry throws Cancelled with no further fallback', 
     assert(err.message === 'Cancelled', `expected 'Cancelled', got '${err.message}'`);
   }
   assert(spawnCount === 2, `expected 2 spawns (no GPU fallback after cancel), got ${spawnCount}`);
+});
+
+test('early split DTW and OOM evidence survives a large diagnostic tail', async () => {
+  for (const failure of ['unknown DTW preset: tiny.en', 'OutOfDeviceMemory', 'failed to allocate']) {
+    let calls = 0;
+    let gpuDisabled = false;
+    let dtwDisabled = false;
+    const spawn = (cmd, args, opts) => {
+      calls++;
+      if (calls > 1) return makeSpawn()(cmd, args, opts);
+      const proc = new EventEmitter();
+      proc.stdout = new EventEmitter(); proc.stderr = new EventEmitter();
+      process.nextTick(() => {
+        for (const part of [failure.slice(0, 4), failure.slice(4), '\n', ...Array(100).fill('later diagnostics '.repeat(100) + '\n')]) {
+          proc.stderr.emit('data', Buffer.from(part));
+        }
+        proc.emit('close', 1);
+      });
+      return proc;
+    };
+    const runner = makeRunner({ spawn, capabilities: {
+      getActiveBackend: () => 'vulkan',
+      disableGpu: () => { gpuDisabled = true; },
+      disableDtw: () => { dtwDisabled = true; },
+    } });
+    const result = await runner.transcribe({ ...BASE, options: { diarization: true, dtw: true } });
+    assert(calls === 2, 'must retry once');
+    if (failure.includes('DTW')) {
+      assert(dtwDisabled && result.backend === 'vulkan', 'early DTW error must keep its retry policy');
+    } else {
+      assert(!gpuDisabled && result.backend === 'cpu', 'early OOM must keep GPU enabled');
+    }
+  }
+});
+
+test('early DTW warning survives many later chunks on successful exit', async () => {
+  const spawn = () => {
+    const proc = new EventEmitter(); proc.stdout = new EventEmitter(); proc.stderr = new EventEmitter();
+    process.nextTick(() => {
+      proc.stderr.emit('data', Buffer.from(FLASH_WARNING.slice(0, 35)));
+      proc.stderr.emit('data', Buffer.from(FLASH_WARNING.slice(35)));
+      for (let i = 0; i < 100; i++) proc.stderr.emit('data', Buffer.from('later '.repeat(300) + '\n'));
+      proc.emit('close', 0);
+    });
+    return proc;
+  };
+  const result = await makeRunner({ spawn }).transcribe({ ...BASE, options: { diarization: true, dtw: true } });
+  assert(result.dtw.disabledReason.includes('disabled DTW'), 'warning must survive');
+});
+
+test('standalone JSON calls have unique owned paths and idempotent cleanup', async () => {
+  const spawn = (cmd, args, opts) => {
+    const prefix = args[args.indexOf('-of') + 1];
+    fs.writeFileSync(`${prefix}.json`, '{}');
+    return makeSpawn()(cmd, args, opts);
+  };
+  const runner = makeRunner({ spawn });
+  const results = await Promise.all([1, 2].map(() => runner.transcribe({ ...BASE, jsonPrefix: undefined, options: { outputJson: true } })));
+  assert(results[0].jsonPath !== results[1].jsonPath, 'paths must be unique');
+  for (const result of results) {
+    assert(fs.existsSync(result.jsonPath), 'JSON must remain retrievable');
+    await Promise.all([result.cleanup(), result.cleanup()]);
+    assert(!fs.existsSync(path.dirname(result.jsonPath)), 'private directory must be removed');
+  }
+});
+
+test('caller JSON survives cleanup and failure; private no-JSON and failure work is removed', async () => {
+  const callerDir = fs.mkdtempSync(path.join(testTmp, 'caller-'));
+  const prefix = path.join(callerDir, 'output');
+  fs.writeFileSync(`${prefix}.json`, '{}');
+  const result = await makeRunner().transcribe({ ...BASE, jsonPrefix: prefix, options: { outputJson: true } });
+  await result.cleanup();
+  assert(fs.existsSync(`${prefix}.json`), 'caller output must survive cleanup');
+  try { await makeRunner({ spawn: () => failingProc('failure') }).transcribe({ ...BASE, jsonPrefix: prefix }); } catch (_) {}
+  assert(fs.existsSync(`${prefix}.json`), 'caller output must survive failure');
+  const before = fs.readdirSync(testTmp).sort().join();
+  await makeRunner().transcribe({ ...BASE, jsonPrefix: undefined });
+  try { await makeRunner({ spawn: () => failingProc('failure') }).transcribe({ ...BASE, jsonPrefix: undefined }); } catch (_) {}
+  assert(fs.readdirSync(testTmp).sort().join() === before, 'private work must be removed');
 });
 
 // ---------------------------------------------------------------------------

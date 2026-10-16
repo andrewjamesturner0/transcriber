@@ -79,6 +79,8 @@ function makeBrowserContext() {
       addEventListener(type, fn) { (this._listeners[type] = this._listeners[type] || []).push(fn); },
       removeEventListener() {},
       appendChild(c) { return c; },
+      append() {},
+      replaceChildren() {},
       replaceWith(el) {},
       querySelector() { return null; },
       closest() { return null; },
@@ -127,6 +129,7 @@ function makeBrowserContext() {
     // Calls made by event handlers (not top-level but stubbed for completeness)
     selectFiles: () => noopPromise([]),
     transcribe: () => noopPromise(''),
+    transcribeResult: () => noopPromise({ text: '', transcript: { kind: 'plain', warnings: [] } }),
     downloadModel: () => noopPromise(true),
     cancelTranscription: () => noopPromise(true),
     saveTranscript: () => noopPromise(false),

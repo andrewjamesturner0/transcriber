@@ -124,7 +124,7 @@ test('lib/diarize.py IS in extraResources (needed for Python subprocess)', () =>
 test('Python helpers and requirements are packaged individually', () => {
   const patterns = parseExtraResources(path.join(ROOT, 'electron-builder.yml'));
   const want = ['lib/diarize.py', 'lib/requirements.txt', 'lib/align.py',
-    'lib/alignment_models.py', 'lib/alignment_core.py',
+    'lib/alignment_models.py', 'lib/alignment_core.py', 'lib/pcm_audio.py',
     'scripts/setup-diarization.py'];
   for (const w of want) {
     assert(patterns.includes(w), `${w} must be in extraResources; got ${patterns.join(', ')}`);
@@ -133,11 +133,16 @@ test('Python helpers and requirements are packaged individually', () => {
   assert(!patterns.some((p) => p === 'scripts/' || p === 'scripts'), 'scripts/ must not be packaged wholesale');
 });
 
-test('every Python sibling align.py loads, and every notice it cites, is packaged', () => {
+test('every Python helper sibling and cited notice is packaged', () => {
   const patterns = parseExtraResources(path.join(ROOT, 'electron-builder.yml'));
-  const align = fs.readFileSync(path.join(ROOT, 'lib/align.py'), 'utf-8');
-  const siblings = [...align.matchAll(/_sibling\("([a-z_]+)"\)/g)].map((m) => `lib/${m[1]}.py`);
-  assert(siblings.length >= 2, `expected align.py to load its siblings, found ${siblings.join(', ')}`);
+  const siblings = ['lib/align.py', 'lib/diarize.py'].flatMap((file) => {
+    const source = fs.readFileSync(path.join(ROOT, file), 'utf-8');
+    const loaded = [...source.matchAll(/_sibling\("([a-z_]+)"\)/g)].map((m) => `lib/${m[1]}.py`);
+    assert(loaded.includes('lib/pcm_audio.py'), `${file} must use the shared PCM decoder`);
+    return loaded;
+  });
+  assert(siblings.includes('lib/alignment_models.py') && siblings.includes('lib/alignment_core.py'),
+    'alignment siblings must be packaged');
   const cited = [];
   for (const file of ['lib/alignment_core.py', 'lib/alignment_models.py']) {
     const src = fs.readFileSync(path.join(ROOT, file), 'utf-8');
