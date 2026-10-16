@@ -168,7 +168,7 @@ renderer/
   index.html         App UI
   renderer.js        UI logic (wires queue model to DOM, IPC handlers)
   queue.js           Queue state model (pending -> processing -> done/error)
-  job-options.js     Alignment availability and per-job option construction
+  job-options.js     Speaker labelling availability and per-job option construction
   media-extensions.js Supported file extensions whitelist
   time-estimates.js  Model-id to time-estimate bucket mapping
   transcript-format.js Diarization output formatting and rich-transcript parsing
@@ -185,18 +185,16 @@ lib/
   diarize-merge.js        Speaker assignment and transcript formatting
   diarization-setup.js    Explicit Python model setup runner
   diarize.py              Offline Community-1 speaker inference and readiness check
-  align.py                Optional offline word alignment and readiness check
+  align.py                Offline word alignment (part of speaker labelling) and readiness check
   alignment_models.py     Alignment language/model registry and cache-only loaders
   alignment_core.py       Alignment path search (adapted from WhisperX 3.8.6 / TorchAudio)
   third_party/            Upstream licence notices for the adapted alignment code
-  requirements.txt        Pinned Python dependencies for diarization
-  requirements-alignment.txt Optional alignment dependencies
+  requirements.txt        Pinned Python dependencies for speaker labelling (diarization and alignment)
 assets/              App icons (icon.png, icon-512.png, icon-1024.png, icon.svg)
 scripts/
   build.sh                 Full build script (download deps + package distributable)
   setup.sh                 Dev-only setup (build whisper.cpp from source for local testing)
   setup-diarization.py     Download speaker/alignment models; check readiness
-  evaluate-diarization.js  Score saved local outputs against speaker-labelled references
   test-merge.js                 Unit tests for the diarization merge logic (no model needed)
   test-capabilities.js          Unit tests for lib/capabilities.js (GPU, DTW, Python)
   test-transcription-runner.js  Unit tests for the transcription pipeline (FFmpeg, whisper, fallbacks)
@@ -237,7 +235,7 @@ dist/                Built distributables
 - `lib/paths.js` owns all binary-path resolution: `getPlatformDir()` resolves `win`/`linux`/`mac`, `getResourcePath()` handles dev vs. packaged, `getWhisperBinary(backend)` and `getFfmpegBinary()` return binary paths
 - `lib/capabilities.js` consolidates GPU backend detection, DTW support probing, and Python/pyannote availability into a single module (formerly scattered global state in main.js)
 - `lib/transcription-runner.js` orchestrates the FFmpeg -> whisper -> diarize pipeline via a `createTranscriptionRunner` factory. Long-lived dependencies (binary paths, spawn, capabilities) are bound at construction time; per-call job parameters (file, model, options, callbacks, signal) are passed to `runTranscription`. Composes `lib/whisper-runner.js` for the whisper step.
-- Transcription flow: FFmpeg converts input to 16 kHz mono WAV, then whisper-cli transcribes. Pyannote jobs request full JSON and keep ordinary token timing by default. Explicit CLI `--dtw` adds `--dtw <preset> --no-flash-attn` where supported. Forced jobs skip DTW and align the same text before speaker inference.
+- Transcription flow: FFmpeg converts input to 16 kHz mono WAV, then whisper-cli transcribes. Pyannote jobs request full JSON, keep flash attention and re-time words with forced alignment by default (Whisper token timing is the fallback). Explicit CLI `--dtw` adds `--dtw <preset> --no-flash-attn` where supported. Forced jobs skip DTW and align the same text before speaker inference.
 - Whisper thread count: `options.threads || 4` in `lib/whisper-runner.js`; GUI and CLI use the default four threads.
 - Linux/macOS set `LD_LIBRARY_PATH`/`DYLD_LIBRARY_PATH` for whisper shared libs
 - `lib/models.js` defines the canonical model list (13 entries) with filenames, DTW presets, and per-model flags; the `download-model` IPC streams from Hugging Face with progress events
@@ -254,19 +252,19 @@ sibling modules and their upstream notices remain explicit extra resources
 
 ## Diarization Architecture
 
-Speaker diarisation is optional. Install Python 3.10 to 3.13 and the pinned
-`lib/requirements.txt` packages, then prepare Community-1 with
-`scripts/setup-diarization.py`. Alignment adds `lib/requirements-alignment.txt`
-(transformers 4.57.6, used only by the non-torchaudio languages) and its
-language model. `TRANSCRIBER_PYTHON` selects the same
-interpreter for checks, setup and jobs. See [the setup guide](docs/diarization-setup.md)
+Speaker labelling is optional, but has no partial mode: every labelled job
+runs word alignment and then pyannote. Install Python 3.10 to 3.13 and the
+pinned `lib/requirements.txt` packages (transformers 4.57.6 is there for the
+non-torchaudio alignment languages), then prepare Community-1 and the English
+alignment model with `scripts/setup-diarization.py --alignment`.
+`TRANSCRIBER_PYTHON` selects the same interpreter for checks, setup and jobs. See [the setup guide](docs/diarization-setup.md)
 for installation and the measured package footprint.
 
 ### Flow
 
 ```
 FFmpeg -> whisper-cli full JSON
-       -> optional lib/align.py (existing text, same WAV)
+       -> lib/align.py (existing text, same WAV; skipped only by CLI --alignment whisper)
        -> lib/diarize.py (Community-1, same WAV, offline)
        -> transcript-timing.js -> diarize-merge.js -> speaker-labelled text
 ```
@@ -322,10 +320,10 @@ python3 scripts/test-alignment-models.py
 `scripts/test-alignment-isolation.py` and `scripts/test-alignment-runtime.py`
 use real local assets and are separate smoke checks. Run the last two under
 `unshare -Urn` on Linux so external networking is absent; their docstrings
-give the full commands. The evaluation harness replays
-saved results and records missing metrics explicitly; see
-[the evaluation guide](docs/diarization-evaluation.md). Current speaker accuracy
-and Windows/Linux acceptance checks remain incomplete.
+give the full commands. Speaker accuracy is scored with a local evaluation
+harness and notes that are not in the repository (`.agents/scripts/` and
+`.agents/docs/`). Current speaker accuracy and Windows/Linux acceptance checks
+remain incomplete.
 
 ### Cancellation
 

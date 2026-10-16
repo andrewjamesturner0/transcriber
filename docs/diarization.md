@@ -3,16 +3,14 @@
 How a diarised job turns Whisper output and pyannote speaker turns into a
 speaker-labelled transcript. Code: `lib/transcript-timing.js` (word timing)
 and `lib/diarize-merge.js` (speaker assignment), called from
-`lib/transcription-runner.js`. Evidence and design decisions:
-[diarization-investigation.md](diarization-investigation.md) and
-[diarization-evaluation.md](diarization-evaluation.md).
+`lib/transcription-runner.js`.
 
 ## Pipeline
 
 ```
 media -> FFmpeg (16 kHz mono WAV)
       -> whisper-cli --output-json-full [--dtw <preset> --no-flash-attn]
-      -> [optional] lib/align.py   (re-times the same words; job option)
+      -> lib/align.py             (re-times the same words; always in the app)
       -> lib/diarize.py           (pyannote Community-1, offline)
       -> normalise word timing -> assign speakers -> formatted text
 ```
@@ -26,7 +24,7 @@ Every word gets one declared timing source:
 
 | `timingSource` | `timingQuality` | Meaning |
 | --- | --- | --- |
-| `forced` | `measured` / `interpolated` | Matched to the audio by the optional aligner. `interpolated` means the aligner placed the word between matched characters but recognised none of its own (digits, symbols), so it has no score |
+| `forced` | `measured` / `interpolated` | Matched to the audio by the aligner (every app speaker-labelling job). `interpolated` means the aligner placed the word between matched characters but recognised none of its own (digits, symbols), so it has no score |
 | `dtw` | `anchor` | Whisper DTW anchor (`t_dtw * 10` ms) of the word's first token: an estimated onset, not a measured span. The end is the next word's anchor |
 | `token` | `estimated` | Whisper's ordinary token offsets |
 | `segment` | `segment` | Only the Whisper segment interval is valid |
@@ -36,7 +34,10 @@ Invalid values (negative, non-finite, reversed, `-1`) are rejected and the
 next source is used; `timingFallback` records why. Zero is a valid time.
 Recognised text and word order are never changed.
 
-Ordinary Whisper token timing is the default. CLI `--dtw` opts in to
+Forced alignment is the default for every speaker-labelled job, in the app
+and on the CLI. Ordinary Whisper token timing is used when alignment fails
+or has no model for the job's language, and with the evaluation-only CLI
+option `--alignment whisper`. CLI `--dtw` (with `--alignment whisper`) opts in to
 experimental DTW timing, which needs flash attention off (`--no-flash-attn`);
 whisper.cpp otherwise disables DTW silently. Turning flash attention off can change the
 recognised text. Forced-alignment jobs therefore run Whisper without DTW.

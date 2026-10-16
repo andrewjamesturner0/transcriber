@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 
-// Reproductions for docs/diarization-investigation.md, 2026-10-14.
+// Reproductions for .agents/docs/diarization-investigation.md (local notes), 2026-10-14.
 //
 // This script used to assert the seven defects the investigation found.
 // Those defects are fixed, and each case is now a regression test that

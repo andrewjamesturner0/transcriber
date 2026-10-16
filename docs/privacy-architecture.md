@@ -13,9 +13,10 @@ network; a local transcription job does not need a network connection.
 1. The user selects a local audio or video file.
 2. FFmpeg converts it to a temporary 16 kHz mono PCM WAV on the local filesystem.
 3. whisper.cpp transcribes that WAV with a local Whisper model.
-4. If requested, a Python process matches the recognised words to the same WAV
-   using a prepared word alignment model. It changes word times, not text.
-5. If speaker diarisation is enabled, a separate Python process runs Community-1
+4. If speaker labelling is on, a Python process matches the recognised words
+   to the same WAV using a prepared word alignment model. It changes word
+   times, not text.
+5. Still for speaker labelling, a separate Python process runs Community-1
    from the local cache. Its exclusive timeline assigns one speaker at each
    time; its regular timeline records overlap. TinyDiarize models instead detect
    speaker changes within whisper.cpp.
@@ -63,8 +64,8 @@ recording or transcript.
 | pyannote.audio | Optional speaker inference | MIT | [Source](https://github.com/pyannote/pyannote-audio) |
 | Community-1 | Optional speaker model | CC BY 4.0 | [Model](https://huggingface.co/pyannote/speaker-diarization-community-1) |
 | WhisperX and TorchAudio tutorial code | Alignment path search adapted into `lib/alignment_core.py` | BSD 2-Clause | [WhisperX](https://github.com/m-bain/whisperX/blob/v3.8.6/LICENSE), [TorchAudio](https://github.com/pytorch/audio/blob/v0.12.1/LICENSE) |
-| transformers | Optional loader for non-English alignment models | Apache-2.0 | [Source](https://github.com/huggingface/transformers) |
-| English wav2vec2 model | Optional alignment weights | MIT | [Attribution](../NOTICE) |
+| transformers | Loads alignment models for languages other than English, French, German, Spanish and Italian | Apache-2.0 | [Source](https://github.com/huggingface/transformers) |
+| English wav2vec2 model | Word alignment weights for speaker labelling | MIT | [Attribution](../NOTICE) |
 | Electron | Desktop framework | MIT | [Source](https://www.electronjs.org) |
 
 Some non-English alignment models have separate licences, including
@@ -92,8 +93,9 @@ Suggested wording, to adapt to the actual installation and local policy:
 
 > Audio recordings will be transcribed using Transcriber, a free, open-source
 > desktop application that processes recordings locally on the researcher's
-> computer. Transcription and optional word alignment and speaker diarisation
-> use prepared local models without uploading recordings or transcripts. Model
+> computer. Transcription and optional speaker labelling (word alignment and
+> speaker diarisation) use prepared local models without uploading recordings
+> or transcripts. Model
 > setup and software updates use the network. Transcripts, temporary files and
 > application logs are held locally and managed under the study's data handling
 > procedures. The source code is available under GPLv3 for audit.

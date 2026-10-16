@@ -13,7 +13,7 @@ Transcriber is a desktop application that transcribes audio and video files usin
 ## Features
 
 - Local processing. Your audio and transcript stay on your computer. Model downloads and update checks use the network; transcription runs offline with telemetry disabled.
-- Speaker diarisation, with built-in speaker change detection and optional advanced speaker identification via [pyannote.audio](#speaker-diarization-advanced)
+- Speaker diarisation, with built-in speaker change detection and optional advanced speaker labels via [pyannote.audio](#speaker-labels-advanced)
 - 13 Whisper models, from Tiny (fastest) to Large-v3 (most accurate), including turbo and quantized variants. English-optimised models available.
 - GPU acceleration via Vulkan, with automatic detection and CPU fallback
 - Audio and video input: 9 audio formats (MP3, WAV, FLAC, OGG, M4A, AAC, WMA, WebM, DSS) and 7 video formats (MP4, MOV, AVI, MKV, WMV, FLV, 3GP). DSS is the Olympus/Philips dictation format (Standard Play only; DSS Pro/DSS2 not supported).
@@ -39,53 +39,51 @@ Note: The packages are not signed, so will throw some warnings when installing.
 Your audio/video file
     -> FFmpeg converts to WAV (locally)
     -> whisper.cpp transcribes the audio (locally)
-    -> (Optional) Align words to the audio (locally)
-    -> (Optional) Label speakers with pyannote.audio, or detect changes with TinyDiarize (locally)
+    -> (Optional) Label speakers: match each word to the audio, then work out
+       who spoke when with pyannote.audio (locally). TinyDiarize models
+       instead mark speaker changes during transcription.
     -> Your transcript, ready to use
 ```
 
 Transcriber wraps [whisper.cpp](https://github.com/ggml-org/whisper.cpp) and [FFmpeg](https://ffmpeg.org) in an Electron app. The main process spawns these as child processes; no native bindings or compilation required. Models are downloaded once and stored locally; after that, Transcriber works offline. For details on FFmpeg bundling and licensing, see [docs/ffmpeg.md](docs/ffmpeg.md).
 
-## Speaker Diarization (Advanced)
+## Speaker labels (advanced)
 
-TinyDiarize provides basic speaker change detection with the Small.en +
-Speaker ID model. Optional [pyannote.audio](https://github.com/pyannote/pyannote-audio)
-uses Community-1 to label speakers. Its exclusive timeline chooses one speaker
-at each time; the regular timeline is kept for overlap evidence. Neither
-option identifies people by name or separates mixed voices.
+Turn on **Label speakers** in Settings to mark who said each line. It runs on
+your computer and does two things in every labelled job: a word alignment
+model matches each recognised word to the audio, then
+[pyannote.audio](https://github.com/pyannote/pyannote-audio) with the
+Community-1 model works out who spoke when. There is one switch and no
+partial mode. It does not change the words, identify people by name or
+separate voices that overlap, and it is not perfect: on the one recording
+measured so far, 1.4% of words still went to the wrong speaker.
 
-### Setup (Windows and Linux)
+It needs software and models that the app does not bundle:
 
-1. Install Python 3.10 to 3.13 (on Windows tick "Add Python to PATH").
-2. Install the pinned packages: `pip install -r lib/requirements.txt`.
-3. Accept the conditions on the [Community-1 model page](https://huggingface.co/pyannote/speaker-diarization-community-1)
+| You need | Licence | How you get it |
+| --- | --- | --- |
+| Python 3.10 to 3.13 | PSF License | python.org |
+| pyannote.audio 4.0.7, PyTorch 2.8.0, torchaudio 2.8.0, torchcodec 0.7.0, huggingface-hub 0.36.2, Transformers 4.57.6 | MIT, BSD-3-Clause, BSD-2-Clause, BSD-3-Clause, Apache-2.0, Apache-2.0 | `pip install -r lib/requirements.txt` (about 7 GB with CUDA) |
+| Community-1 speaker model (33 MB) | CC BY 4.0 | Download once; needs a Hugging Face account that has accepted the model's access conditions, and a Read token |
+| English word alignment model (361 MB) | MIT | Download once; no account |
+
+Setup in short:
+
+1. Install Python 3.10 to 3.13 and run `pip install -r lib/requirements.txt`
+   (Windows with an NVIDIA GPU: install the CUDA build of PyTorch first).
+2. Accept the conditions on the [Community-1 model page](https://huggingface.co/pyannote/speaker-diarization-community-1)
    and create a [Hugging Face Read token](https://huggingface.co/settings/tokens).
-4. In Settings > Speaker Diarization, paste the token and click
-   **Download speaker model**. The token is used for setup and is not saved.
-5. When setup says ready, enable speaker diarisation. Later jobs need no token
-   and load the model from the local cache.
+3. In Settings > Speaker Labels, paste the token and click **Download speaker
+   models**. The token is used for this download only and is not saved.
+4. When both models show as ready, turn on **Label speakers**. Jobs then run
+   offline and need no token.
 
-Python packages take several GB (about 6.7 GB with CUDA on the tested Linux
-setup), plus model storage. A CUDA GPU is recommended; CPU diarisation is slow.
-See [the setup guide](docs/diarization-setup.md) for Windows CUDA installation,
-CLI setup and `TRANSCRIBER_PYTHON` to select a virtual environment.
-
-### Optional word alignment
-
-Install `lib/requirements-alignment.txt`, then click **Download alignment model**
-in Settings or run `python scripts/setup-diarization.py --alignment`. Turn on
-**Align words to the audio** in the Model card while diarisation is enabled.
-On the CLI, use `--diarize --alignment forced`.
-
-Alignment matches the recognised words to the recording. It adds an extra
-step and cannot recover words Whisper omitted. If it fails, the job reports
-that it is using Whisper timing. The default keeps ordinary Whisper timing and flash attention. DTW is an
-experimental CLI option (`--dtw`); it needs flash attention off, which can
-also change the recognised text. The first speaker scores favour forced alignment on one
-recording; independent validation is still pending. See
-[the pipeline guide](docs/diarization.md) and [partial benchmark results](docs/diarization-evaluation.md#results).
-The fr/de/es/it alignment models have non-commercial licences; setup warns
-before downloading them.
+A CUDA GPU is strongly recommended; on a CPU labelling is slow. Other
+languages need their own alignment model, and the French, German, Spanish
+and Italian ones are for non-commercial use only. The
+[setup guide](docs/diarization-setup.md) lists every component and licence,
+and covers other languages and troubleshooting. On the CLI, `--diarize` runs
+the same two steps.
 
 ## For researchers
 
@@ -149,8 +147,9 @@ Transcriber is free software. If it's useful to you, consider [sponsoring develo
 - [ggml](https://github.com/ggml-org/ggml): tensor library (MIT)
 - [pyannote.audio](https://github.com/pyannote/pyannote-audio): speaker diarization (MIT)
 - [WhisperX](https://github.com/m-bain/whisperX) and [TorchAudio](https://github.com/pytorch/audio): word-alignment path search adapted into Transcriber (BSD-2-Clause)
-- [Transformers](https://github.com/huggingface/transformers): optional loader for non-English alignment models (Apache-2.0)
-- [PyTorch](https://pytorch.org): machine learning framework (BSD-3-Clause)
+- [Transformers](https://github.com/huggingface/transformers): loader for alignment models in languages other than English, French, German, Spanish and Italian (Apache-2.0)
+- [PyTorch](https://pytorch.org) and [torchaudio](https://github.com/pytorch/audio): machine learning framework and audio models (BSD-3-Clause, BSD-2-Clause)
+- [pyannote Community-1](https://huggingface.co/pyannote/speaker-diarization-community-1): speaker model (CC BY 4.0); wav2vec 2.0 English alignment model (MIT)
 - [NumPy](https://numpy.org): numerical computing (BSD-3-Clause)
 
 ## Licence

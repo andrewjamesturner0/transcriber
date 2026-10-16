@@ -17,8 +17,9 @@ position and reports counts only (never text):
   - reported: identical records, quality changes, changed starts, ends and
     scores with their sizes, and the changed (segment, position) pairs.
 
-Speaker effects are measured separately with scripts/evaluate-diarization.js
-on the written envelope. Wall time runs from spawn to exit (imports, model
+Speaker effects are measured separately on the written envelope with
+.agents/scripts/evaluate-diarization.js (a local maintainer tool, not in the
+repository). Wall time runs from spawn to exit (imports, model
 load, alignment and writing); processingSec, import and model-load phases
 and peak RSS (Linux) are reported separately.
 

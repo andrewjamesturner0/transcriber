@@ -42,9 +42,9 @@ Run the full pipeline on one input audio or video file.
 | `--backend auto\|cpu\|vulkan` | `auto` | Whisper backend. `auto` probes Vulkan and falls back to CPU. `cpu` skips the GPU probe entirely. |
 | `--format txt\|json` | `txt` | Output format. `txt` is plain transcript text. `json` is the full whisper JSON (segments with timestamps), augmented with speaker labels when `--diarize` is on. |
 | `--output <path>` | stdout | Write output to a file instead of stdout. |
-| `--diarize` | off | Enable Community-1 speaker diarisation. Requires Python 3.10 to 3.13, the pinned packages and a prepared local speaker model. Inference needs no token. |
-| `--alignment whisper\|forced` | `whisper` | Word timing for speaker assignment. `forced` matches the existing words to the audio; requires `--diarize` and optional alignment setup. |
-| `--dtw` | off | Opt in to experimental DTW timing. Needs `--diarize` and `--alignment whisper`; disables flash attention and can change recognised text. |
+| `--diarize` | off | Label speakers: word alignment, then Community-1 speaker diarisation, as in the app. Requires Python 3.10 to 3.13, the pinned packages and the prepared local models (see [the setup guide](diarization-setup.md)). Inference needs no token. |
+| `--alignment forced\|whisper` | `forced` with `--diarize` | Evaluation only. Word timing for speaker assignment: `forced` matches the existing words to the audio; `whisper` skips alignment and uses Whisper's own word timing. Requires `--diarize`. |
+| `--dtw` | off | Evaluation only. Opt in to experimental DTW timing. Needs `--diarize` and `--alignment whisper`; disables flash attention and can change recognised text. |
 | `--anti-corruption` | off | Enable anti-corruption sampling flags (helps with repeating-line hallucinations). |
 | `--hf-token <token>` | unused | Accepted for old scripts, but ignored. Use `HF_TOKEN` only with `scripts/setup-diarization.py` to download the speaker model. |
 | `--num-speakers <n>` | auto | Hint the diariser to expect exactly n speakers. |
@@ -55,7 +55,7 @@ Capability detection is lazy:
 
 - `--backend cpu` skips the GPU probe.
 - The Python/pyannote probe runs only when `--diarize` is set.
-- Optional alignment readiness is checked for `--alignment forced`; English-only models use English, and multilingual models use Whisper's detected language during inference.
+- Alignment readiness is checked whenever alignment is on (the `--diarize` default). For English-only Whisper models a missing English alignment model stops the run. For multilingual models only the packages are checked first, because the language is known only after Whisper runs; if that language's alignment model is missing, the job reports it and uses Whisper timing.
 - The DTW probe runs on the diarisation path and checks each executable for both `--dtw` and `--no-flash-attn`. Ordinary timing keeps flash attention by default. Only explicit `--dtw` enables DTW; it cannot be combined with forced alignment.
 
 Pressing Ctrl+C aborts the in-flight pipeline, cleans up the temp WAV via the existing AbortController, and exits 130. A second Ctrl+C is ignored; force-kill is not implemented in v1.
@@ -111,18 +111,22 @@ JSON output with timestamps, no diarisation, written to a file:
 node cli.js transcribe lecture.m4a --model medium.en --format json --output lecture.json
 ```
 
-Download the speaker model once, then transcribe offline:
+To label speakers, download both models once (see
+[the setup guide](diarization-setup.md)), then transcribe offline:
 
 ```bash
-HF_TOKEN=hf_xxx python scripts/setup-diarization.py
+HF_TOKEN=hf_xxx python scripts/setup-diarization.py --alignment
 node cli.js transcribe panel.wav --diarize --num-speakers 4 --model medium.en > panel.txt
 ```
 
-Optional alignment, after installing `lib/requirements-alignment.txt`:
+`--diarize` always runs word alignment and then pyannote, as the app does,
+and stops before transcribing if the speaker model or the alignment packages
+are not ready (see the readiness rules below). For evaluation only,
+`--alignment whisper` skips alignment and assigns speakers with Whisper's own
+word timing:
 
 ```bash
-python scripts/setup-diarization.py --alignment
-node cli.js transcribe panel.wav --model small.en --diarize --alignment forced --format json --output panel.json
+node cli.js transcribe panel.wav --model small.en --diarize --alignment whisper --format json --output panel-whisper-timing.json
 ```
 
 If diarisation succeeds, JSON keeps `whisper`, `diarize` (regular timeline)

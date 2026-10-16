@@ -47,13 +47,13 @@ The pipeline runs these steps in order:
 
    - **Plain transcription:** `--no-timestamps` -- whisper outputs raw text, fastest path.
    - **TinyDiarize (tdrz models):** `--tinydiarize` -- the `small.en-tdrz` model was fine-tuned for speaker change detection; it emits `[SPEAKER_TURN]` markers inline. No separate diarization step needed.
-   - **Pyannote diarisation:** `--output-json-full` returns token offsets. Ordinary token timing is the default. Explicit `--dtw` adds `--dtw <preset> --no-flash-attn` where supported and consumes valid DTW anchors. Forced-alignment jobs skip DTW so Whisper keeps its default decoder.
+   - **Pyannote diarisation:** `--output-json-full` returns token offsets, which forced alignment then replaces by default (they remain the fallback). Explicit `--dtw` adds `--dtw <preset> --no-flash-attn` where supported and consumes valid DTW anchors. Forced-alignment jobs skip DTW so Whisper keeps its default decoder.
 
    The anti-corruption mode (`-mc 0 --temperature 0.4 --entropy-thold 1.8`) disables cross-segment text conditioning, preventing whisper from entering hallucination loops that produce repeating lines. These specific values come from whisper.cpp issue discussions about repetitive output on certain audio.
 
-3. **Optional alignment.** For `alignment: 'forced'`, `lib/align.py` matches the existing words to the same WAV with a wav2vec2 model and returns times and quality labels. The path search in `lib/alignment_core.py` is adapted from WhisperX 3.8.6 (itself from a TorchAudio tutorial) without installing WhisperX; `lib/alignment_models.py` holds the language-to-model table and the cache-only loaders. A failure keeps Whisper timing and reports the reason; cancellation propagates.
+3. **Word alignment.** For `alignment: 'forced'` (every speaker-labelled job in the app, and the CLI `--diarize` default), `lib/align.py` matches the existing words to the same WAV with a wav2vec2 model and returns times and quality labels. The path search in `lib/alignment_core.py` is adapted from WhisperX 3.8.6 (itself from a TorchAudio tutorial) without installing WhisperX; `lib/alignment_models.py` holds the language-to-model table and the cache-only loaders. A failure keeps Whisper timing and reports the reason; cancellation propagates.
 
-4. **Optional diarisation.** For pyannote jobs (excluding tdrz models), `lib/diarize.py` runs Community-1 offline on the same WAV. `lib/transcript-timing.js` normalises word timing, and `lib/diarize-merge.js` assigns speakers using the exclusive timeline when available. Each Python process exits before the next starts.
+4. **Diarisation.** For pyannote jobs (excluding tdrz models), `lib/diarize.py` runs Community-1 offline on the same WAV. `lib/transcript-timing.js` normalises word timing, and `lib/diarize-merge.js` assigns speakers using the exclusive timeline when available. Each Python process exits before the next starts.
 
 The whisper step is delegated to `lib/whisper-runner.js`, which owns arg construction, backend resolution, and two fallback chains:
 
@@ -61,7 +61,7 @@ The whisper step is delegated to `lib/whisper-runner.js`, which owns arg constru
 
 - **DTW fallback.** A DTW error retries without `--dtw` and `--no-flash-attn`. A successful run that reports DTW disabled records that reason too. Support is tracked per executable, so one backend failure does not disable DTW on the other. Missing or invalid anchors use declared token/segment fallback; the JSON never treats flag support alone as measured timing.
 
-Keeping the retry policy in `whisper-runner.js` means `runTranscription` composes FFmpeg, Whisper, optional alignment and diarisation with no retry-aware branching. Subprocess spawning, logging, abort wiring, and HF-token redaction live in `lib/_subprocess.js`, shared by ffmpeg, whisper, and the diarization step.
+Keeping the retry policy in `whisper-runner.js` means `runTranscription` composes FFmpeg, Whisper, alignment and diarisation with no retry-aware branching. Subprocess spawning, logging, abort wiring, and HF-token redaction live in `lib/_subprocess.js`, shared by ffmpeg, whisper, and the diarization step.
 
 Cancellation works through a single `AbortSignal` shared across all subprocesses. Each `_runProcess` call registers an `abort` event listener that calls `proc.kill()`. The `cancel-transcription` IPC handler calls `abort()` on the controller. Because ffmpeg and whisper run sequentially (not in parallel), killing whichever process is currently running is sufficient.
 
@@ -82,8 +82,7 @@ Consecutive words with the same label form blocks. Cleanup no longer rewrites
 short replies, snaps boundaries or smooths labels. Both estimators see the
 same WAV and clock; timing disagreement is an estimate error.
 
-See [diarization.md](diarization.md) for the full contract and
-[diarization-evaluation.md](diarization-evaluation.md) for the benchmark limits.
+See [diarization.md](diarization.md) for the full contract.
 `DIARIZE_DEBUG=1` prints an assignment summary on stderr.
 
 ### 3.3 Python helpers and setup
@@ -114,7 +113,7 @@ Replaces what was once scattered global state in `main.js` (separate `gpuState`,
 At startup, `detect()` runs three probes concurrently:
 - **GPU detection:** spawns the Vulkan whisper binary with `--help` (5s timeout), parses stderr for `ggml_vulkan:` device lines, and picks a discrete GPU (non-Intel) over integrated. The app rejects Intel GPUs because their Vulkan drivers are unreliable for ML inference.
 - **DTW detection:** probes CPU and available Vulkan executables for both `--dtw` and `--no-flash-attn`. Results and failures are cached per backend.
-- **Python detection:** uses `TRANSCRIBER_PYTHON` when set, otherwise tries `python3`, `python`, and `py` (Windows). `diarize.py --check` reports Python/package compatibility, CUDA and speaker cache readiness. `align.py --check` reports optional alignment readiness per language. Results can be refreshed after setup.
+- **Python detection:** uses `TRANSCRIBER_PYTHON` when set, otherwise tries `python3`, `python`, and `py` (Windows). `diarize.py --check` reports Python/package compatibility, CUDA and speaker cache readiness. `align.py --check` reports alignment readiness per language; the app checks English. Results can be refreshed after setup.
 
 `getActiveBackend()` resolves the effective backend from the user's preference (auto/cpu/vulkan) and the detection result. The app persists the user preference to `settings.json` in the user data directory.
 
@@ -160,7 +159,7 @@ Wires the DOM elements to user actions and IPC events. Key behaviours:
 - **Model download** streams progress from the main process via `download-progress` events. The download button appears only for undownloaded models, determined by the `downloaded` boolean from `get-models`.
 - **Transcription** is kicked off by the Transcribe button, which calls `queue.processAll` with a callback that invokes `window.api.transcribe`. The UI shows a progress spinner, an elapsed timer, and a cancel button. After processing, the queue is cleared (completed items are discarded from the UI -- transcripts are shown in the output area, not retained in the queue).
 - **Rich display for diarized output:** when pyannote diarization succeeds (detected by `transcriptFormat.isPyannoteDiarized`, a `[N speakers detected]` header check), the renderer replaces the plain textarea with a `div.transcript-rich` containing speaker-colored spans. The block parsing is done by `transcriptFormat.parseRichTranscript`, which clamps speaker numbers above 8 to the highest CSS class. Eight CSS classes (`speaker-1` through `speaker-8`) provide distinct colors. The textarea is kept in sync (hidden) as the plain-text copy/save source.
-- **Settings menu** contains the anti-corruption toggle, speaker/alignment model setup and an optional debug panel. Speaker diarisation is enabled only when the supported Python packages and model are ready. The Model card shows **Align words to the audio** while diarisation is on; `job-options.js` controls availability and builds each job's options. The alignment preference is saved in renderer local storage; the token is not saved.
+- **Settings menu** contains the anti-corruption toggle, speaker/alignment model setup and an optional debug panel. **Label speakers** is one switch that runs word alignment and pyannote diarisation in every labelled job. It is enabled only when the Python packages, the speaker model and the word alignment model are all ready; `job-options.js` decides this and builds each job's options. One download button fetches whichever model is missing; the token is not saved.
 - **Auto-update** uses `electron-updater`'s GitHub provider. The renderer listens for `update-available` (shows "Downloading...") and `update-downloaded` (shows "Update ready -- click to restart"). Version comparison prevents offering downgrades.
 
 ### 5.3 preload.js -- the context bridge
@@ -221,11 +220,10 @@ The single build script handles dependency fetching and packaging. It reads `dep
 | `scripts/test-renderer-smoke.js` | Loads every renderer script (`queue.js`, `media-extensions.js`, `time-estimates.js`, `transcript-format.js`, `job-options.js`, `renderer.js`) in a minimal browser-like vm context to catch require()-in-renderer bugs, missing globals, and syntax errors | Before any release or PR that touches renderer code |
 | `scripts/test-packaging.js` | Verifies that every `require('./lib/...')` in `main.js` resolves to an existing file, that `lib/` is not in top-level `extraResources` (which would move JS modules outside the asar), that Python helpers, setup and requirements are in `extraResources`, and that app files exclude credentials and private working data | Before packaging a release |
 | `scripts/test-transcript-timing.js` | Word grouping, timing sources, validation and forced-alignment fallback | After timing changes |
-| `scripts/test-job-options.js` | Alignment controls and job options | After UI option changes |
+| `scripts/test-job-options.js` | Speaker labelling availability and job options | After UI option changes |
 | `scripts/test-diarization-setup.js` | Setup subprocess, token handling and refresh | After setup changes |
 | `scripts/test-diarize-contract.py` | Python detector, privacy, output and setup contracts without models | After diarisation/helper changes |
 | `scripts/test-align-contract.py` | Alignment-only loading, positional mapping and timing quality without models | After alignment/helper changes |
-| `scripts/test-diarization-evaluation.js` | Scoring, denominators and missing metrics on synthetic data | After evaluator changes |
 | `scripts/test-whisper-dtw.js` | Real local executable identity and populated DTW anchors | With prepared local audio and model |
 | `scripts/test-audio-load.py` | Checks that ffmpeg can load a given audio file | Ad-hoc, when debugging ffmpeg issues |
 | `scripts/test-diarize-pipeline.py` | End-to-end diarisation smoke check requiring the prepared speaker model and Python; inference needs no token | After changes to `lib/diarize.py` or when setting up diarization |
@@ -255,7 +253,7 @@ All JavaScript tests follow the same plain-Node pattern: no test framework, no a
 
 4. **`lib/models.js`** -- canonical model metadata. One entry per model with filename, label, size, DTW preset, and optional `tdrz`/`hfRepo` flags. Add a model here and every consumer (download handler, runner) sees it.
 
-5. **`lib/transcription-runner.js`** + **`lib/whisper-runner.js`** -- the FFmpeg -> Whisper -> optional alignment -> diarise pipeline. `runTranscription` composes these stages; `whisper-runner` owns arg construction and the GPU/DTW retry policy. `lib/_subprocess.js` is the shared spawn helper.
+5. **`lib/transcription-runner.js`** + **`lib/whisper-runner.js`** -- the FFmpeg -> Whisper -> alignment -> diarise pipeline (the last two only for speaker-labelled jobs). `runTranscription` composes these stages; `whisper-runner` owns arg construction and the GPU/DTW retry policy. `lib/_subprocess.js` is the shared spawn helper.
 
 6. **`lib/capabilities.js`** -- GPU, DTW, and Python detection. `detect()` runs three probes at startup. `getActiveBackend()` shows how user preference and hardware detection combine.
 

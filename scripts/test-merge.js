@@ -8,7 +8,7 @@
  * Retired 2026-10-14 (design decision D1): tests that required segment
  * absorption, boundary snapping, smoothing and short-block merging. Those
  * stages rewrote correctly supported words (investigation cases 3, 4 and 7
- * in docs/diarization-investigation.md), so they were removed rather than
+ * in .agents/docs/diarization-investigation.md, local notes), so they were removed rather than
  * tuned. Word grouping tests moved to scripts/test-transcript-timing.js.
  *
  * Usage:
@@ -303,7 +303,7 @@ test('boundary handling does not depend on how many words surround it', () => {
   assert(many.words[5].speakerId === 'A' && many.words[6].speakerId === 'B', 'many words');
 });
 
-// --- Investigation regressions (docs/diarization-investigation.md) ---
+// --- Investigation regressions (.agents/docs/diarization-investigation.md, local notes) ---
 
 console.log('\nInvestigation regressions\n');
 
