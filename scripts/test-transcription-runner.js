@@ -519,7 +519,7 @@ test('malformed or unknown output falls back to the plain transcript', async () 
     envelope(READY_YES_SPEAKERS, [{ start: 'x', end: 1, speaker: 'A' }])]) {
     const { result, progress } = await runDiarised({ diarizeOutput: bad });
     assert(!('json' in result) && result.text === 'Ready? Yes. Continue.', JSON.stringify(result));
-    assert(progress.some((m) => /^Diarization failed \(.+\), using plain transcript$/.test(m)), progress.join(' | '));
+    assert(progress.some((m) => /^Speaker labelling failed \(.+\), using plain transcript$/.test(m)), progress.join(' | '));
   }
 });
 
@@ -670,7 +670,7 @@ test('forced alignment: helper failure keeps text and Whisper timing, one messag
   assert(sa.alignment.status === 'failed' && /not prepared/.test(sa.alignment.reason), JSON.stringify(sa.alignment));
   assert(sa.words.every((x) => x.timingSource === 'token'), JSON.stringify(sa.summary.timing));
   assert(progress.filter((m) => m.startsWith('Word alignment failed')).length === 1, progress.join(' | '));
-  assert(!progress.some((m) => m.startsWith('Diarization failed')), 'diarisation still ran');
+  assert(!progress.some((m) => m.startsWith('Speaker labelling failed')), 'diarisation still ran');
 });
 
 test('forced alignment: malformed output (wrong word count or format) falls back', async () => {

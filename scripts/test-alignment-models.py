@@ -30,7 +30,7 @@ MODELS_PATH = os.path.join(ROOT, "lib", "alignment_models.py")
 EN_FILE = "wav2vec2_fairseq_base_ls960_asr_ls960.pth"
 EN_LABELS = ("-", "|", "E", "T", "A", "O", "N", "I", "H", "S", "R", "D", "L", "U", "M",
              "W", "C", "F", "G", "Y", "P", "B", "V", "K", "'", "X", "J", "Q", "Z")
-FIX = "pip install -r requirements-alignment.txt"
+FIX = "pip install -r requirements.txt"
 
 # Frozen copy of the WhisperX 3.8.6 defaults (v3.8.6, commit 3ccc17b8). The
 # registry must match this exactly; change both only with a new decision.

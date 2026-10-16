@@ -4,59 +4,58 @@
 // See LICENSE for the full licence text.
 
 /**
- * Per-job option rules (design decision D4). No DOM dependencies.
+ * Speaker labelling availability and per-job options. No DOM dependencies.
  *
- *   alignmentControlState() decides whether the "Align words to the audio"
- *   switch is shown, usable, and what its help line says.
+ * Speaker labelling is one switch with no partial mode: every labelled job
+ * runs pyannote and word alignment. So the switch is usable only when both
+ * the speaker model and the word alignment model are ready.
+ *
+ *   speakerLabelState() turns the two setup checks into what Settings shows.
  *   buildJobOptions() turns the current controls into the options object
- *   sent with each queued file (read when the file starts, like the other
- *   options).
+ *   sent with each queued file (read when the file starts).
  */
 
-const ALIGNMENT_HELP = 'Re-times each word against the recording before speakers are assigned. Adds a short extra step.';
-
-function alignmentHelpForStatus(status) {
-  switch (status) {
-    case 'ready': return ALIGNMENT_HELP;
-    case 'model-not-prepared': return 'Not set up yet. Download the alignment model in Settings.';
-    case 'alignment-missing':
-    case 'alignment-unsupported': return 'Not installed. See the setup guide in Settings.';
-    case 'checking': return 'Checking setup...';
-    default: return 'Not available. See Settings, Speaker Diarization.';
-  }
-}
+// Python packages are installed by the user, outside the app. Until they
+// are, neither model can be downloaded.
+const PACKAGE_PROBLEMS = new Set([
+  'python-missing', 'python-unsupported', 'pyannote-missing', 'pyannote-unsupported',
+  'alignment-missing', 'alignment-unsupported',
+]);
 
 /**
  * @param {object} s
- * @param {boolean} s.diarizationOn     the Settings diarisation switch is on
- * @param {string}  s.alignmentStatus   status from align.py --check, or 'checking'
- * @returns {{ visible: boolean, enabled: boolean, help: string }}
+ * @param {string} s.diarizationStatus  from the Python check (diarize.py --check)
+ * @param {string} s.alignmentStatus    from align.py --check for English, or
+ *                                      'checking' / 'unavailable' when not run
+ * @returns {{ ready: boolean, canDownload: boolean, needsToken: boolean }}
+ *   ready        the "Label speakers" switch can be turned on
+ *   canDownload  show the one "Download speaker models" button
+ *   needsToken   the speaker model is missing, so the download needs a token
  */
-function alignmentControlState({ diarizationOn, alignmentStatus }) {
-  const enabled = !!diarizationOn && alignmentStatus === 'ready';
+function speakerLabelState({ diarizationStatus, alignmentStatus }) {
+  const ready = diarizationStatus === 'ready' && alignmentStatus === 'ready';
+  const packagesOk = !PACKAGE_PROBLEMS.has(diarizationStatus) && !PACKAGE_PROBLEMS.has(alignmentStatus);
+  const missingModel = diarizationStatus === 'model-not-prepared' || alignmentStatus === 'model-not-prepared';
   return {
-    visible: !!diarizationOn,
-    enabled,
-    help: alignmentHelpForStatus(alignmentStatus),
+    ready,
+    canDownload: packagesOk && missingModel,
+    needsToken: diarizationStatus === 'model-not-prepared',
   };
 }
 
 /**
  * @param {object} c
  * @param {boolean} c.antiCorruption
- * @param {boolean} c.diarizationOn
+ * @param {boolean} c.diarizationOn     the "Label speakers" switch is on
  * @param {string}  c.numSpeakers       'auto' or a number as text
- * @param {boolean} c.alignChecked      the alignment switch is on
- * @param {string}  c.alignmentStatus
  * @returns {object} options for window.api.transcribe
  */
-function buildJobOptions({ antiCorruption, diarizationOn, numSpeakers, alignChecked, alignmentStatus }) {
+function buildJobOptions({ antiCorruption, diarizationOn, numSpeakers }) {
   const options = { antiCorruption: !!antiCorruption };
   if (diarizationOn) {
     options.diarization = true;
+    options.alignment = 'forced';
     if (numSpeakers && numSpeakers !== 'auto') options.numSpeakers = parseInt(numSpeakers, 10);
-    const state = alignmentControlState({ diarizationOn, alignmentStatus });
-    options.alignment = state.enabled && alignChecked ? 'forced' : 'whisper';
   }
   return options;
 }
@@ -66,7 +65,7 @@ function buildJobOptions({ antiCorruption, diarizationOn, numSpeakers, alignChec
 // ---------------------------------------------------------------------------
 
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { alignmentControlState, buildJobOptions, ALIGNMENT_HELP };
+  module.exports = { speakerLabelState, buildJobOptions };
 } else {
-  window.jobOptions = { alignmentControlState, buildJobOptions, ALIGNMENT_HELP };
+  window.jobOptions = { speakerLabelState, buildJobOptions };
 }

@@ -31,8 +31,11 @@ Before the first run:
 The token is read only from the environment. It is never accepted on the
 command line and never printed.
 
-Alignment needs the optional packages first:
-    pip install -r lib/requirements-alignment.txt
+Install the packages first (one file covers both parts):
+    pip install -r lib/requirements.txt
+
+The app's speaker labelling always uses both parts, so the app runs this
+script with --alignment. Without it, only the speaker model is prepared.
 
 Output: JSON progress lines {"message", "percent"} on stderr, plus one
 {"error", "code"} line for each part that fails; one JSON summary object on
@@ -622,7 +625,7 @@ def build_parser():
     # language and can still be combined with --language.
     parser.add_argument("--alignment", nargs="?", const="", default=None, metavar="LANGS",
                         help="Also prepare word alignment for these comma-separated "
-                             "languages (default: en). Needs lib/requirements-alignment.txt")
+                             "languages (default: en). Needs lib/requirements.txt")
     parser.add_argument("--language", default=None, metavar="LANGS",
                         help="Same as --alignment LANGS")
     return parser

@@ -49,8 +49,6 @@ extraResources:
     to: lib/third_party/whisperx-LICENSE.txt
   - from: lib/third_party/torchaudio-LICENSE.txt
     to: lib/third_party/torchaudio-LICENSE.txt
-  - from: lib/requirements-alignment.txt
-    to: lib/requirements-alignment.txt
   - from: scripts/setup-diarization.py
     to: scripts/setup-diarization.py
   - from: THIRD-PARTY-LICENSES.json

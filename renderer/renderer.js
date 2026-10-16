@@ -32,14 +32,11 @@ const diarizeStatusDot = document.querySelector('#diarize-setup-status .menu-sta
 const hfTokenInput = document.getElementById('hf-token-input');
 const diarizeSetupBlock = document.getElementById('diarize-setup-block');
 const btnPrepareDiarization = document.getElementById('btn-prepare-diarization');
-const alignOption = document.getElementById('align-option');
-const alignToggle = document.getElementById('align-toggle');
-const alignOptionHelp = document.getElementById('align-option-help');
+const hfTokenRow = document.getElementById('hf-token-row');
 const alignmentStatusRow = document.getElementById('alignment-status');
 const alignmentStatusDot = document.getElementById('alignment-status-dot');
 const alignmentStatusText = document.getElementById('alignment-status-text');
-const alignmentSetupBlock = document.getElementById('alignment-setup-block');
-const btnPrepareAlignment = document.getElementById('btn-prepare-alignment');
+let diarizeStatus = 'checking';
 let alignmentStatus = 'checking';
 const numSpeakersSelect = document.getElementById('num-speakers-select');
 const gpuStatus = document.getElementById('gpu-status');
@@ -331,8 +328,6 @@ btnTranscribe.addEventListener('click', async () => {
       antiCorruption: antiCorruptionToggle.checked,
       diarizationOn: diarizeToggle.checked,
       numSpeakers: numSpeakersSelect.value,
-      alignChecked: alignToggle.checked,
-      alignmentStatus,
     });
     const text = await window.api.transcribe(item.filePath, modelSelect.value, options);
     item.hasSpeakers = window.transcriptFormat.isPyannoteDiarized(text);
@@ -592,7 +587,12 @@ document.getElementById('btn-sponsor').addEventListener('click', (e) => {
   window.api.openExternal('https://github.com/sponsors/andrewjamesturner0');
 });
 
-// --- Diarization setup ---
+// --- Speaker labelling setup ---
+//
+// One switch, no partial mode: a labelled job always runs pyannote and word
+// alignment, so the switch needs both models. One button downloads whichever
+// is missing; the Hugging Face token is only asked for when the speaker
+// model is the missing one.
 
 async function checkPythonSetup() {
   btnCheckPython.classList.add('checking');
@@ -605,19 +605,13 @@ async function checkPythonSetup() {
     pythonSetup = { pythonFound: false };
   }
 
-  btnCheckPython.classList.remove('checking');
-
   const status = pythonSetup.diarizationStatus || (pythonSetup.pythonFound ? 'unknown' : 'python-missing');
-  const ready = status === 'ready';
+  diarizeStatus = status;
+  const speakerReady = status === 'ready';
   diarizeStatusText.textContent = diarizeStatusMessage(status, pythonSetup);
-  diarizeStatusDot.className = `menu-status-dot ${ready ? 'menu-status-dot-ready' : 'menu-status-dot-error'}`;
-  diarizeToggle.disabled = !ready;
-  if (!ready) diarizeToggle.checked = false;
-  diarizeOptions.hidden = !(ready && diarizeToggle.checked);
-  // The token is only needed to download the model, so it only shows then.
-  diarizeSetupBlock.hidden = status !== 'model-not-prepared';
-  gpuStatus.hidden = !ready;
-  if (ready) {
+  diarizeStatusDot.className = `menu-status-dot ${speakerReady ? 'menu-status-dot-ready' : 'menu-status-dot-error'}`;
+  gpuStatus.hidden = !speakerReady;
+  if (speakerReady) {
     if (pythonSetup.gpuAvailable) {
       gpuStatusDot.className = 'menu-status-dot menu-status-dot-ready';
       gpuStatusText.textContent = 'CUDA detected';
@@ -626,13 +620,45 @@ async function checkPythonSetup() {
       gpuStatusText.textContent = 'CUDA not detected';
     }
   }
-  await checkAlignmentSetup(ready);
+
+  // align.py runs in the same Python, so it is only worth checking once
+  // pyannote's packages are in place.
+  if (status === 'ready' || status === 'model-not-prepared') {
+    alignmentStatus = 'checking';
+    let info;
+    try {
+      info = await window.api.checkAlignment();
+    } catch (_) {
+      info = { alignmentStatus: 'unknown' };
+    }
+    alignmentStatus = info.alignmentStatus;
+    alignmentStatusRow.hidden = false;
+    alignmentStatusText.textContent = alignmentStatusMessage(alignmentStatus);
+    alignmentStatusDot.className = `menu-status-dot ${alignmentStatus === 'ready' ? 'menu-status-dot-ready' : 'menu-status-dot-error'}`;
+  } else {
+    alignmentStatus = 'unavailable';
+    alignmentStatusRow.hidden = true;
+  }
+
+  btnCheckPython.classList.remove('checking');
+  refreshSpeakerLabelControls();
 }
 
-/** Short status line for the diarisation setup state (design decision D2). */
+/** Enable the switch and show the download step from both setup checks. */
+function refreshSpeakerLabelControls() {
+  const state = window.jobOptions.speakerLabelState({ diarizationStatus: diarizeStatus, alignmentStatus });
+  diarizeToggle.disabled = !state.ready;
+  if (!state.ready) diarizeToggle.checked = false;
+  diarizeOptions.hidden = !(state.ready && diarizeToggle.checked);
+  diarizeSetupBlock.hidden = !state.canDownload;
+  // The token is only needed to download the speaker model, so it only shows then.
+  hfTokenRow.hidden = !state.needsToken;
+}
+
+/** Short status line for the pyannote part of the setup. */
 function diarizeStatusMessage(status, info) {
   switch (status) {
-    case 'ready': return `pyannote ${info.pyannoteVersion} ready`;
+    case 'ready': return `pyannote ${info.pyannoteVersion} and speaker model ready`;
     case 'python-missing': return 'Python 3.10+ not found';
     case 'python-unsupported': return `Python ${info.pythonVersion} is too old (3.10+ needed)`;
     case 'pyannote-missing': return 'pyannote not installed';
@@ -642,18 +668,34 @@ function diarizeStatusMessage(status, info) {
   }
 }
 
+/** Short status line for the word alignment part of the setup. */
+function alignmentStatusMessage(status) {
+  switch (status) {
+    case 'ready': return 'Word alignment model ready';
+    case 'model-not-prepared': return 'Word alignment model not downloaded';
+    case 'alignment-missing': return 'Word alignment packages not installed';
+    case 'alignment-unsupported': return 'Word alignment needs newer packages';
+    default: return 'Word alignment could not be checked';
+  }
+}
+
 btnPrepareDiarization.addEventListener('click', async () => {
+  const { needsToken } = window.jobOptions.speakerLabelState({ diarizationStatus: diarizeStatus, alignmentStatus });
   const token = hfTokenInput.value.trim();
-  if (!token) {
+  if (needsToken && !token) {
     diarizeStatusText.textContent = 'Enter a Hugging Face token first';
     return;
   }
   btnPrepareDiarization.disabled = true;
   btnPrepareDiarization.classList.add('checking');
-  diarizeStatusText.textContent = 'Downloading speaker model...';
+  setStatus('Downloading speaker models...', 'progress');
   try {
-    await window.api.prepareDiarization(token);
+    // --alignment prepares the speaker model too, unless it is already there.
+    await window.api.prepareDiarization(token || undefined, { alignment: true });
     hfTokenInput.value = '';
+    // Replace the last progress line, which still shows a spinner.
+    setStatus('Speaker models ready', 'success');
+    setTimeout(() => setStatus(''), 3000);
   } catch (err) {
     const msg = String((err && err.message) || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
     setStatus(`Speaker model download failed: ${msg}`, 'error');
@@ -667,84 +709,15 @@ btnCheckPython.addEventListener('click', checkPythonSetup);
 
 document.getElementById('btn-diarize-setup-guide').addEventListener('click', (e) => {
   e.preventDefault();
-  window.api.openExternal('https://github.com/andrewjamesturner0/transcriber#speaker-diarization-advanced');
+  window.api.openExternal('https://github.com/andrewjamesturner0/transcriber/blob/master/docs/diarization-setup.md');
 });
 
 diarizeToggle.addEventListener('change', () => {
   diarizeOptions.hidden = !diarizeToggle.checked;
-  refreshAlignmentOption();
 });
 
-// --- Word alignment (design decision D4) ---
-
-/** Show, enable and explain the per-job alignment switch. */
-function refreshAlignmentOption() {
-  const state = window.jobOptions.alignmentControlState({
-    diarizationOn: diarizeToggle.checked,
-    alignmentStatus,
-  });
-  alignOption.hidden = !state.visible;
-  alignToggle.disabled = !state.enabled;
-  alignOption.classList.toggle('is-disabled', !state.enabled);
-  alignOptionHelp.textContent = state.help;
-  alignOption.title = state.enabled ? '' : state.help;
-}
-
-function alignmentStatusMessage(info) {
-  switch (info.alignmentStatus) {
-    case 'ready': return 'Word alignment ready';
-    case 'model-not-prepared': return 'Word alignment model not downloaded';
-    case 'alignment-missing': return 'Word alignment not installed (optional)';
-    case 'alignment-unsupported': return 'Word alignment needs newer packages (optional)';
-    default: return 'Word alignment unavailable';
-  }
-}
-
-/** Probe optional alignment; only meaningful once diarisation is ready. */
-async function checkAlignmentSetup(diarizationReady) {
-  if (!diarizationReady) {
-    alignmentStatus = 'unavailable';
-    alignmentStatusRow.hidden = true;
-    alignmentSetupBlock.hidden = true;
-    refreshAlignmentOption();
-    return;
-  }
-  alignmentStatus = 'checking';
-  refreshAlignmentOption();
-  let info;
-  try {
-    info = await window.api.checkAlignment();
-  } catch (_) {
-    info = { alignmentStatus: 'unknown' };
-  }
-  alignmentStatus = info.alignmentStatus;
-  alignmentStatusRow.hidden = false;
-  alignmentStatusText.textContent = alignmentStatusMessage(info);
-  alignmentStatusDot.className = `menu-status-dot ${alignmentStatus === 'ready' ? 'menu-status-dot-ready' : 'menu-status-dot-error'}`;
-  alignmentSetupBlock.hidden = alignmentStatus !== 'model-not-prepared';
-  refreshAlignmentOption();
-}
-
-alignToggle.checked = localStorage.getItem('align-words') === 'true';
-alignToggle.addEventListener('change', () => {
-  localStorage.setItem('align-words', String(alignToggle.checked));
-});
-
-btnPrepareAlignment.addEventListener('click', async () => {
-  btnPrepareAlignment.disabled = true;
-  btnPrepareAlignment.classList.add('checking');
-  alignmentStatusText.textContent = 'Downloading alignment model...';
-  try {
-    // The speaker model is already set up here, so no token is needed.
-    await window.api.prepareDiarization(hfTokenInput.value.trim() || undefined, { alignment: true });
-  } catch (err) {
-    const msg = String((err && err.message) || err).replace(/^Error invoking remote method '[^']+': (Error: )?/, '');
-    setStatus(`Alignment model download failed: ${msg}`, 'error');
-  }
-  btnPrepareAlignment.disabled = false;
-  btnPrepareAlignment.classList.remove('checking');
-  await checkAlignmentSetup(true);
-});
+// Older versions saved a separate alignment switch; it no longer exists.
+try { localStorage.removeItem('align-words'); } catch (_) {}
 
 // The token is only needed for the one-off model download, so it is not
 // stored. Remove any token an older version saved.
@@ -753,7 +726,7 @@ try { localStorage.removeItem('hf-token'); } catch (_) {}
 // Listen for diarization progress
 window.api.onDiarizeStatus((data) => {
   if (data.error) {
-    setStatus(`Diarization error: ${data.error}`, 'error');
+    setStatus(`Speaker labelling error: ${data.error}`, 'error');
   } else if (data.message) {
     const pct = data.percent != null ? ` (${data.percent}%)` : '';
     setStatus(`${data.message}${pct}`, 'progress');

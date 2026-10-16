@@ -573,7 +573,7 @@ def _():
     os.makedirs(os.path.join(res, "lib"))
     os.makedirs(os.path.join(res, "scripts"))
     for name in ("align.py", "alignment_models.py", "alignment_core.py", "diarize.py",
-                 "requirements.txt", "requirements-alignment.txt"):
+                 "requirements.txt"):
         shutil.copy(os.path.join(ROOT, "lib", name), os.path.join(res, "lib", name))
     shutil.copy(SETUP_PATH, os.path.join(res, "scripts", "setup-diarization.py"))
     env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
@@ -600,7 +600,7 @@ def _():
 def _():
     res = os.path.join(TMP, "broken", "lib")
     os.makedirs(res)
-    for name in ("align.py", "alignment_core.py", "requirements-alignment.txt"):
+    for name in ("align.py", "alignment_core.py", "requirements.txt"):
         shutil.copy(os.path.join(ROOT, "lib", name), os.path.join(res, name))
     proc = subprocess.run([sys.executable, "-I", os.path.join(res, "align.py"), "--check"],
                           cwd=TMP, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -913,7 +913,7 @@ def _():
     code, env, _, err = align_run([seg(0, 0, 900, ["a"])], versions={"torchaudio": "2.8.0"})
     e = error_line(err)
     check(code == 1 and e["code"] == "alignment-missing" and "torch" in e["error"], err)
-    check("requirements-alignment.txt" in e["error"], e["error"])
+    check("requirements.txt" in e["error"], e["error"])
     reset_state()
     fill_hf()
     code, env, _, err = align_run([seg(0, 0, 900, ["hallo"])], language="nl",
@@ -1007,7 +1007,7 @@ def _():
     res = a.check_environment("en")
     check(res["status"] == "ready" and res["modelPath"].endswith(EN_FILE), res)
     check(res["versions"]["torch"] == "2.8.0+stub", res["versions"])
-    check(res["requirements"].endswith("requirements-alignment.txt"), res["requirements"])
+    check(os.path.basename(res["requirements"]) == "requirements.txt", res["requirements"])
     res = a.check_environment("xx")
     check(res["status"] == "language-unsupported" and res["languageSupported"] is False, res)
     check(a.check_environment("nl")["status"] == "model-not-prepared", "nl")
@@ -1181,7 +1181,7 @@ def _():
     summary, code, _, err = run_setup({}, "--alignment", align_versions={"torchaudio": "2.8.0"})
     check(code == 1 and summary["alignment"]["status"] == "alignment-missing", summary)
     check(summary["speaker"]["status"] == "ready", summary["speaker"])
-    check("requirements-alignment.txt" in summary["alignment"]["message"], summary["alignment"]["message"])
+    check("requirements.txt" in summary["alignment"]["message"], summary["alignment"]["message"])
     check(STATE["load_calls"] == [], "nothing downloaded")
 
 

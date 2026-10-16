@@ -58,18 +58,21 @@ Options:
                           whisper backend (default: auto)
   --format txt|json       output format (default: txt)
   --output <path>         write output to file instead of stdout
-  --diarize               enable pyannote speaker diarization
+  --diarize               label speakers: pyannote diarization plus word
+                          alignment, as in the app. Needs the setup in
+                          docs/diarization-setup.md
   --anti-corruption       enable anti-corruption sampling flags
   --hf-token <token>      ignored (kept for old scripts); the speaker model is
                           prepared once with scripts/setup-diarization.py
   --num-speakers <n>      hint diarizer to expect this many speakers
-  --alignment whisper|forced
-                          word timing for speaker assignment (default: whisper).
-                          "forced" re-times words against the audio before
-                          speakers are assigned; needs --diarize and the
-                          optional alignment setup
-  --dtw                   opt in to experimental DTW timing; needs --diarize
-                          and --alignment whisper; disables flash attention
+  --alignment forced|whisper
+                          evaluation only: word timing for speaker assignment
+                          (default with --diarize: forced, i.e. word
+                          alignment). "whisper" skips alignment and uses
+                          Whisper's own word timing
+  --dtw                   evaluation only: experimental DTW timing; needs
+                          --diarize and --alignment whisper; disables flash
+                          attention
   --quiet                 suppress progress output on stderr
   -h, --help              show this help and exit
 `;
@@ -192,9 +195,9 @@ function _alignmentFix(info) {
   switch (info.alignmentStatus) {
     case 'alignment-missing':
     case 'alignment-unsupported':
-      return 'Install the optional packages: pip install -r lib/requirements-alignment.txt';
+      return 'Install the speaker labelling packages: pip install -r lib/requirements.txt';
     case 'model-not-prepared':
-      return 'Download the alignment model once: python scripts/setup-diarization.py --alignment';
+      return 'Download the word alignment model once: python scripts/setup-diarization.py --alignment';
     default:
       return info.alignmentMessage || 'Run: python lib/align.py --check';
   }
@@ -234,13 +237,16 @@ async function cmdTranscribe(argv) {
     die(`transcribe: --format must be txt or json (got "${format}")`);
   }
   const diarize = !!flags['--diarize'];
-  const alignment = flags['--alignment'] || 'whisper';
-  if (!['whisper', 'forced'].includes(alignment)) {
-    die(`transcribe: --alignment must be whisper or forced (got "${alignment}")`);
+  // Speaker labelling always includes word alignment, as in the app;
+  // --alignment whisper exists only to compare timing sources.
+  const alignmentFlag = flags['--alignment'];
+  if (alignmentFlag != null && !['whisper', 'forced'].includes(alignmentFlag)) {
+    die(`transcribe: --alignment must be forced or whisper (got "${alignmentFlag}")`);
   }
-  if (alignment === 'forced' && !diarize) {
-    die('transcribe: --alignment forced needs --diarize');
+  if (alignmentFlag && !diarize) {
+    die(`transcribe: --alignment ${alignmentFlag} needs --diarize`);
   }
+  const alignment = alignmentFlag || 'forced';
   const dtw = !!flags['--dtw'];
   if (dtw && (!diarize || alignment === 'forced')) {
     die('transcribe: --dtw needs --diarize and --alignment whisper');
@@ -296,7 +302,7 @@ async function cmdTranscribe(argv) {
       const alignInfo = await capabilities.getAlignmentInfo({ language: 'en' });
       const okStatuses = englishOnly ? ['ready'] : ['ready', 'model-not-prepared'];
       if (!okStatuses.includes(alignInfo.alignmentStatus)) {
-        die(`transcribe: --alignment forced is not ready (${alignInfo.alignmentStatus}). ${_alignmentFix(alignInfo)}`);
+        die(`transcribe: --diarize needs word alignment, which is not ready (${alignInfo.alignmentStatus}). ${_alignmentFix(alignInfo)}`);
       }
     }
   }

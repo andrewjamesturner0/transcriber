@@ -88,7 +88,7 @@ CHECK_STATUSES = (
 )
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-REQUIREMENTS_PATH = os.path.join(_HERE, "requirements-alignment.txt")
+REQUIREMENTS_PATH = os.path.join(_HERE, "requirements.txt")
 SETUP_COMMAND = "python scripts/setup-diarization.py --alignment"
 
 
@@ -557,7 +557,7 @@ def align_segments(loaded, model, segments, pad_ms, audio, waveform, not_prepare
 
         percent = 25 + int(70 * (n + 1) / total)
         if last_percent is None or percent - last_percent >= 5 or n + 1 == total:
-            progress("Aligning words (%d of %d segments)..." % (n + 1, total), percent)
+            progress("Matching words to the audio (%d of %d segments)..." % (n + 1, total), percent)
             last_percent = percent
 
     if attempted and errors == attempted:
@@ -623,7 +623,7 @@ def run(args):
     except Exception as e:
         raise AlignError("audio-invalid", "Failed to load audio: %s" % e)
 
-    progress("Aligning words...", 25)
+    progress("Matching words to the audio...", 25)
     # processingSec times the alignment loop only (not imports or model
     # load), so it can be compared with the audio duration.
     started = time.time()

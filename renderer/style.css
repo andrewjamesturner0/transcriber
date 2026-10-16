@@ -83,6 +83,10 @@
 }
 
 /* === Reset === */
+/* Component rules that set display (flex, inline-flex) would otherwise
+   override the hidden attribute and show hidden controls. */
+[hidden] { display: none !important; }
+
 *, *::before, *::after {
   box-sizing: border-box;
   margin: 0;
@@ -1124,41 +1128,19 @@ textarea::placeholder {
   color: var(--text-primary);
 }
 
-/* === Per-job option row (inside model card, design decision D4) === */
-.job-option {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 0.625rem;
-  margin-top: 0.5rem;
-  padding-top: 0.5rem;
-  border-top: 1px solid var(--border);
-  cursor: pointer;
-}
-
-.job-option[hidden] { display: none; }
-
-.job-option-text {
+/* === Toggle help line === */
+.menu-toggle-text {
   display: flex;
   flex-direction: column;
   gap: 0.125rem;
 }
 
-.job-option-label {
-  font-size: 0.775rem;
-  font-weight: 500;
-  color: var(--text-primary);
-}
-
-.job-option-help {
+.menu-toggle-help {
   font-size: 0.7rem;
+  font-weight: 400;
   color: var(--text-tertiary);
   line-height: 1.4;
 }
-
-.job-option.is-disabled { cursor: not-allowed; }
-.job-option.is-disabled .job-option-label { color: var(--text-tertiary); }
-.job-option .menu-toggle-switch { margin-top: 0.125rem; }
 
 /* === Time estimate banner === */
 /* === Model estimate (inside model card) === */

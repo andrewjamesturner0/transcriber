@@ -240,7 +240,7 @@ test('media-extensions.js accepts .dss files', () => {
   assert(sandbox.window.mediaExtensions.isValidMediaFile('recording.ds2') === false, '.ds2 should not be valid');
 });
 
-// --- Setup-state flow (diarisation + alignment, design decisions D2/D4) ---
+// --- Setup-state flow (speaker labelling: diarisation + word alignment) ---
 
 async function loadRenderer(apiOverrides) {
   const ctx = makeBrowserContext();
@@ -259,55 +259,52 @@ async function loadRenderer(apiOverrides) {
 const READY_PY = { pythonFound: true, pythonVersion: '3.12.3', diarizationStatus: 'ready', pyannoteVersion: '4.0.7', gpuAvailable: true };
 
 const asyncTests = [
-  ['speaker model not prepared: setup block shown, diarisation and alignment unavailable', async () => {
-    const { el } = await loadRenderer({ checkPythonSetup: () => Promise.resolve({ ...READY_PY, diarizationStatus: 'model-not-prepared' }) });
-    assert(el('diarize-setup-block').hidden === false, 'token/download block visible');
-    assert(el('diarize-toggle').disabled === true, 'diarisation switch disabled');
+  ['nothing downloaded yet: one download block with the token, switch disabled', async () => {
+    const { el } = await loadRenderer({
+      checkPythonSetup: () => Promise.resolve({ ...READY_PY, diarizationStatus: 'model-not-prepared' }),
+      checkAlignment: () => Promise.resolve({ alignmentStatus: 'model-not-prepared' }),
+    });
+    assert(el('diarize-setup-block').hidden === false, 'download block visible');
+    assert(el('hf-token-row').hidden === false, 'token asked for');
+    assert(el('diarize-toggle').disabled === true, 'switch disabled');
     assert(el('diarize-status-text').textContent === 'Speaker model not downloaded', el('diarize-status-text').textContent);
-    assert(el('alignment-status').hidden === true, 'alignment row hidden until diarisation is ready');
+    assert(el('alignment-status-text').textContent === 'Word alignment model not downloaded', el('alignment-status-text').textContent);
   }],
-  ['ready diarisation + ready alignment: switch appears with diarisation and is usable', async () => {
+  ['both models ready: switch usable, no download block', async () => {
     const { el, fire } = await loadRenderer({
       checkPythonSetup: () => Promise.resolve(READY_PY),
       checkAlignment: () => Promise.resolve({ alignmentStatus: 'ready' }),
     });
-    assert(el('diarize-setup-block').hidden === true, 'no setup block when ready');
-    assert(el('alignment-status-text').textContent === 'Word alignment ready', el('alignment-status-text').textContent);
-    assert(el('align-option').hidden === true, 'hidden while diarisation is off');
+    assert(el('diarize-setup-block').hidden === true, 'no download block when ready');
+    assert(el('alignment-status-text').textContent === 'Word alignment model ready', el('alignment-status-text').textContent);
+    assert(el('diarize-toggle').disabled === false, 'usable');
     el('diarize-toggle').checked = true;
     fire('diarize-toggle', 'change');
-    assert(el('align-option').hidden === false, 'shown once diarisation is on');
-    assert(el('align-toggle').disabled === false, 'usable');
+    assert(el('diarize-options').hidden === false, 'speaker count shown once on');
   }],
-  ['alignment not prepared: switch disabled with reason, download button shown', async () => {
-    const { el, fire } = await loadRenderer({
+  ['speaker model ready but alignment model missing: switch disabled, download without a token', async () => {
+    const { el } = await loadRenderer({
       checkPythonSetup: () => Promise.resolve(READY_PY),
       checkAlignment: () => Promise.resolve({ alignmentStatus: 'model-not-prepared' }),
     });
-    el('diarize-toggle').checked = true;
-    fire('diarize-toggle', 'change');
-    assert(el('align-toggle').disabled === true, 'disabled');
-    assert(el('align-option').classList.contains('is-disabled'), 'styled as disabled');
-    assert(/Download the alignment model in Settings/.test(el('align-option-help').textContent), el('align-option-help').textContent);
-    assert(el('alignment-setup-block').hidden === false, 'download button visible');
+    assert(el('diarize-toggle').disabled === true, 'no labelling without alignment');
+    assert(el('diarize-setup-block').hidden === false, 'download offered');
+    assert(el('hf-token-row').hidden === true, 'no token needed');
   }],
-  ['alignment packages missing or too old: plain status, setup guide help, no package name', async () => {
-    for (const [status, text] of [['alignment-missing', 'Word alignment not installed (optional)'],
-      ['alignment-unsupported', 'Word alignment needs newer packages (optional)']]) {
-      const { el, fire } = await loadRenderer({
+  ['alignment packages missing or too old: plain status, switch disabled, no download', async () => {
+    for (const [status, text] of [['alignment-missing', 'Word alignment packages not installed'],
+      ['alignment-unsupported', 'Word alignment needs newer packages']]) {
+      const { el } = await loadRenderer({
         checkPythonSetup: () => Promise.resolve(READY_PY),
         checkAlignment: () => Promise.resolve({ alignmentStatus: status, whisperxVersion: null }),
       });
       assert(el('alignment-status-text').textContent === text, el('alignment-status-text').textContent);
       assert(!/whisperx|null/i.test(el('alignment-status-text').textContent), 'no stale package name');
-      el('diarize-toggle').checked = true;
-      fire('diarize-toggle', 'change');
-      assert(el('align-toggle').disabled === true, 'disabled');
-      assert(/setup guide in Settings/.test(el('align-option-help').textContent), el('align-option-help').textContent);
-      assert(el('alignment-setup-block').hidden === true, 'no download button: packages come first');
+      assert(el('diarize-toggle').disabled === true, 'disabled');
+      assert(el('diarize-setup-block').hidden === true, 'no download button: packages come first');
     }
   }],
-  ['alignment download button calls setup with alignment and re-checks', async () => {
+  ['download button prepares both models in one call and re-checks', async () => {
     const calls = [];
     let status = 'model-not-prepared';
     const { el, fire } = await loadRenderer({
@@ -315,10 +312,11 @@ const asyncTests = [
       checkAlignment: () => Promise.resolve({ alignmentStatus: status }),
       prepareDiarization: (token, opts) => { calls.push(opts); status = 'ready'; return Promise.resolve({ status: 'ready' }); },
     });
-    fire('btn-prepare-alignment', 'click');
+    fire('btn-prepare-diarization', 'click');
     for (let i = 0; i < 20; i++) await new Promise((r) => setImmediate(r));
     assert(calls.length === 1 && calls[0].alignment === true, JSON.stringify(calls));
-    assert(el('alignment-status-text').textContent === 'Word alignment ready', el('alignment-status-text').textContent);
+    assert(el('alignment-status-text').textContent === 'Word alignment model ready', el('alignment-status-text').textContent);
+    assert(el('diarize-toggle').disabled === false, 'usable after download');
   }],
 ];
 

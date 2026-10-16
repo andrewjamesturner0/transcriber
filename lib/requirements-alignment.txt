@@ -1,8 +1,0 @@
-# Forced word alignment (optional, on top of speaker diarization).
-# Install with: pip install -r requirements-alignment.txt
-# English, French, German, Spanish and Italian use only torch and torchaudio
-# (from requirements.txt). The other languages' alignment models load with
-# transformers. No speech recogniser and no sentence-splitting data is used.
-# Then prepare the alignment model: python scripts/setup-diarization.py --alignment
--r requirements.txt
-transformers==4.57.6

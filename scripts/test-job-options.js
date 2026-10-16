@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * Tests for renderer/job-options.js (alignment switch state and per-job
- * options, design decision D4).
+ * Tests for renderer/job-options.js (speaker labelling availability and
+ * per-job options).
  *
  * Usage:
  *     node scripts/test-job-options.js
  */
 
-const { alignmentControlState, buildJobOptions, ALIGNMENT_HELP } = require('../renderer/job-options');
+const { speakerLabelState, buildJobOptions } = require('../renderer/job-options');
 
 let passed = 0;
 let failed = 0;
@@ -20,47 +20,43 @@ function eq(a, b, label) {
 
 console.log('Job option tests\n');
 
-test('switch hidden while diarisation is off', () => {
-  eq(alignmentControlState({ diarizationOn: false, alignmentStatus: 'ready' }), { visible: false, enabled: false, help: ALIGNMENT_HELP });
-});
-
-test('switch usable only when alignment is ready', () => {
-  eq(alignmentControlState({ diarizationOn: true, alignmentStatus: 'ready' }).enabled, true);
-  for (const s of ['model-not-prepared', 'alignment-missing', 'alignment-unsupported', 'python-missing', 'unknown', 'checking']) {
-    const st = alignmentControlState({ diarizationOn: true, alignmentStatus: s });
-    eq([st.visible, st.enabled], [true, false], s);
+test('switch usable only when the speaker and word alignment models are both ready', () => {
+  eq(speakerLabelState({ diarizationStatus: 'ready', alignmentStatus: 'ready' }).ready, true);
+  for (const [d, a] of [['ready', 'model-not-prepared'], ['model-not-prepared', 'ready'], ['ready', 'alignment-missing'],
+    ['ready', 'checking'], ['ready', 'unknown'], ['pyannote-missing', 'unavailable']]) {
+    eq(speakerLabelState({ diarizationStatus: d, alignmentStatus: a }).ready, false, `${d}/${a}`);
   }
 });
 
-test('disabled switch says why', () => {
-  eq(alignmentControlState({ diarizationOn: true, alignmentStatus: 'model-not-prepared' }).help,
-    'Not set up yet. Download the alignment model in Settings.');
-  eq(alignmentControlState({ diarizationOn: true, alignmentStatus: 'alignment-missing' }).help,
-    'Not installed. See the setup guide in Settings.');
+test('one download covers whichever model is missing; token only for the speaker model', () => {
+  eq(speakerLabelState({ diarizationStatus: 'model-not-prepared', alignmentStatus: 'model-not-prepared' }),
+    { ready: false, canDownload: true, needsToken: true });
+  eq(speakerLabelState({ diarizationStatus: 'ready', alignmentStatus: 'model-not-prepared' }),
+    { ready: false, canDownload: true, needsToken: false });
+  eq(speakerLabelState({ diarizationStatus: 'model-not-prepared', alignmentStatus: 'ready' }),
+    { ready: false, canDownload: true, needsToken: true });
 });
 
-test('plain jobs send no diarisation or alignment options', () => {
-  eq(buildJobOptions({ antiCorruption: true, diarizationOn: false, alignChecked: true, alignmentStatus: 'ready' }),
-    { antiCorruption: true });
+test('no download offered until the Python packages are installed', () => {
+  for (const [d, a] of [['python-missing', 'unavailable'], ['pyannote-missing', 'unavailable'],
+    ['model-not-prepared', 'alignment-missing'], ['ready', 'alignment-unsupported']]) {
+    eq(speakerLabelState({ diarizationStatus: d, alignmentStatus: a }).canDownload, false, `${d}/${a}`);
+  }
 });
 
-test('diarised jobs default to Whisper timing', () => {
-  eq(buildJobOptions({ antiCorruption: false, diarizationOn: true, numSpeakers: 'auto', alignChecked: false, alignmentStatus: 'ready' }),
-    { antiCorruption: false, diarization: true, alignment: 'whisper' });
+test('plain jobs send no speaker options', () => {
+  eq(buildJobOptions({ antiCorruption: true, diarizationOn: false }), { antiCorruption: true });
 });
 
-test('switch on and ready forwards forced alignment and speaker count', () => {
-  eq(buildJobOptions({ antiCorruption: false, diarizationOn: true, numSpeakers: '4', alignChecked: true, alignmentStatus: 'ready' }),
-    { antiCorruption: false, diarization: true, numSpeakers: 4, alignment: 'forced' });
-});
-
-test('a remembered "on" switch is ignored when alignment is not ready', () => {
-  eq(buildJobOptions({ antiCorruption: false, diarizationOn: true, numSpeakers: 'auto', alignChecked: true, alignmentStatus: 'model-not-prepared' }).alignment,
-    'whisper');
+test('labelled jobs always use word alignment, with the speaker count when given', () => {
+  eq(buildJobOptions({ antiCorruption: false, diarizationOn: true, numSpeakers: 'auto' }),
+    { antiCorruption: false, diarization: true, alignment: 'forced' });
+  eq(buildJobOptions({ antiCorruption: false, diarizationOn: true, numSpeakers: '4' }),
+    { antiCorruption: false, diarization: true, alignment: 'forced', numSpeakers: 4 });
 });
 
 test('no token is ever part of the job options', () => {
-  const o = buildJobOptions({ antiCorruption: false, diarizationOn: true, numSpeakers: 'auto', alignChecked: true, alignmentStatus: 'ready' });
+  const o = buildJobOptions({ antiCorruption: false, diarizationOn: true, numSpeakers: 'auto' });
   eq(Object.keys(o).includes('hfToken'), false);
 });
 

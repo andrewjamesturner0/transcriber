@@ -173,7 +173,7 @@ test('transcribe --alignment rejects unknown values before any work', () => {
   try {
     const r = runCli(['transcribe', '--alignment', 'wav2vec', '--diarize', tmpFile]);
     assert(r.status !== 0, 'should fail');
-    assert(r.stderr.includes('--alignment must be whisper or forced'), `got: ${r.stderr}`);
+    assert(r.stderr.includes('--alignment must be forced or whisper'), `got: ${r.stderr}`);
   } finally {
     try { fs.rmSync(path.dirname(tmpFile), { recursive: true, force: true }); } catch (_) {}
   }
@@ -208,7 +208,7 @@ test('transcribe --dtw requires diarisation and Whisper timing', () => {
 
 test('transcribe --help documents --alignment', () => {
   const r = runCli(['transcribe', '--help']);
-  assert(r.status === 0 && r.stdout.includes('--alignment whisper|forced') && r.stdout.includes('--dtw'), r.stdout);
+  assert(r.status === 0 && r.stdout.includes('--alignment forced|whisper') && r.stdout.includes('evaluation only') && r.stdout.includes('--dtw'), r.stdout);
 });
 
 test('transcribe accepts --anti-corruption flag combo (parses successfully)', () => {
