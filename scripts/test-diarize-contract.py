@@ -204,6 +204,7 @@ def build_hub(m):
         STATE["snapshot_calls"].append({
             "repo_id": repo_id, "revision": revision, "token": token,
             "offline": os.environ.get("HF_HUB_OFFLINE"),
+            "max_workers": kwargs.get("max_workers"),
         })
         if STATE["snapshot_error"]:
             name, message, status = STATE["snapshot_error"]
@@ -756,6 +757,8 @@ def _():
         check(call["token"] == SECRET and call["repo_id"] == MODEL and call["revision"] == REVISION,
               "snapshot call %s" % dict(call, token="<hidden>"))
         check(call["offline"] is None, "network allowed during download")
+        # Parallel downloads race huggingface_hub's Windows symlink probe.
+        check(call["max_workers"] == 1, "one download worker")
         check(SECRET not in out and SECRET not in err, "%s: token printed" % var)
         check(summary["cachePath"] == "/cache/snap", "cache path")
         check(summary["model"] == {"id": MODEL, "revision": REVISION}, "model")

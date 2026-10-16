@@ -223,9 +223,16 @@ def make_summary(status, message, model, revision, versions, cache_path=None,
 
 
 def download(model, revision, token):
-    """Download the snapshot into the default Hugging Face cache."""
+    """Download the snapshot into the default Hugging Face cache.
+
+    One worker on purpose. huggingface_hub (seen in 1.7.2) records a cache
+    folder as symlink-capable before its symlink probe finishes, so on
+    Windows without Developer Mode a second download thread can try a real
+    symlink and fail with WinError 1314. The repo is about ten small files,
+    so downloading them in turn costs little.
+    """
     from huggingface_hub import snapshot_download
-    return snapshot_download(repo_id=model, revision=revision, token=token)
+    return snapshot_download(repo_id=model, revision=revision, token=token, max_workers=1)
 
 
 def verify_offline(diarize, model, revision, environ):
