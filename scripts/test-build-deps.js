@@ -79,12 +79,14 @@ async function main() {
   git(upstream, 'config', 'user.email', 'fixture@example.invalid');
   git(upstream, 'config', 'user.name', 'Build fixture');
   write(path.join(upstream, 'source.txt'), 'pinned source\n');
-  git(upstream, 'add', 'source.txt');
+  // Whisper ships this tracked script; it is not a cached build directory.
+  write(path.join(upstream, 'build-xcframework.sh'), '#!/bin/sh\n');
+  git(upstream, 'add', 'source.txt', 'build-xcframework.sh');
   git(upstream, 'commit', '-m', 'fixture pin');
   const revision = git(upstream, 'rev-parse', 'HEAD');
   git(upstream, 'tag', 'fixture-v1');
   const whisper = { version: 'fixture-v1', revision, repo: new URL('file://' + upstream).href, winCpuSha256: hash('archive') };
-  await test('new source is the pinned tag commit; mismatched tag cannot become accepted checkout', () => {
+  await test('new source accepts tracked build scripts at the pinned tag; mismatched tag is rejected', () => {
     const directory = path.join(root, 'source');
     policy.ensureSource(directory, whisper);
     assert.equal(git(directory, 'rev-parse', 'HEAD'), revision);

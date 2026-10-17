@@ -103,7 +103,7 @@ function ensureSource(directory, whisper = deps.whisper) {
   const marker = path.join(directory, '.transcriber-source.json');
   const expected = { version: whisper.version, revision: whisper.revision };
   const known = fs.existsSync(marker) && JSON.stringify(JSON.parse(fs.readFileSync(marker))) === JSON.stringify(expected);
-  if (fs.readdirSync(directory).some(name => name.startsWith('build-')) && !known) {
+  if (fs.readdirSync(directory, { withFileTypes: true }).some(entry => entry.isDirectory() && entry.name.startsWith('build-')) && !known) {
     throw new Error(`Unknown Whisper build provenance: ${directory}. Quarantine it and rerun.`);
   }
   if (!known && !fetched) {
